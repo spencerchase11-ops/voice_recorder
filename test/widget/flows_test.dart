@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:voice_recorder/src/core/format.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
 import 'package:voice_recorder/src/licenses.dart';
 import 'package:voice_recorder/src/ui/dialogs/dialogs.dart';
@@ -180,6 +181,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(t.store.folderChoices, 1);
       expect(Directory('${t.workDir.path}/pending').listSync(), isEmpty);
+    });
+
+    testWidgets('a recording that stops on its own is saved and says so', (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester);
+      final app = t.controller;
+      await tester.tap(labeled('Record'));
+      await pumpUntil(tester, () => app.isRecording && !app.isBusy);
+
+      t.engine.endedController.add(null);
+      await pumpUntil(tester, () => !app.isRecording && !app.isBusy);
+      await tester.pump();
+      expect(
+        find.textContaining('The recording stopped unexpectedly.'),
+        findsOneWidget,
+      );
+      expect(t.store.saved, hasLength(1));
+      expect(labeled('Record'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
     });
 
     testWidgets("a file that can't be opened says so", (tester) async {
@@ -462,6 +485,45 @@ void main() {
         expect(t.playback.seeks, 1);
       },
     );
+
+    testWidgets('a list of 2,500 recordings scrolls to the oldest', (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      final start = DateTime(2016, 3, 1, 9);
+      await pumpReferenceApp(
+        tester,
+        files: [
+          for (var i = 0; i < 2500; i++)
+            () {
+              final t = start.add(Duration(hours: 29 * i));
+              final name = '${timestampName(t)}.mp3';
+              return RecordingFile(
+                id: 'mem://$name',
+                name: name,
+                size: 25000000,
+                modified: t,
+              );
+            }(),
+        ],
+        current: null,
+      );
+      await tester.tap(labeled('Recording list'));
+      await tester.pumpAndSettle();
+      final newest =
+          '${timestampName(start.add(const Duration(hours: 29 * 2499)))}.mp3';
+      expect(find.text(newest), findsOneWidget);
+      final oldest = '${timestampName(start)}.mp3';
+      // 2,500 rows are about 166,000 dp tall.
+      await tester.scrollUntilVisible(
+        find.text(oldest),
+        2000,
+        scrollable: find.byType(Scrollable).last,
+        maxScrolls: 200,
+      );
+      expect(find.text(oldest), findsOneWidget);
+      expect(find.text('2016-03-01'), findsOneWidget);
+    });
 
     testWidgets('back returns to the Recorder', (tester) async {
       await openList(tester);

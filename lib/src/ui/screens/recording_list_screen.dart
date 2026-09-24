@@ -281,7 +281,7 @@ class _RecordingRow extends StatelessWidget {
             child: Row(
               children: [
                 AText(
-                  formatListDate(file.modified),
+                  formatListDate(file.date),
                   style: Spec.listDetail,
                   maxLines: 1,
                 ),

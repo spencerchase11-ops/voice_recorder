@@ -1,5 +1,8 @@
 import 'package:flutter/services.dart';
 
+/// Free space on Android, see [NativeBridge.storageSpace].
+typedef StorageSpace = ({int destination, int internal, bool sameVolume});
+
 /// Calls into the small amount of platform code the app needs
 /// (android/app/src/main/kotlin/.../MainActivity.kt and ios/Runner/AppDelegate.swift).
 class NativeBridge {
@@ -83,10 +86,29 @@ class NativeBridge {
       _channel.invokeMethod<void>('stopRecordingService');
 
   // ---------------------------------------------------------------- both
-  /// Free bytes on the volume that holds [location] (a tree URI on Android,
-  /// a path on iOS).
-  Future<int?> freeBytes([String? location]) =>
-      _channel.invokeMethod<int>('freeBytes', {'location': location});
+  /// Android: free space of the folder's volume ([treeUri], or shared storage
+  /// when none is chosen) and of internal app storage, where recordings are
+  /// written before being copied into the folder.
+  Future<StorageSpace?> storageSpace(String? treeUri) async {
+    final m = await _channel.invokeMapMethod<String, Object?>('storageSpace', {
+      'location': treeUri,
+    });
+    if (m == null) return null;
+    return (
+      destination: m['destination']! as int,
+      internal: m['internal']! as int,
+      sameVolume: m['sameVolume']! as bool,
+    );
+  }
+
+  /// iOS: free bytes on the volume that holds [path].
+  Future<int?> freeBytes(String path) =>
+      _channel.invokeMethod<int>('freeBytes', {'location': path});
+
+  /// iOS: undoes the preferred sample rate a recording set on the audio
+  /// session, so later playback isn't resampled to a low rate.
+  Future<void> resetAudioSampleRate() =>
+      _channel.invokeMethod<void>('resetAudioSampleRate');
 
   /// iOS: "iPhone" or "iPad", used to describe the Files app location.
   Future<String?> deviceKind() => _channel.invokeMethod<String>('deviceKind');

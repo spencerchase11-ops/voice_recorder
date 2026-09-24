@@ -2,6 +2,7 @@ package com.spencerchase.voicerecorder
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -25,6 +26,8 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -94,12 +97,10 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 val uri = Uri.parse(call.argument<String>("documentUri"))
                 val renamed = DocumentsContract.renameDocument(
                     context.contentResolver, uri, call.argument<String>("displayName")!!,
-                ) ?: uri
+                ) ?: throw IllegalStateException("The folder refused to rename the file")
                 stat(renamed)
             }
-            "deleteDocument" -> background(result) {
-                DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(call.argument<String>("documentUri")))
-            }
+            "deleteDocument" -> background(result) { delete(Uri.parse(call.argument<String>("documentUri"))) }
             "shareDocument" -> {
                 share(Uri.parse(call.argument<String>("documentUri")), call.argument<String>("mimeType")!!)
                 result.success(null)
@@ -113,7 +114,7 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 RecordingService.stop(context)
                 result.success(null)
             }
-            "freeBytes" -> background(result) { freeBytes(call.argument("location")) }
+            "storageSpace" -> background(result) { storageSpace(call.argument("location")) }
             "openAppSettings" -> {
                 try {
                     openAppSettings()
@@ -146,7 +147,7 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             try {
                 val value = work()
                 main.post { result.success(value) }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 main.post { result.error("native_error", e.message ?: e.toString(), null) }
             }
         }
@@ -159,18 +160,20 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             result.error("no_activity", "The folder picker needs a visible activity", null)
             return
         }
-        pendingPick?.success(null)
-        pendingPick = result
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
-        )
+        if (pendingPick != null) {
+            result.error("busy", "The folder picker is already open", null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             initialUriFor(initialPath)?.let { intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
         }
-        act.startActivityForResult(intent, REQUEST_PICK_FOLDER)
+        try {
+            act.startActivityForResult(intent, REQUEST_PICK_FOLDER)
+            pendingPick = result
+        } catch (e: ActivityNotFoundException) {
+            result.error("no_picker", "This device has no folder picker", null)
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
@@ -182,11 +185,13 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             result.success(null)
             return true
         }
+        val rw = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if ((data?.flags ?: 0) and rw != rw) {
+            result.error("read_only", "Recordings can't be saved in that folder", null)
+            return true
+        }
         try {
-            context.contentResolver.takePersistableUriPermission(
-                tree,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
+            context.contentResolver.takePersistableUriPermission(tree, rw)
             // Keep only the folder the user just chose.
             for (p in context.contentResolver.persistedUriPermissions) {
                 if (p.uri != tree) {
@@ -207,9 +212,11 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     private fun initialUriFor(path: String?): Uri? {
         if (path == null) return null
         val primary = Environment.getExternalStorageDirectory().path
+        val emulated = Regex("^/storage/emulated/\\d+(/(.*))?$").find(path)
         val docId = when {
             path == primary -> "primary:"
             path.startsWith("$primary/") -> "primary:" + path.removePrefix("$primary/")
+            emulated != null -> "primary:" + (emulated.groupValues[2])
             path.startsWith("/storage/") -> {
                 val rest = path.removePrefix("/storage/")
                 val volume = rest.substringBefore('/')
@@ -269,19 +276,62 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     private fun listFolder(tree: Uri): List<Map<String, Any?>> {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val out = ArrayList<Map<String, Any?>>()
-        context.contentResolver.query(children, columns, null, null, null)?.use { c ->
+        val cursor = context.contentResolver.query(children, columns, null, null, null)
+            ?: throw IllegalStateException("The recordings folder can't be read")
+        cursor.use { c ->
             while (c.moveToNext()) {
                 if (c.getString(4) == Document.MIME_TYPE_DIR) continue
+                if (c.getString(1)?.startsWith(".") != false) continue
                 out.add(row(c, DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))))
             }
         }
         return out
     }
 
-    private fun stat(uri: Uri): Map<String, Any?>? =
-        context.contentResolver.query(uri, columns, null, null, null)?.use { c ->
-            if (c.moveToFirst()) row(c, uri) else null
+    /** Null when the document no longer exists; throws if storage can't be reached. */
+    private fun stat(uri: Uri): Map<String, Any?>? {
+        try {
+            return context.contentResolver.query(uri, columns, null, null, null)?.use { c ->
+                if (c.moveToFirst()) row(c, uri) else null
+            }
+        } catch (e: Exception) {
+            // Providers throw (rather than return nothing) for a deleted file or
+            // one in a folder we no longer have access to.
+            if (isGone(uri)) return null
+            throw e
         }
+    }
+
+    /**
+     * Whether [uri] (a document inside a granted folder) is known to be gone:
+     * its folder is no longer granted, or the folder is readable but the
+     * document isn't. False when the folder itself can't be reached.
+     */
+    private fun isGone(uri: Uri): Boolean {
+        val treeId = try {
+            DocumentsContract.getTreeDocumentId(uri)
+        } catch (e: IllegalArgumentException) {
+            return true
+        }
+        val authority = uri.authority ?: return true
+        val tree = DocumentsContract.buildTreeDocumentUri(authority, treeId)
+        val granted = context.contentResolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission }
+        if (!granted) return true
+        val root = DocumentsContract.buildDocumentUriUsingTree(tree, treeId)
+        return try {
+            context.contentResolver.query(root, arrayOf(Document.COLUMN_DOCUMENT_ID), null, null, null)
+                ?.use { it.moveToFirst() } ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun delete(uri: Uri): Boolean = try {
+        DocumentsContract.deleteDocument(context.contentResolver, uri)
+    } catch (e: Exception) {
+        // Already deleted (e.g. in a file manager) counts as deleted.
+        if (isGone(uri)) true else throw e
+    }
 
     // ------------------------------------------------------------ writes
     private fun importFile(tree: Uri, sourcePath: String, displayName: String, mimeType: String): Map<String, Any?>? {
@@ -294,10 +344,25 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             ?: throw IllegalStateException("Could not create $displayName")
         try {
             FileInputStream(File(sourcePath)).use { input ->
-                context.contentResolver.openOutputStream(target, "w")!!.use { output -> input.copyTo(output, 256 * 1024) }
+                val output = context.contentResolver.openOutputStream(target, "w")
+                    ?: throw IllegalStateException("Could not open $displayName")
+                output.use {
+                    input.copyTo(it, 256 * 1024)
+                    it.flush()
+                    // The source is deleted as soon as we return: make sure the copy is on
+                    // disk. Best effort; not every provider's descriptor supports it.
+                    try {
+                        (it as? FileOutputStream)?.fd?.sync()
+                    } catch (e: IOException) {
+                    }
+                }
             }
         } catch (e: Exception) {
-            DocumentsContract.deleteDocument(context.contentResolver, target)
+            try {
+                DocumentsContract.deleteDocument(context.contentResolver, target)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
             throw e
         }
         return stat(target)
@@ -319,20 +384,32 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     }
 
     // ------------------------------------------------------------- misc
-    private fun freeBytes(location: String?): Long {
+    /**
+     * Free space where recordings go. A recording is written to internal app
+     * storage while it runs and copied into the folder when it stops, so this
+     * reports both volumes and whether they are the same one (emulated
+     * primary storage lives on the internal data partition).
+     */
+    private fun storageSpace(location: String?): Map<String, Any> {
         var path = Environment.getExternalStorageDirectory().path
+        var primary = true
         if (location != null && location.startsWith("content://")) {
             val tree = Uri.parse(location)
             if (tree.authority == EXTERNAL_STORAGE_AUTHORITY) {
                 val volume = DocumentsContract.getTreeDocumentId(tree).substringBefore(':')
                 if (volume != "primary") {
+                    primary = false
                     // Our own directory on that volume is always readable.
                     context.getExternalFilesDirs(null).firstOrNull { it?.path?.startsWith("/storage/$volume") == true }
                         ?.let { path = it.path }
                 }
             }
         }
-        return StatFs(path).availableBytes
+        return mapOf(
+            "destination" to StatFs(path).availableBytes,
+            "internal" to StatFs(context.filesDir.path).availableBytes,
+            "sameVolume" to (primary && Environment.isExternalStorageEmulated()),
+        )
     }
 
     private fun requestNotificationPermission() {

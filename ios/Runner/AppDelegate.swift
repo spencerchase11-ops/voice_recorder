@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 
@@ -36,6 +37,11 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
     case "deviceKind":
       // The hardware, not the idiom: this iPhone-only app also runs on iPads.
       result(UIDevice.current.model.hasPrefix("iPad") ? "iPad" : "iPhone")
+    case "resetAudioSampleRate":
+      // A recording at a low quality leaves its sample rate as the session's
+      // preference, which can make later playback sound muffled.
+      try? AVAudioSession.sharedInstance().setPreferredSampleRate(48000)
+      result(nil)
     case "openAppSettings":
       if let url = URL(string: UIApplication.openSettingsURLString) {
         UIApplication.shared.open(url)

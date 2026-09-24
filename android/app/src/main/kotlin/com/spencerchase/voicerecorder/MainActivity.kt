@@ -25,6 +25,15 @@ class MainActivity : FlutterActivity() {
 
     override fun shouldDestroyEngineWithHost(): Boolean = false
 
+    /**
+     * Another MainActivity took over the shared engine. This one can only show
+     * a blank screen now, so close it instead of leaving it in the back stack.
+     */
+    override fun detachFromFlutterEngine() {
+        super.detachFromFlutterEngine()
+        finish()
+    }
+
     companion object {
         private const val ENGINE_ID = "voice_recorder"
     }

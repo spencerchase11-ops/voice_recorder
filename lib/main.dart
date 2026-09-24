@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -17,8 +16,7 @@ import 'src/storage/recording_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  await applySystemUi();
   registerThirdPartyLicenses();
 
   final settings = await Settings.load();
@@ -43,7 +41,9 @@ Future<void> main() async {
 }
 
 /// Play back through the loudspeaker even with the ring/silent switch on and
-/// allow recording at any time.
+/// allow recording at any time. No Bluetooth hands-free profile: recordings
+/// use the phone's microphone and headphones keep full playback quality.
+/// Keep in sync with `_iosConfig` in lib/src/audio/recorder_engine.dart.
 Future<void> _configureAudioSession() async {
   final session = await AudioSession.instance;
   await session.configure(
@@ -51,7 +51,6 @@ Future<void> _configureAudioSession() async {
       avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
       avAudioSessionCategoryOptions:
           AVAudioSessionCategoryOptions.defaultToSpeaker |
-          AVAudioSessionCategoryOptions.allowBluetooth |
           AVAudioSessionCategoryOptions.allowBluetoothA2dp,
       avAudioSessionMode: AVAudioSessionMode.defaultMode,
       androidAudioAttributes: const AndroidAudioAttributes(

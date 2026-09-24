@@ -21,6 +21,9 @@ class FakeStore extends RecordingStore {
   /// Makes [save] fail, like a folder whose access was revoked.
   bool failSaves = false;
   final saved = <String>[];
+
+  /// Contents of each saved file.
+  final savedBytes = <String, List<int>>{};
   final shared = <String>[];
   var folderChoices = 0;
 
@@ -64,6 +67,7 @@ class FakeStore extends RecordingStore {
   ) async {
     if (failSaves) throw const FileSystemException('no access');
     final size = await source.length();
+    savedBytes[fileName] = await source.readAsBytes();
     await source.delete();
     final f = RecordingFile(
       id: 'mem://$fileName',
@@ -100,7 +104,7 @@ class FakeStore extends RecordingStore {
       shared.add(file.name);
 
   @override
-  Future<int?> freeBytes() async => free;
+  Future<int?> usableBytes({int pendingBytes = 0}) async => free;
 
   @override
   Uri playbackUri(RecordingFile file) => Uri.parse(file.id);
@@ -111,8 +115,14 @@ class FakeEngine implements RecorderEngine {
   bool permission = true;
   String? path;
   RecordingProfile? profile;
+
+  /// What start() writes, and what stop() throws (if anything).
+  List<int> content = List.filled(1000, 1);
+  Object? stopError;
   final levelController = StreamController<double>.broadcast();
   final interruptController = StreamController<bool>.broadcast();
+  final endedController = StreamController<void>.broadcast();
+  var resumes = 0;
 
   @override
   Future<bool> requestPermission() async => permission;
@@ -121,17 +131,25 @@ class FakeEngine implements RecorderEngine {
   Future<void> start(RecordingProfile profile, String path) async {
     this.profile = profile;
     this.path = path;
-    await File(path).writeAsBytes(List.filled(1000, 1));
+    await File(path).writeAsBytes(content);
   }
 
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async {
+    if (stopError != null) throw stopError!;
+  }
 
   @override
   Stream<double> get levels => levelController.stream;
 
   @override
   Stream<bool> get interrupted => interruptController.stream;
+
+  @override
+  Stream<void> get ended => endedController.stream;
+
+  @override
+  Future<void> resume() async => resumes++;
 
   @override
   Future<void> dispose() async {}

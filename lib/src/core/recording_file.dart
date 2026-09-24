@@ -22,6 +22,11 @@ class RecordingFile {
   String get baseName => splitExtension(name).$1;
   String get extension => splitExtension(name).$2;
 
+  /// When it was recorded: the time in a timestamp name
+  /// (`2026_09_16_16_37_26.mp3`), which survives copies and phone transfers
+  /// that reset file dates; otherwise the file's modification time.
+  DateTime get date => parseTimestampName(baseName) ?? modified;
+
   RecordingFile copyWith({
     String? id,
     String? name,
@@ -64,4 +69,5 @@ const audioExtensions = {
 };
 
 bool isAudioFileName(String name) =>
+    !name.startsWith('.') &&
     audioExtensions.contains(splitExtension(name).$2.toLowerCase());

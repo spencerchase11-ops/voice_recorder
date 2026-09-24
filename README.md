@@ -49,8 +49,20 @@ with [LAME](https://lame.sourceforge.io), which lives in the local plugin
 A recording is written to the app's private storage while it runs. It is
 moved into the folder when you stop. If the app is killed while recording,
 MP3 and WAV recordings are saved on the next launch; WAV headers are repaired.
-M4A recordings can't be saved this way, because the file is only finished
-when recording stops.
+An M4A file is only playable once it is finished, so an M4A recording that
+was cut off can't be recovered; the app says so instead of saving a broken
+file. If the folder can't be written to when you stop (for example, Android
+lost access to it), the recording is kept and the app asks for the folder
+again.
+
+The list shows recordings newest first. For names like
+`2026_09_16_16_37_26.mp3` the date comes from the name, so the order stays
+right even if copying the files to a new phone reset their dates.
+
+"Remaining time" is how long you can record and still save the file. On
+Android a recording is copied into the folder when it stops, so on internal
+storage it can use at most half of the free space. When less than 30 seconds
+are left, a recording stops and is saved, and a new one won't start.
 
 ### Recording in the background
 
@@ -61,8 +73,13 @@ when recording stops.
   Recents, doesn't stop a recording.
 - **iOS:** the `audio` background mode keeps recording with the screen locked
   or while you use other apps.
-- Phone calls and other audio interruptions pause the recording and the timer.
-  Recording resumes when the interruption ends.
+- **Interruptions.** On Android nothing pauses a recording: other apps'
+  sounds and alarms are recorded along with everything else, and during a
+  phone call Android gives the app silence. On iPhone, calls and Siri pause
+  the recording and the timer, and recording resumes when they end (or when
+  you return to the app, if iOS didn't resume it).
+- If recording stops on its own (a system error, or audio no longer arriving
+  for 5 seconds), what was recorded is saved and the app says so.
 
 ## Differences from the original
 
@@ -77,6 +94,8 @@ decided:
 - **Rate 5 stars** opens the Play Store listing on Android. On iOS it opens
   the App Store review page once `AppConfig.appStoreId` is set; until then it
   shows a toast.
+- Recordings always use the phone's own microphone, also with Bluetooth
+  headphones connected; the headphones keep full quality for playback.
 - On iOS the app is iPhone-only, like the original phone app. iPads run it in
   iPhone mode, so it always stays in portrait.
 - The rename dialog opens without the keyboard, like in the screenshot. Tap
@@ -159,12 +178,14 @@ flutter test                              # unit, widget, controller and golden 
   `tool/align_check.py` measures how far a single element is off, in pixels.
 - `test/widget/flows_test.dart` taps through the app like a user would:
   record and stop, the first-run folder prompt, missing microphone access,
-  play, delete, rename, list selection, and settings.
+  a recording that can't be saved or stops on its own, play, seek, delete,
+  rename, list selection, a list of 2,500 recordings, and settings.
 
 CI (`.github/workflows/ci.yml`) runs formatting, analysis and all tests. It
-also builds a release APK and uploads it as an artifact, signed with the debug
-key: fine for installing on your own phone. The iOS build (no code signing)
-runs on `main` and on manual runs.
+also builds a release APK and uploads it as an artifact, signed with a test
+key that CI keeps between runs, so each new test APK installs as an update
+over the last one. That's fine for your own phone, not for Play uploads. The
+iOS build (no code signing) runs on `main` and on manual runs.
 
 ## Project layout
 

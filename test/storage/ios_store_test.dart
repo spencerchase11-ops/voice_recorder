@@ -70,6 +70,20 @@ void main() {
     expect(await store.rename(r!, 'b (1)'), same(r));
   });
 
+  test('lists a folder of 2,500 recordings quickly', () async {
+    final store = await open('A');
+    final dir = Directory('${root.path}/A/Documents/Recorders');
+    for (var i = 0; i < 2500; i++) {
+      File('${dir.path}/2016_01_01_00_00_${'$i'.padLeft(4, '0')}.mp3')
+          .writeAsBytesSync(const [1, 2, 3]);
+    }
+    final watch = Stopwatch()..start();
+    final files = await store.list();
+    watch.stop();
+    expect(files, hasLength(2500));
+    expect(watch.elapsed, lessThan(const Duration(seconds: 3)));
+  });
+
   test('delete', () async {
     final store = await open('A');
     final a = await store.save(await pending('x.mp3'), 'a.mp3', 'audio/mpeg');

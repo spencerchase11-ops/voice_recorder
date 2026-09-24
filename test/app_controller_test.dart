@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -115,6 +116,65 @@ void main() {
       expect(app.currentFile, isNotNull);
     });
 
+    test('drops empty recordings and keeps cut-off M4A files out', () async {
+      List<int> box(String type, int length, {int? size}) {
+        final b = ByteData(8)..setUint32(0, size ?? length + 8);
+        for (var i = 0; i < 4; i++) {
+          b.setUint8(4 + i, type.codeUnitAt(i));
+        }
+        return [...b.buffer.asUint8List(), ...List.filled(length, 1)];
+      }
+
+      final pending = Directory('${work.path}/pending')..createSync();
+      File('${pending.path}/a.wav').writeAsBytesSync(
+        WavWriter.header(sampleRate: 16000, channels: 1, dataBytes: 0),
+      );
+      File('${pending.path}/b.m4a')
+          .writeAsBytesSync([...box('ftyp', 16), ...box('mdat', 500, size: 0)]);
+      File('${pending.path}/c.m4a').writeAsBytesSync([
+        ...box('ftyp', 16),
+        ...box('mdat', 500),
+        ...box('moov', 50),
+      ]);
+      await build(prefs: const {});
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      await app.init();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.saved, ['c.m4a']);
+      expect(File('${pending.path}/a.wav').existsSync(), isFalse);
+      expect(File('${pending.path}/b.m4a.incomplete').existsSync(), isTrue);
+      expect(notices, hasLength(1));
+
+      // Later recoveries leave it alone.
+      await app.recoverInterrupted();
+      await Future<void>.delayed(Duration.zero);
+      expect(store.saved, ['c.m4a']);
+      expect(notices, hasLength(1));
+    });
+
+    test('messages from before anyone listened are delivered later', () async {
+      final pending = Directory('${work.path}/pending')..createSync();
+      File('${pending.path}/x.m4a').writeAsBytesSync(List.filled(64, 0));
+      await (await build(prefs: const {})).init(); // nobody listening yet
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      await Future<void>.delayed(Duration.zero);
+      expect(notices, hasLength(1));
+    });
+
+    test(
+      'choosing another folder forgets a last recording not in it',
+      () async {
+        await (await build()).init();
+        store.files.removeWhere((f) => f.id == _last);
+        expect(await app.chooseFolder(), isTrue);
+        expect(app.currentFile, isNull);
+        expect(settings.lastFile, isNull);
+      },
+    );
+
     test(
       'leaves interrupted recordings alone until a folder is chosen',
       () async {
@@ -211,6 +271,98 @@ void main() {
       expect(Directory('${work.path}/pending').listSync(), isEmpty);
     });
 
+    test(
+      'iOS: the audio session sample rate is restored after recording',
+      () async {
+        final calls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.spencerchase.voicerecorder/native');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          return null;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        await (await build()).init();
+        await app.toggleRecord();
+        await app.toggleRecord();
+        await Future<void>.delayed(Duration.zero);
+        expect(calls, contains('resetAudioSampleRate'));
+      },
+    );
+
+    test('capture that ends on its own is stopped, saved and reported', () async {
+      await (await build()).init();
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      await app.toggleRecord();
+      engine.endedController.add(null);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(app.isRecording, isFalse);
+      expect(store.saved, ['2026_09_23_19_14_05.mp3']);
+      expect(notices, [
+        'The recording stopped unexpectedly. What was recorded has been saved.',
+      ]);
+    });
+
+    test('running out of storage stops and saves the recording', () async {
+      await (await build()).init();
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      await app.toggleRecord();
+      store.free = 20000 * 20; // 20 s left at 160 kbps
+      await app.checkSpace();
+      await Future<void>.delayed(Duration.zero);
+      expect(app.isRecording, isFalse);
+      expect(store.saved, hasLength(1));
+      expect(notices.single, startsWith('Storage is almost full'));
+    });
+
+    test('no recording starts without room for it', () async {
+      await (await build()).init();
+      store.free = 20000 * 10;
+      expect(await app.toggleRecord(), RecordOutcome.noSpace);
+      expect(engine.path, isNull);
+      expect(app.isRecording, isFalse);
+    });
+
+    test(
+      'a WAV whose recorder failed to stop is repaired before saving',
+      () async {
+        await (await build()).init();
+        settings.type = RecordingType.wav;
+        engine
+          ..content = [
+            ...WavWriter.header(sampleRate: 44100, channels: 1, dataBytes: 0),
+            ...List.filled(1000, 5),
+          ]
+          ..stopError = StateError('recorder failed');
+        await app.toggleRecord();
+        expect(await app.toggleRecord(), RecordOutcome.stopped);
+        final saved = Uint8List.fromList(
+          store.savedBytes['2026_09_23_19_14_05.wav']!,
+        );
+        expect(ByteData.sublistView(saved).getUint32(40, Endian.little), 1000);
+      },
+    );
+
+    test(
+      'an interruption zeroes the meter; returning to the app resumes',
+      () async {
+        await (await build()).init();
+        await app.toggleRecord();
+        engine.levelController.add(0.8);
+        await Future<void>.delayed(Duration.zero);
+        expect(app.litSegments, greaterThan(1));
+        engine.interruptController.add(true);
+        await Future<void>.delayed(Duration.zero);
+        expect(app.litSegments, 1);
+        await app.onResume();
+        expect(engine.resumes, 1);
+        await app.toggleRecord();
+      },
+    );
+
     test('reports a missing microphone permission', () async {
       await (await build()).init();
       engine.permission = false;
@@ -254,16 +406,18 @@ void main() {
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const channel = MethodChannel('com.spencerchase.voicerecorder/native');
       messenger.setMockMethodCallHandler(channel, (call) async {
-        calls.add(call.method);
+        // Note how many files were saved when each call arrives.
+        calls.add('${call.method}:${store.saved.length}');
         return null;
       });
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
       await (await build(isAndroid: true)).init();
       await app.toggleRecord();
-      expect(calls, ['startRecordingService']);
+      expect(calls, ['startRecordingService:0']);
       await app.toggleRecord();
-      expect(calls, ['startRecordingService', 'stopRecordingService']);
+      // The service keeps the process alive until the file is in the folder.
+      expect(calls, ['startRecordingService:0', 'stopRecordingService:1']);
     });
   });
 
@@ -324,6 +478,63 @@ void main() {
       expect(app.timerValue, Duration.zero);
       expect(app.files, hasLength(9));
       expect(store.files, hasLength(9));
+    });
+
+    test(
+      'timestamp names order the list even when file dates were reset',
+      () async {
+        await build();
+        // As after a phone transfer: every file dated the day of the copy.
+        final copied = DateTime(2026, 9, 24, 8);
+        store.files
+          ..clear()
+          ..addAll([
+            for (final n in [
+              '2026_09_16_15_48_15.mp3',
+              'lunch w kris team convo .mp3',
+              '2026_09_20_17_26_27.mp3',
+              '2026_09_18_21_23_04.mp3',
+            ])
+              RecordingFile(id: 'mem://$n', name: n, size: 1, modified: copied),
+          ]);
+        await app.refreshFiles();
+        expect(app.files.map((f) => f.name), [
+          'lunch w kris team convo .mp3', // no date in the name: copy date
+          '2026_09_20_17_26_27.mp3',
+          '2026_09_18_21_23_04.mp3',
+          '2026_09_16_15_48_15.mp3',
+        ]);
+      },
+    );
+
+    test('a library of 2,500 recordings lists quickly and in order', () async {
+      await build();
+      final start = DateTime(2016, 3, 1, 9);
+      store.files
+        ..clear()
+        ..addAll(
+          [
+            for (var i = 0; i < 2500; i++)
+              () {
+                final t = start.add(Duration(hours: 29 * i, seconds: i));
+                final name = '${timestampName(t)}.mp3';
+                return RecordingFile(
+                  id: 'mem://$name',
+                  name: name,
+                  size: 25000000,
+                  modified: t,
+                );
+              }(),
+          ]..shuffle(),
+        );
+      final watch = Stopwatch()..start();
+      await app.refreshFiles();
+      watch.stop();
+      expect(app.files, hasLength(2500));
+      for (var i = 1; i < app.files.length; i++) {
+        expect(app.files[i - 1].date.isAfter(app.files[i].date), isTrue);
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 1)));
     });
 
     test('a file that fails to open can be retried', () async {

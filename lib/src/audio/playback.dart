@@ -30,10 +30,10 @@ class JustAudioPlayback extends Playback {
   JustAudioPlayback() {
     _subs.add(
       _player.playerStateStream.listen((s) {
-        if (s.processingState == ProcessingState.completed) {
+        if (s.processingState == ProcessingState.completed && !_rewinding) {
           // Rewind like the original: the seek bar returns to 00:00.
-          unawaited(_player.pause());
-          unawaited(_player.seek(Duration.zero));
+          _rewinding = true;
+          unawaited(_rewind());
         }
         _playing = s.playing && s.processingState != ProcessingState.completed;
         notifyListeners();
@@ -55,6 +55,19 @@ class JustAudioPlayback extends Playback {
 
   final _player = AudioPlayer();
   final _subs = <StreamSubscription<Object?>>[];
+  bool _rewinding = false;
+
+  Future<void> _rewind() async {
+    try {
+      await _player.pause();
+      await _player.seek(Duration.zero);
+    } catch (e) {
+      debugPrint('Could not rewind: $e');
+    } finally {
+      _rewinding = false;
+    }
+  }
+
   String? _fileId;
   bool _playing = false;
   Duration _position = Duration.zero;
@@ -78,7 +91,11 @@ class JustAudioPlayback extends Playback {
     _duration = Duration.zero;
     notifyListeners();
     // Only remember the file once it opened, so a failed file can be retried.
-    await _player.setAudioSource(AudioSource.uri(uri));
+    try {
+      await _player.setAudioSource(AudioSource.uri(uri));
+    } on PlayerInterruptedException {
+      return; // a newer load (another tap) replaced this one
+    }
     _fileId = fileId;
     notifyListeners();
   }
@@ -86,7 +103,13 @@ class JustAudioPlayback extends Playback {
   @override
   Future<void> play(String fileId, Uri uri) async {
     await load(fileId, uri);
-    unawaited(_player.play());
+    if (_fileId != fileId) return; // superseded by another file
+    // play() completes when playback stops; errors surface as player events.
+    unawaited(
+      _player.play().catchError((Object e) {
+        debugPrint('Playback error: $e');
+      }),
+    );
   }
 
   @override

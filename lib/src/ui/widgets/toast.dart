@@ -4,8 +4,8 @@ import 'package:flutter/widgets.dart';
 
 import '../spec.dart';
 
-/// A short Android-style toast.
-void showToast(BuildContext context, String message) {
+/// An Android-style toast; [long] keeps it up longer, for longer messages.
+void showToast(BuildContext context, String message, {bool long = false}) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
   late OverlayEntry entry;
@@ -37,5 +37,5 @@ void showToast(BuildContext context, String message) {
     ),
   );
   overlay.insert(entry);
-  Timer(const Duration(milliseconds: 2000), entry.remove);
+  Timer(Duration(milliseconds: long ? 3500 : 2000), entry.remove);
 }

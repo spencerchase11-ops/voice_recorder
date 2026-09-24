@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. Recordings still being saved (files/pending) stay on
+     the device; settings may be backed up. -->
+<full-backup-content>
+    <exclude domain="file" path="pending/" />
+</full-backup-content>

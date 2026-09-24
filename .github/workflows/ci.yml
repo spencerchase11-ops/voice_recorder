@@ -56,8 +56,15 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      # Signed with the debug key (no android/key.properties in CI): fine for
-      # sideloading and testing, not for Play uploads.
+      # Test builds are signed with a debug key (no android/key.properties in
+      # CI): fine for sideloading and testing, not for Play uploads. Keep the
+      # same key from run to run so a new test APK installs as an update over
+      # the previous one (Android refuses updates signed with another key).
+      - name: Reuse the test signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-test-signing-key-v1
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:

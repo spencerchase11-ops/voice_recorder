@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -19,11 +20,19 @@ abstract class RecorderEngine {
   /// Stops and finalizes the file.
   Future<void> stop();
 
+  /// Resumes a capture the system paused (see [interrupted]).
+  Future<void> resume();
+
   /// Input level between 0 (silence) and 1 (full scale), about 10 per second.
   Stream<double> get levels;
 
   /// True while capture is paused by the system (e.g. a phone call).
   Stream<bool> get interrupted;
+
+  /// Fires once when capture stopped on its own: a platform error, the system
+  /// ending the audio session, or audio no longer arriving. The file holds
+  /// what was captured until then; call [stop] to finalize it.
+  Stream<void> get ended;
 
   Future<void> dispose();
 }
@@ -43,15 +52,32 @@ double peakDb(Uint8List pcm) {
   return 20 * math.log(peak / 32768) / math.ln10;
 }
 
+/// Averages interleaved 16-bit little-endian stereo PCM down to mono.
+Uint8List downmixToMono(Uint8List stereo) {
+  final frames = stereo.length ~/ 4;
+  final src = ByteData.sublistView(stereo);
+  final out = ByteData(frames * 2);
+  for (var i = 0; i < frames; i++) {
+    final l = src.getInt16(i * 4, Endian.little);
+    final r = src.getInt16(i * 4 + 2, Endian.little);
+    out.setInt16(i * 2, (l + r) >> 1, Endian.little);
+  }
+  return out.buffer.asUint8List();
+}
+
 /// [RecorderEngine] built on the `record` plugin. MP3 and WAV are encoded in
 /// Dart from the PCM stream (MP3 through the bundled LAME encoder); M4A uses
 /// the platform AAC encoder.
 class RecordPluginEngine implements RecorderEngine {
-  RecordPluginEngine() : _recorder = AudioRecorder();
+  RecordPluginEngine({bool? isAndroid})
+    : _recorder = AudioRecorder(),
+      _isAndroid = isAndroid ?? Platform.isAndroid;
 
   final AudioRecorder _recorder;
+  final bool _isAndroid;
   final _levels = StreamController<double>.broadcast();
   final _interrupted = StreamController<bool>.broadcast();
+  final _ended = StreamController<void>.broadcast();
 
   StreamSubscription<Uint8List>? _pcmSub;
   StreamSubscription<Amplitude>? _ampSub;
@@ -61,6 +87,22 @@ class RecordPluginEngine implements RecorderEngine {
   Mp3Writer? _mp3;
   WavWriter? _wav;
   Object? _writeError;
+  Timer? _watchdog;
+  DateTime _lastChunk = DateTime.now();
+
+  /// Between a successful start and the end of [stop].
+  bool _running = false;
+  bool _stopping = false;
+  bool _paused = false;
+  bool _endedSent = false;
+
+  /// The format the platform actually delivers (it may differ from the
+  /// request, e.g. stereo on an input device without a mono mode).
+  int _channels = 1;
+  int _sampleRate = 44100;
+
+  /// Longest gap between audio chunks before capture counts as dead.
+  static const _stallLimit = Duration(seconds: 5);
 
   @override
   Stream<double> get levels => _levels.stream;
@@ -68,19 +110,40 @@ class RecordPluginEngine implements RecorderEngine {
   @override
   Stream<bool> get interrupted => _interrupted.stream;
 
-  static const _android = AndroidRecordConfig(
+  @override
+  Stream<void> get ended => _ended.stream;
+
+  static const _androidConfig = AndroidRecordConfig(
     // Keep the microphone's natural gain, like a plain MediaRecorder.
     audioSource: AndroidAudioSource.mic,
     manageBluetooth: false,
   );
 
-  static const _ios = IosRecordConfig(
+  // No Bluetooth hands-free profile: recordings use the phone's microphone
+  // (as on Android) and playback over headphones keeps full quality.
+  static const _iosConfig = IosRecordConfig(
     categoryOptions: [
       IosAudioCategoryOption.defaultToSpeaker,
-      IosAudioCategoryOption.allowBluetooth,
       IosAudioCategoryOption.allowBluetoothA2DP,
     ],
   );
+
+  RecordConfig _config(RecordingProfile profile, AudioEncoder encoder) =>
+      RecordConfig(
+        encoder: encoder,
+        sampleRate: profile.sampleRate,
+        bitRate: (profile.bitRateKbps ?? 128) * 1000,
+        numChannels: 1,
+        androidConfig: _androidConfig,
+        iosConfig: _iosConfig,
+        // Android: audio focus must never pause a recording (after a
+        // permanent focus loss, e.g. another app starting music, it would
+        // never resume). A phone call records as silence instead.
+        // iOS: calls and Siri pause the recording; it resumes afterwards.
+        audioInterruption: _isAndroid
+            ? AudioInterruptionMode.none
+            : AudioInterruptionMode.pauseResume,
+      );
 
   @override
   Future<bool> requestPermission() => _recorder.hasPermission();
@@ -88,104 +151,180 @@ class RecordPluginEngine implements RecorderEngine {
   @override
   Future<void> start(RecordingProfile profile, String path) async {
     _writeError = null;
+    _paused = false;
+    _endedSent = false;
+    _channels = 1;
+    _sampleRate = profile.sampleRate;
     _stateSub ??= _recorder.onStateChanged().listen(
-      (s) => _interrupted.add(s == RecordState.pause),
+      _onState,
+      onError: _onPlatformError,
     );
+    await _recorder.setOnConfigChanged((c) {
+      _channels = c.numChannels;
+      _sampleRate = c.sampleRate;
+    });
 
     if (profile.type == RecordingType.m4a) {
-      await _recorder.start(
-        RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          sampleRate: profile.sampleRate,
-          bitRate: profile.bitRateKbps! * 1000,
-          numChannels: 1,
-          androidConfig: _android,
-          iosConfig: _ios,
-          audioInterruption: AudioInterruptionMode.pauseResume,
-        ),
-        path: path,
-      );
+      await _recorder.start(_config(profile, AudioEncoder.aacLc), path: path);
+      _running = true;
+      // iOS reports average power in this mode, about 10 dB below the peak
+      // level the other formats show.
+      final boost = _isAndroid ? 0.0 : 10.0;
       _ampSub = _recorder
           .onAmplitudeChanged(const Duration(milliseconds: 100))
-          .listen((a) => _levels.add(levelFromDb(a.current)));
+          .listen((a) => _levels.add(levelFromDb(a.current + boost)));
       return;
     }
 
-    if (profile.type == RecordingType.mp3) {
-      _mp3 = await Mp3Writer.open(
-        path,
-        sampleRate: profile.sampleRate,
-        bitRateKbps: profile.bitRateKbps!,
-      );
-    } else {
-      _wav = await WavWriter.open(path, sampleRate: profile.sampleRate);
-    }
     final stream = await _recorder.startStream(
-      RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: profile.sampleRate,
-        numChannels: 1,
-        androidConfig: _android,
-        iosConfig: _ios,
-        audioInterruption: AudioInterruptionMode.pauseResume,
-      ),
+      _config(profile, AudioEncoder.pcm16bits),
     );
+    _running = true;
+
+    // Open the writer only now: nothing is left behind if the start failed,
+    // and the platform has reported the actual format (config changes are
+    // delivered before startStream returns). Chunks queue up behind it.
+    final type = profile.type;
+    final bitRate = profile.bitRateKbps;
+    final rate = _sampleRate;
+    _writes = () async {
+      try {
+        if (type == RecordingType.mp3) {
+          _mp3 = await Mp3Writer.open(
+            path,
+            sampleRate: rate,
+            bitRateKbps: bitRate!,
+          );
+        } else {
+          _wav = await WavWriter.open(path, sampleRate: rate);
+        }
+      } catch (e) {
+        // Nothing can be written (e.g. storage full): end the recording now
+        // rather than let it look like it's recording.
+        _writeError ??= e;
+        _endedOnItsOwn();
+      }
+    }();
+
     final done = _streamDone = Completer<void>();
     var lastLevel = DateTime.fromMillisecondsSinceEpoch(0);
+    _lastChunk = DateTime.now();
     _pcmSub = stream.listen(
       (chunk) {
-        final now = DateTime.now();
+        final now = _lastChunk = DateTime.now();
+        final pcm = _channels == 2 ? downmixToMono(chunk) : chunk;
         if (now.difference(lastLevel).inMilliseconds >= 90) {
           lastLevel = now;
-          _levels.add(levelFromDb(peakDb(chunk)));
+          _levels.add(levelFromDb(peakDb(pcm)));
         }
         // Keep chunks in order: each write waits for the previous one.
         _writes = _writes.then((_) async {
           try {
-            await (_mp3?.add(chunk) ?? _wav?.add(chunk));
+            await (_mp3?.add(pcm) ?? _wav?.add(pcm));
           } catch (e) {
             _writeError ??= e;
           }
         });
       },
-      onDone: () => done.isCompleted ? null : done.complete(),
-      onError: (Object e) => _writeError ??= e,
+      onDone: () {
+        if (!done.isCompleted) done.complete();
+        _endedOnItsOwn();
+      },
+      onError: _onPlatformError,
       cancelOnError: false,
     );
+    // Capture can also die silently (e.g. the audio route changed under an
+    // iOS audio engine); no chunks for a while means it did.
+    _watchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_paused && DateTime.now().difference(_lastChunk) > _stallLimit) {
+        _endedOnItsOwn();
+      }
+    });
+  }
+
+  void _onState(RecordState state) {
+    switch (state) {
+      case RecordState.pause:
+        _paused = true;
+        _interrupted.add(true);
+      case RecordState.record:
+        _paused = false;
+        _lastChunk = DateTime.now();
+        _interrupted.add(false);
+      case RecordState.stop:
+        _endedOnItsOwn();
+    }
+  }
+
+  void _onPlatformError(Object e) {
+    if (!_running) return;
+    _writeError ??= e;
+    _endedOnItsOwn();
+  }
+
+  void _endedOnItsOwn() {
+    if (!_running || _stopping || _endedSent) return;
+    _endedSent = true;
+    _watchdog?.cancel();
+    _ended.add(null);
+  }
+
+  @override
+  Future<void> resume() async {
+    if (_running && _paused) await _recorder.resume();
   }
 
   @override
   Future<void> stop() async {
-    await _recorder.stop();
-    await _ampSub?.cancel();
-    _ampSub = null;
-    final done = _streamDone;
-    if (done != null) {
-      // The stream closes once the platform side has flushed its buffers.
-      await done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
-      await _pcmSub?.cancel();
-      _pcmSub = null;
-      _streamDone = null;
-    }
-    await _writes;
+    _stopping = true;
+    _watchdog?.cancel();
+    _watchdog = null;
+    Object? error;
     try {
-      await _mp3?.close();
-      await _wav?.close();
-    } finally {
-      _mp3 = null;
-      _wav = null;
+      await _recorder.stop();
+    } catch (e) {
+      error = e;
     }
-    final err = _writeError;
-    if (err != null) throw err;
+    try {
+      await _ampSub?.cancel();
+      _ampSub = null;
+      final done = _streamDone;
+      if (done != null) {
+        // The stream closes once the platform side has delivered its data.
+        await done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+        await _pcmSub?.cancel();
+        _pcmSub = null;
+        _streamDone = null;
+      }
+      await _writes;
+    } finally {
+      try {
+        await _mp3?.close();
+        await _wav?.close();
+      } catch (e) {
+        error ??= e;
+      } finally {
+        _mp3 = null;
+        _wav = null;
+        _writes = Future.value();
+        _running = false;
+        _stopping = false;
+        _paused = false;
+      }
+    }
+    error ??= _writeError;
+    if (error != null) throw error;
   }
 
   @override
   Future<void> dispose() async {
+    _watchdog?.cancel();
     await _stateSub?.cancel();
     await _pcmSub?.cancel();
     await _ampSub?.cancel();
     await _recorder.dispose();
     await _levels.close();
     await _interrupted.close();
+    await _ended.close();
   }
 }

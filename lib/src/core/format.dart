@@ -31,6 +31,25 @@ String formatListDate(DateTime t) =>
 /// Recording list size: whole kibibytes, `39819KB`.
 String formatListSize(int bytes) => '${bytes ~/ 1024}KB';
 
+/// The time in a recording name made by [timestampName] (also with a
+/// " (1)"-style suffix or text after it), or null for other names.
+DateTime? parseTimestampName(String baseName) {
+  final m = RegExp(r'^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?!\d)')
+      .firstMatch(baseName);
+  if (m == null) return null;
+  final v = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
+  final t = DateTime(v[0], v[1], v[2], v[3], v[4], v[5]);
+  // Reject impossible dates such as month 13 (DateTime would roll them over).
+  final valid =
+      t.year == v[0] &&
+      t.month == v[1] &&
+      t.day == v[2] &&
+      t.hour == v[3] &&
+      t.minute == v[4] &&
+      t.second == v[5];
+  return valid ? t : null;
+}
+
 /// File name for a new recording: `2026_09_23_19_14_00`.
 String timestampName(DateTime t) =>
     '${t.year}_${_two(t.month)}_${_two(t.day)}_${_two(t.hour)}_${_two(t.minute)}_${_two(t.second)}';

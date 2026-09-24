@@ -37,6 +37,22 @@ void main() {
     expect(timestampName(DateTime(2026, 1, 2, 3, 4, 5)), '2026_01_02_03_04_05');
   });
 
+  test('timestamp names give the recording time', () {
+    expect(
+      parseTimestampName('2026_09_16_16_37_26'),
+      DateTime(2026, 9, 16, 16, 37, 26),
+    );
+    expect(
+      parseTimestampName('2026_09_16_16_37_26 (1)'),
+      DateTime(2026, 9, 16, 16, 37, 26),
+    );
+    expect(parseTimestampName('kris n evan got back then zach'), isNull);
+    expect(parseTimestampName('2026_13_16_16_37_26'), isNull);
+    expect(parseTimestampName('2026_02_30_10_00_00'), isNull);
+    expect(parseTimestampName('2026_09_16_16_37_261'), isNull);
+    expect(parseTimestampName('2026_09_16'), isNull);
+  });
+
   test('splitExtension', () {
     expect(splitExtension('kris n evan got back then zach.mp3'), (
       'kris n evan got back then zach',

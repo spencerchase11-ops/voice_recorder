@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
@@ -16,8 +17,32 @@ import 'common_actions.dart';
 import 'recording_list_screen.dart';
 import 'settings_screen.dart';
 
-class RecorderScreen extends StatelessWidget {
+class RecorderScreen extends StatefulWidget {
   const RecorderScreen({super.key});
+
+  @override
+  State<RecorderScreen> createState() => _RecorderScreenState();
+}
+
+class _RecorderScreenState extends State<RecorderScreen> {
+  StreamSubscription<String>? _notices;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The Recorder is the root screen, so it is always there to show what
+    // the app did on its own (e.g. a recording stopped because storage ran
+    // out), whichever screen is on top.
+    _notices ??= AppScope.read(context).notices.listen((message) {
+      if (mounted) showToast(context, message, long: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _notices?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -142,6 +167,8 @@ class _RecorderBody extends StatelessWidget {
             'the app starts.',
           );
         }
+      case RecordOutcome.noSpace:
+        showToast(context, 'Not enough storage left to record');
       case RecordOutcome.failed:
         showToast(context, 'Recording failed');
       case RecordOutcome.needsFolder:

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
@@ -40,8 +41,9 @@ abstract class RecordingStore extends ChangeNotifier {
   /// Opens the system share sheet. [origin] anchors the popover on iPad.
   Future<void> share(RecordingFile file, {Rect? origin});
 
-  /// Free space where new recordings go.
-  Future<int?> freeBytes();
+  /// Bytes a recording may still grow by and be saved, or null if unknown.
+  /// [pendingBytes] is the size of the recording in progress (0 when idle).
+  Future<int?> usableBytes({int pendingBytes = 0});
 
   /// Full path shown at the bottom of the Recorder screen.
   String displayPath(RecordingFile file) => '$folderDisplayPath/${file.name}';
@@ -115,8 +117,14 @@ class AndroidRecordingStore extends RecordingStore {
   Future<List<RecordingFile>> list() async {
     final uri = _settings.folder;
     if (uri == null || !_ready) return const [];
-    final rows = await _native.listFolder(uri);
-    return rows.map(_fromMap).where((f) => isAudioFileName(f.name)).toList();
+    try {
+      final rows = await _native.listFolder(uri);
+      return rows.map(_fromMap).where((f) => isAudioFileName(f.name)).toList();
+    } catch (e) {
+      // The folder was deleted or access was revoked: ask for it again.
+      await init();
+      rethrow;
+    }
   }
 
   @override
@@ -161,8 +169,19 @@ class AndroidRecordingStore extends RecordingStore {
   Future<void> share(RecordingFile file, {Rect? origin}) =>
       _native.shareDocument(file.id, RecordingStore.mimeTypeFor(file.name));
 
+  /// A recording is written to app storage while it runs and copied into
+  /// the folder when it stops, so it needs room in both places; on the same
+  /// volume (internal storage) that is twice its size until the copy is done.
   @override
-  Future<int?> freeBytes() => _native.freeBytes(_settings.folder);
+  Future<int?> usableBytes({int pendingBytes = 0}) async {
+    final s = await _native.storageSpace(_settings.folder);
+    if (s == null) return null;
+    final destination = s.destination - pendingBytes;
+    final usable = s.sameVolume
+        ? destination ~/ 2
+        : math.min(s.internal, destination);
+    return math.max(0, usable);
+  }
 
   @override
   Uri playbackUri(RecordingFile file) => Uri.parse(file.id);
@@ -297,8 +316,11 @@ class IosRecordingStore extends RecordingStore {
     );
   }
 
+  /// The recording in progress is already on this volume and is moved (not
+  /// copied) into the folder, so the free space is all usable.
   @override
-  Future<int?> freeBytes() => _native.freeBytes(_dir.path);
+  Future<int?> usableBytes({int pendingBytes = 0}) =>
+      _native.freeBytes(_dir.path);
 
   @override
   Uri playbackUri(RecordingFile file) => Uri.file(file.id);
