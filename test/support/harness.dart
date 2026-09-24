@@ -15,7 +15,7 @@ import 'fakes.dart';
 /// Loads the bundled Roboto family so text renders with real glyphs.
 Future<void> loadAppFonts() async {
   final loader = FontLoader('Roboto');
-  for (final w in ['Regular', 'Medium', 'Bold', 'Black']) {
+  for (final w in ['Regular', 'Medium', 'Bold']) {
     loader.addFont(rootBundle.load('assets/fonts/Roboto-$w.ttf'));
   }
   await loader.load();

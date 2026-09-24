@@ -139,8 +139,8 @@ class _RecorderBody extends StatelessWidget {
         final buttonsY = boxCenterY + Spec.buttonsCenterOffset;
 
         // The microphone sits on the timer box; shrink it on short screens so it
-        // never runs into the "no ads" button.
-        const micTopLimit = Spec.adsButtonInset + Spec.adsButtonSize + 8;
+        // keeps a small margin below the header.
+        const micTopLimit = Spec.microphoneTopMargin;
         final micBottom = boxTop - Spec.microphoneGap;
         final micScale = math.min(
           1.0,
@@ -155,18 +155,6 @@ class _RecorderBody extends StatelessWidget {
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            Positioned(
-              left: Spec.adsButtonInset - 11,
-              top: Spec.adsButtonInset - 11,
-              width: Spec.adsButtonSize + 22,
-              height: Spec.adsButtonSize + 22,
-              child: PressableArea(
-                onTap: () => showRemoveAdsDialog(context),
-                semanticLabel: 'Remove ads',
-                highlight: const Color(0x00000000),
-                child: const Center(child: AdsBadge(size: Spec.adsButtonSize)),
-              ),
-            ),
             Positioned(
               left: (w - micSize.width) / 2 + Spec.microphoneOffsetX,
               top: micBottom - micSize.height,

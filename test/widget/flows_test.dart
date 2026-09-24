@@ -197,19 +197,13 @@ void main() {
       expect(find.textContaining(_folder), findsNothing);
     });
 
-    testWidgets('share and the no-ads badge', (tester) async {
+    testWidgets('share, and no ads upsell', (tester) async {
       useReferenceDevice(tester);
       final t = await pumpReferenceApp(tester);
       await tester.tap(labeled('Share'));
       await tester.pump();
       expect(t.store.shared, [_kris]);
-
-      await tester.tap(labeled('Remove ads'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('has no ads'), findsOneWidget);
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('has no ads'), findsNothing);
+      expect(labeled('Remove ads'), findsNothing);
     });
   });
 
@@ -346,7 +340,7 @@ void main() {
       );
     });
 
-    testWidgets('folder, remove ads, rate and about', (tester) async {
+    testWidgets('folder, rate and about', (tester) async {
       LicenseRegistry.reset();
       registerThirdPartyLicenses();
       addTearDown(LicenseRegistry.reset);
@@ -360,11 +354,7 @@ void main() {
       await openSettings(tester);
       expect(labeled('Folder, $_folder'), findsOneWidget);
 
-      await tester.tap(labeled('Remove ads'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('has no ads'), findsOneWidget);
-      await tester.tap(find.text('OK'));
-      await tester.pumpAndSettle();
+      expect(find.text('Remove ads'), findsNothing);
 
       await tester.tap(labeled('About'));
       await tester.pumpAndSettle();

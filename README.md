@@ -16,7 +16,7 @@ tests render every screen within a few pixels of the original. See
 | --- | --- |
 | **Recorder** | Record and stop. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. |
 | **Recording list** | All recordings, newest first, with date and size. Tap a row to select it: it turns orange and shows a seek bar. The row's play button plays or pauses it. The bottom bar deletes, renames or shares the selected file. |
-| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). The recordings folder. "Remove ads", "Rate 5 stars" and About, which has the licenses. |
+| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). The recordings folder. "Rate 5 stars" and About, which has the licenses. |
 
 Recording formats (all mono):
 
@@ -70,8 +70,9 @@ decided:
 
 - While recording, the record button becomes a stop button and the
   microphone's red light pulses. The play button becomes pause while playing.
-- The original was ad-supported. This version has no ads, so **Remove ads**
-  just says so.
+- The original's "no ads" badge on the Recorder screen and its **Remove ads**
+  setting sold an ad-free premium version. This version is free and has no
+  ads, so both are left out.
 - **Rate 5 stars** opens the Play Store listing on Android. On iOS it opens
   the App Store review page once `AppConfig.appStoreId` is set; until then it
   shows a toast.
@@ -149,7 +150,8 @@ flutter test                              # unit, widget, controller and golden 
   (needs Pillow and NumPy) puts each golden next to the original screenshot,
   with a difference image, and prints the mean pixel difference. The current
   values are 3.1 to 4.2 (out of 255) for the dialogs, list and settings, and
-  7.0 for the Recorder, where the microphone grille's hole pattern differs.
+  7.1 for the Recorder, where the microphone grille's hole pattern differs.
+  The left-out ads badge and "Remove ads" row count toward these numbers.
   `tool/align_check.py` measures how far a single element is off, in pixels.
 - `test/widget/flows_test.dart` taps through the app like a user would:
   record and stop, the first-run folder prompt, missing microphone access,

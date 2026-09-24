@@ -54,11 +54,15 @@ excluded), on a 0 to 255 scale:
 
 | Screen | Difference |
 | --- | --- |
-| Recorder | 7.0 (mostly the microphone grille's hole pattern) |
+| Recorder | 7.1 (mostly the microphone grille's hole pattern) |
 | Delete dialog | 3.2 |
 | Rename dialog | 3.1 |
 | Recording list | 4.2 |
-| Settings | 3.4 |
+| Settings | 4.0 |
+
+The original's "no ads" badge (top left of the Recorder) and its "Remove ads"
+settings row advertised a paid version. They are left out on purpose, and they
+count toward the differences above.
 
 ## Key measurements
 
@@ -72,8 +76,8 @@ icon is `#0572E7` and the selected label `#0000FE`. The list's action bar is
 **Recorder.** The timer box is 242.6 × 67.7 dp with a 4.5 dp radius and a
 2.3 dp bevel. It is centred vertically in the body, 2.5 dp low. The timer
 text is 45 sp. The microphone artwork is 148 × 253.14 dp. It stands 0.3 dp
-above the box, 0.86 dp left of centre, and shrinks on short screens so it
-never reaches the "no ads" badge (26 dp, 16 dp from the corner). The record
+above the box, 0.86 dp left of centre, and shrinks on short screens to keep
+8 dp of room under the header. The record
 and play buttons are centred 41 dp from the left and 42 dp from the right
 edge. The level meter is 10 squares of 18.57 × 14.29 dp at a 21.43 dp pitch,
 `#555555` off and `#5455FF` on, at least one lit. "Remaining time" is 12 sp.

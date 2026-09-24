@@ -62,9 +62,3 @@ Future<bool> showChooseFolderDialog(BuildContext context) async {
   if (go != true || !context.mounted) return false;
   return app.chooseFolder();
 }
-
-Future<void> showRemoveAdsDialog(BuildContext context) => showMessageDialog(
-  context,
-  title: 'Remove ads',
-  message: 'This version of Voice Recorder has no ads, so there is nothing to remove.',
-);

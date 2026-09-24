@@ -13,7 +13,6 @@ import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
-import '../widgets/recorder_widgets.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
@@ -116,11 +115,6 @@ class SettingsScreen extends StatelessWidget {
                           },
                   ),
                   const _Section('More app'),
-                  _Item(
-                    icon: const AdsBadge(size: 31.7, colored: true),
-                    title: 'Remove ads',
-                    onTap: () => showRemoveAdsDialog(context),
-                  ),
                   _Item(
                     icon: const InkIcon(
                       AppIcons.star,

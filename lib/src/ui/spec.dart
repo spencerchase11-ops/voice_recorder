@@ -113,8 +113,6 @@ abstract final class Spec {
 
   // ------------------------------------------------------ recorder screen
   /// Offsets inside the body (the area between the header and the tab bar).
-  static const double adsButtonInset = 16;
-  static const double adsButtonSize = 26;
 
   /// The timer box is vertically centred in the body, 2.5 dp low.
   static const double timerCenterOffset = 2.5;
@@ -136,6 +134,9 @@ abstract final class Spec {
   /// The original artwork's axis sits 0.86 dp left of the screen centre.
   static const double microphoneOffsetX = -0.86;
   static const double microphoneGap = 0.3;
+
+  /// On short screens the microphone shrinks to keep this much room above it.
+  static const double microphoneTopMargin = 8;
 
   /// Glossy buttons: canvas sizes of the rendered artwork and the centres of
   /// the buttons measured from the screen edges.

@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/widgets.dart';
 
 import '../spec.dart';
@@ -186,72 +184,4 @@ class _GlossyButtonState extends State<GlossyButton> {
       ),
     );
   }
-}
-
-/// The "no ads" badge: white outline on the Recorder screen, red/green in
-/// Settings.
-class AdsBadge extends StatelessWidget {
-  const AdsBadge({super.key, required this.size, this.colored = false});
-
-  final double size;
-  final bool colored;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(size: Size.square(size), painter: _AdsPainter(colored));
-  }
-}
-
-class _AdsPainter extends CustomPainter {
-  _AdsPainter(this.colored);
-
-  final bool colored;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width;
-    final c = Offset(s / 2, s / 2);
-    final ringColor = colored
-        ? const Color(0xFFFF0A0A)
-        : const Color(0xFFFFFFFF);
-    final ringWidth = s * (colored ? 0.115 : 0.085);
-    final r = s / 2 - ringWidth / 2;
-
-    if (colored) {
-      canvas.drawCircle(c, r, Paint()..color = const Color(0xFFFFFFFF));
-    }
-
-    final tp = TextPainter(
-      text: TextSpan(
-        text: 'Ads',
-        style: TextStyle(
-          fontFamily: Spec.font,
-          fontWeight: FontWeight.w900,
-          fontSize: s * 0.42,
-          letterSpacing: -s * 0.012,
-          color: colored ? const Color(0xFF12E012) : const Color(0xFFFFFFFF),
-          height: 1,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, c - Offset(tp.width / 2, tp.height * 0.52));
-
-    final ring = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = ringWidth
-      ..color = ringColor;
-    canvas.drawCircle(c, r, ring);
-    final d = r * math.cos(math.pi / 4);
-    canvas.drawLine(
-      c + Offset(-d, -d),
-      c + Offset(d, d),
-      Paint()
-        ..strokeWidth = ringWidth * (colored ? 0.95 : 0.9)
-        ..color = ringColor,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_AdsPainter old) => old.colored != colored;
 }
