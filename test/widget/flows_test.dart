@@ -155,7 +155,8 @@ void main() {
       expect(t.store.files.map((f) => f.name), isNot(contains(_kris)));
       expect(find.text('$_folder/$_kris'), findsNothing);
       expect(find.text('00:00'), findsOneWidget);
-      expect(enabled(tester, 'Delete'), isFalse);
+      expect(labeled('Delete'), findsNothing);
+      expect(find.text('Voice Recorder'), findsOneWidget);
     });
 
     testWidgets('rename keeps the extension and drops illegal characters', (
@@ -185,16 +186,44 @@ void main() {
       expect(find.text('33:57'), findsOneWidget);
     });
 
-    testWidgets('header actions are off until there is a recording', (
+    testWidgets('without a recording: app name, no file actions, grey play', (
       tester,
     ) async {
       useReferenceDevice(tester);
       await pumpReferenceApp(tester, current: null);
-      for (final l in ['Share', 'Rename', 'Delete', 'Play']) {
-        expect(enabled(tester, l), isFalse, reason: l);
+      expect(find.text('Voice Recorder'), findsOneWidget);
+      for (final l in ['Share', 'Rename', 'Delete']) {
+        expect(labeled(l), findsNothing, reason: l);
       }
+      expect(enabled(tester, 'Play'), isFalse);
+      expect(
+        tester.widget<GlossyButton>(labeled('Play')).disabledAsset,
+        'assets/images/play_disabled.png',
+      );
       expect(find.text('00:00'), findsOneWidget);
       expect(find.textContaining(_folder), findsNothing);
+    });
+
+    testWidgets('the first recording fills in the empty screen', (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester, current: null);
+      final app = t.controller;
+
+      await tester.tap(labeled('Record'));
+      await pumpUntil(tester, () => app.isRecording && !app.isBusy);
+      expect(find.text('Voice Recorder'), findsOneWidget);
+      expect(find.textContaining(_folder), findsOneWidget);
+
+      await tester.tap(labeled('Stop recording'));
+      await pumpUntil(tester, () => !app.isRecording && !app.isBusy);
+      await tester.pumpAndSettle();
+      expect(find.text('Voice Recorder'), findsNothing);
+      expect(find.text('Recorder'), findsNWidgets(2)); // header and tab
+      for (final l in ['Share', 'Rename', 'Delete', 'Play']) {
+        expect(enabled(tester, l), isTrue, reason: l);
+      }
     });
 
     testWidgets('share, and no ads upsell', (tester) async {

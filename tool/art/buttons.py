@@ -1,4 +1,5 @@
-"""Renders the glossy transport buttons (record/stop, play/pause, list play/pause).
+"""Renders the glossy transport buttons (record/stop, play/pause/disabled play,
+list play/pause).
 
 Shapes and colours were sampled from reference screenshots of the original
 app; the recording/playing variants (stop, pause) are drawn in the same style.
@@ -214,6 +215,38 @@ def green_pause(scale, ss):
     return finish(img, W, H, ss)
 
 
+# ------------------------------------------- silver (disabled) play
+def _silver_shade(x, y, top, bottom, sd, px):
+    """The play button's disabled look: the same glossy triangle in silver."""
+    t = (y - top) / (bottom - top)
+    u = np.clip((x - x.min()) / max(x.max() - x.min(), 1e-6), 0, 1)
+    arc_t = 0.50 + 0.10 * np.cos(u * np.pi)
+    arc = t - arc_t
+    # body under the gloss: darkest right below it, lighter towards the bottom
+    below = np.clip(arc / (1 - arc_t), 0, 1)
+    base = blend(col(170, 174, 177) + 0 * x[..., None], col(228, 229, 231), smoothstep(0.0, 0.75, below))
+    # gloss: light at the top, dimmer lower down, brighter again along its edge
+    above = np.clip(t / arc_t, 0, 1)
+    gloss = blend(col(204, 207, 209) + 0 * x[..., None], col(176, 180, 183), smoothstep(0.0, 0.6, above))
+    gloss = blend(gloss, col(200, 203, 206) + 0 * x[..., None], smoothstep(0.75, 1.0, above) * 0.8)
+    cap = 1 - smoothstep(-0.02, 0.02, arc)
+    rgb = blend(base, gloss, cap)
+    # light rim just inside the outline
+    rim = gauss(sd, -1.1, 0.5)
+    return blend(rgb, col(222, 224, 226) + 0 * x[..., None], rim * 0.35)
+
+
+def silver_play(scale, ss):
+    w, h = 28.0, 36.0
+    x, y, W, H, px = canvas(w, h, scale, ss)
+    x0, y0 = 1.15, 1.45
+    pts = fit_rounded_triangle(x0, y0, 25.7, 33.1, 2.4)
+    sd = sd_rounded_polygon(x, y, pts, 2.4)
+    rgb = _silver_shade(x, y, y0, y0 + 33.1, sd, px)
+    img = over((np.zeros(x.shape + (3,)), np.zeros(x.shape)), rgb, cover(sd, px))
+    return finish(img, W, H, ss)
+
+
 # ---------------------------------------------------- blue play / pause
 def _blue_shade(x, y, top, bottom, sd, px, left):
     t = (y - top) / (bottom - top)
@@ -262,6 +295,7 @@ def main():
         'record_stop.png': lambda: red_ball(args.scale, args.ss, symbol='stop'),
         'play.png': lambda: green_play(args.scale, args.ss),
         'pause.png': lambda: green_pause(args.scale, args.ss),
+        'play_disabled.png': lambda: silver_play(args.scale, args.ss),
         'list_play.png': lambda: blue_play(args.scale, args.ss),
         'list_pause.png': lambda: blue_pause(args.scale, args.ss),
     }

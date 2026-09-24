@@ -1,7 +1,8 @@
 # How the spec was measured
 
-The spec is five screenshots of the original app: Recorder, Recording list,
-Settings, the Delete dialog and the Rename dialog. Every size, colour and font
+The spec is six screenshots of the original app: the Recorder with and without
+a recording, the Recording list, Settings, the Delete dialog and the Rename
+dialog. Every size, colour and font
 in [`lib/src/ui/spec.dart`](../lib/src/ui/spec.dart) was measured from them.
 This page explains how, so the numbers can be checked or re-measured.
 
@@ -55,6 +56,7 @@ excluded), on a 0 to 255 scale:
 | Screen | Difference |
 | --- | --- |
 | Recorder | 7.1 (mostly the microphone grille's hole pattern) |
+| Recorder, no recording | 6.5 |
 | Delete dialog | 3.2 |
 | Rename dialog | 3.1 |
 | Recording list | 4.2 |
@@ -77,11 +79,14 @@ icon is `#0572E7` and the selected label `#0000FE`. The list's action bar is
 2.3 dp bevel. It is centred vertically in the body, 2.5 dp low. The timer
 text is 45 sp. The microphone artwork is 148 × 253.14 dp. It stands 0.3 dp
 above the box, 0.86 dp left of centre, and shrinks on short screens to keep
-8 dp of room under the header. The record
-and play buttons are centred 41 dp from the left and 42 dp from the right
-edge. The level meter is 10 squares of 18.57 × 14.29 dp at a 21.43 dp pitch,
+8 dp of room under the header. The record and play buttons are centred 41 dp
+from the left and 42 dp from the right edge. The level meter is 10 squares of 18.57 × 14.29 dp at a 21.43 dp pitch,
 `#555555` off and `#5455FF` on, at least one lit. "Remaining time" is 12 sp.
 The path at the bottom is 14 sp, at 48.44 dp, after a 19.7 dp floppy icon.
+Before the first recording, the header shows the app name, "Voice Recorder",
+without the share, rename and delete icons. The timer reads 00:00, the path
+line is empty, and the play button is a silver version of the green one
+(`play_disabled.png`, same shape and gloss).
 
 **Recording list.** Rows have 10 dp vertical padding and two 16 sp lines:
 the name in white, then the date and size in `#C1C1C1`. Text starts at

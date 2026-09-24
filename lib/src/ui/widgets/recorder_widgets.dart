@@ -134,10 +134,15 @@ class GlossyButton extends StatefulWidget {
     required this.asset,
     required this.size,
     required this.onTap,
+    this.disabledAsset,
     this.semanticLabel,
   });
 
   final String asset;
+
+  /// Artwork shown while [onTap] is null (the original greys out the play
+  /// button this way); defaults to [asset].
+  final String? disabledAsset;
   final Size size;
   final VoidCallback? onTap;
   final String? semanticLabel;
@@ -153,7 +158,7 @@ class _GlossyButtonState extends State<GlossyButton> {
   Widget build(BuildContext context) {
     final enabled = widget.onTap != null;
     Widget img = Image.asset(
-      widget.asset,
+      enabled ? widget.asset : widget.disabledAsset ?? widget.asset,
       width: widget.size.width,
       height: widget.size.height,
       filterQuality: FilterQuality.medium,
@@ -180,7 +185,7 @@ class _GlossyButtonState extends State<GlossyButton> {
         onTapUp: enabled ? (_) => setState(() => _down = false) : null,
         onTapCancel: enabled ? () => setState(() => _down = false) : null,
         onTap: widget.onTap,
-        child: Opacity(opacity: enabled ? 1 : 0.45, child: img),
+        child: img,
       ),
     );
   }

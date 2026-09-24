@@ -42,6 +42,7 @@ const imageAssets = [
   'assets/images/record.png',
   'assets/images/record_stop.png',
   'assets/images/play.png',
+  'assets/images/play_disabled.png',
   'assets/images/pause.png',
   'assets/images/list_play.png',
   'assets/images/list_pause.png',
@@ -81,6 +82,7 @@ Future<TestApp> pumpReferenceApp(
   List<RecordingFile>? files,
   String? current = 'mem://kris n evan got back then zach.mp3',
   Duration lastDuration = const Duration(minutes: 33, seconds: 57),
+  int? freeBytes,
 }) async {
   SharedPreferences.setMockInitialValues({
     'last_file': ?current,
@@ -93,7 +95,7 @@ Future<TestApp> pumpReferenceApp(
   final settings = (await tester.runAsync(Settings.load))!;
   final store = FakeStore(
     files: files ?? referenceRecordings(),
-    free: referenceFreeBytes,
+    free: freeBytes ?? referenceFreeBytes,
   );
   final engine = FakeEngine();
   final playback = FakePlayback();

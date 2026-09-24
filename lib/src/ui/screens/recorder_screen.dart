@@ -29,39 +29,43 @@ class RecorderScreen extends StatelessWidget {
     return ScreenFrame(
       child: Column(
         children: [
+          // Without a recording the original shows the app name and no file
+          // actions.
           RedHeader(
-            title: 'Recorder',
+            title: cur == null ? 'Voice Recorder' : 'Recorder',
             children: [
-              BarButton(
-                center: const Offset(22.86, 24.0),
-                semanticLabel: 'Share',
-                onTap: canAct ? () => shareRecording(context, cur) : null,
-                child: const InkIcon(
-                  AppIcons.share,
-                  size: Size(22.9, 22.9),
-                  color: Color(0xFFFFFFFF),
+              if (cur != null) ...[
+                BarButton(
+                  center: const Offset(22.86, 24.0),
+                  semanticLabel: 'Share',
+                  onTap: canAct ? () => shareRecording(context, cur) : null,
+                  child: const InkIcon(
+                    AppIcons.share,
+                    size: Size(22.9, 22.9),
+                    color: Color(0xFFFFFFFF),
+                  ),
                 ),
-              ),
-              BarButton(
-                center: Offset(width - 77.0, 23.0),
-                semanticLabel: 'Rename',
-                onTap: canAct ? () => renameRecording(context, cur) : null,
-                child: const InkIcon(
-                  AppIcons.pencil,
-                  size: Size(23.7, 23.7),
-                  color: Color(0xFFFFFFFF),
+                BarButton(
+                  center: Offset(width - 77.0, 23.0),
+                  semanticLabel: 'Rename',
+                  onTap: canAct ? () => renameRecording(context, cur) : null,
+                  child: const InkIcon(
+                    AppIcons.pencil,
+                    size: Size(23.7, 23.7),
+                    color: Color(0xFFFFFFFF),
+                  ),
                 ),
-              ),
-              BarButton(
-                center: Offset(width - 26.0, 23.43),
-                semanticLabel: 'Delete',
-                onTap: canAct ? () => deleteRecording(context, cur) : null,
-                child: const InkIcon(
-                  AppIcons.trash,
-                  size: Size(20.6, 24.6),
-                  color: Color(0xFFFFFFFF),
+                BarButton(
+                  center: Offset(width - 26.0, 23.43),
+                  semanticLabel: 'Delete',
+                  onTap: canAct ? () => deleteRecording(context, cur) : null,
+                  child: const InkIcon(
+                    AppIcons.trash,
+                    size: Size(20.6, 24.6),
+                    color: Color(0xFFFFFFFF),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           const Expanded(child: BrushedMetal(child: _RecorderBody())),
@@ -192,6 +196,7 @@ class _RecorderBody extends StatelessWidget {
                 asset: app.isPlayingCurrent
                     ? 'assets/images/pause.png'
                     : 'assets/images/play.png',
+                disabledAsset: 'assets/images/play_disabled.png',
                 size: Spec.playButtonCanvas,
                 semanticLabel: app.isPlayingCurrent ? 'Pause' : 'Play',
                 onTap: app.currentFile == null || app.isRecording

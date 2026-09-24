@@ -23,6 +23,20 @@ void main() {
     );
   });
 
+  testWidgets('recorder without a recording', (tester) async {
+    useReferenceDevice(tester);
+    // The reference screenshot shows "Remaining time: 9663:10:59".
+    await pumpReferenceApp(
+      tester,
+      current: null,
+      freeBytes: (9663 * 3600 + 10 * 60 + 59) * 20000,
+    );
+    await expectLater(
+      find.byType(WidgetsApp),
+      matchesGoldenFile('goldens/recorder_empty.png'),
+    );
+  });
+
   testWidgets('delete dialog', (tester) async {
     useReferenceDevice(tester);
     await pumpReferenceApp(tester);

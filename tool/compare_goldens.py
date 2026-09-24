@@ -5,8 +5,9 @@ reference | render | difference (amplified), and prints the mean absolute
 difference of the app area (status and navigation bars excluded).
 
 Usage: python3 tool/compare_goldens.py <reference_dir> [<out_dir>]
-  reference_dir holds recorder.jpg, delete_dialog.jpg, rename_dialog.jpg,
-  list.jpg and settings.jpg (1440x3120 screenshots of the original app).
+  reference_dir holds recorder.jpg, recorder_empty.jpg, delete_dialog.jpg,
+  rename_dialog.jpg, list.jpg and settings.jpg (1440x3120 screenshots of the
+  original app).
 """
 import os
 import sys
@@ -16,6 +17,7 @@ from PIL import Image
 
 PAIRS = {
     'recorder': 'recorder',
+    'recorder_empty': 'recorder_empty',
     'delete_dialog': 'delete_dialog',
     'rename_dialog': 'rename_dialog',
     'recording_list': 'list',

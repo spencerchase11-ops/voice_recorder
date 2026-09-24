@@ -4,8 +4,9 @@ A rebuild of the classic 2016 Android voice recorder: red title bar, brushed-met
 background, chrome studio microphone, glossy record/play buttons. It is written in
 Flutter and runs on **Android (Google Play)** and **iOS**.
 
-Five screenshots of the original app are the spec: the Recorder, the Recording
-list, Settings, the Delete dialog and the Rename dialog. On the phone those
+Six screenshots of the original app are the spec: the Recorder with and
+without a recording, the Recording list, Settings, the Delete dialog and the
+Rename dialog. On the phone those
 screenshots came from (1440×3120, 3.5× density, font scale 1.077), the golden
 tests render every screen within a few pixels of the original. See
 [docs/SPEC.md](docs/SPEC.md) for how the measurements were made.
@@ -14,7 +15,7 @@ tests render every screen within a few pixels of the original. See
 
 | Screen | What it does |
 | --- | --- |
-| **Recorder** | Record and stop. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. |
+| **Recorder** | Record and stop. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. Before the first recording, the header shows "Voice Recorder" without those buttons, the timer reads 00:00 and the play button is grey, like the original. |
 | **Recording list** | All recordings, newest first, with date and size. Tap a row to select it: it turns orange and shows a seek bar. The row's play button plays or pauses it. The bottom bar deletes, renames or shares the selected file. |
 | **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). The recordings folder. "Rate 5 stars" and About, which has the licenses. |
 
@@ -150,7 +151,8 @@ flutter test                              # unit, widget, controller and golden 
   (needs Pillow and NumPy) puts each golden next to the original screenshot,
   with a difference image, and prints the mean pixel difference. The current
   values are 3.1 to 4.2 (out of 255) for the dialogs, list and settings, and
-  7.1 for the Recorder, where the microphone grille's hole pattern differs.
+  6.5 to 7.1 for the Recorder, where the microphone grille's hole pattern
+  differs.
   The left-out ads badge and "Remove ads" row count toward these numbers.
   `tool/align_check.py` measures how far a single element is off, in pixels.
 - `test/widget/flows_test.dart` taps through the app like a user would:
