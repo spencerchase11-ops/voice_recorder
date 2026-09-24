@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light tile behind the red disc (colours measured from the original icon). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#FFFFF3F5"
+        android:centerColor="#FFE7E3E4"
+        android:endColor="#FFC2C3C5" />
+</shape>

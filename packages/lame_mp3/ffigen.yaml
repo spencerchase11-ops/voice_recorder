@@ -1,0 +1,26 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+# (Needs libclang; add `llvm-path:` if ffigen cannot find it.)
+name: LameMp3Bindings
+description: |
+  Bindings for `src/lame_mp3.h`.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/lame_mp3_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'src/lame_mp3.h'
+  include-directives:
+    - 'src/lame_mp3.h'
+functions:
+  include:
+    - 'lame_mp3_.*'
+  symbol-address:
+    # Used as the NativeFinalizer callback for encoder handles.
+    include:
+      - 'lame_mp3_close'
+macros:
+  include:
+    - 'LAME_MP3_.*'
+comments:
+  style: any
+  length: full

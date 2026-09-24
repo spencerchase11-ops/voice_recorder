@@ -1,0 +1,3 @@
+tags:
+  golden:
+    description: Pixel comparisons against the reference renders in test/golden/goldens.

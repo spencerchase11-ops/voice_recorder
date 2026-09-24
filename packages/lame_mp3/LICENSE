@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 The lame_mp3 authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+The MIT license above covers the lame_mp3 plugin's own code: everything in
+this package except the LAME files in src/lame/.
+
+src/lame/ contains the LAME MP3 encoder library (libmp3lame 4.0,
+https://lame.sourceforge.io), Copyright (c) 1999-2011 The LAME Project and
+others (see src/lame/README and the individual source files). It is licensed
+under the GNU Library General Public License, version 2 or (at your option)
+any later version (LGPL-2.0-or-later); see src/lame/COPYING and
+src/lame/LICENSE. The native library built from src/ (liblame_mp3.so on
+Android, lame_mp3.framework on iOS) contains LAME and is therefore distributed
+under the LGPL. Of the files in src/lame/, only config.h and PATCHES.md were
+written for this plugin; they are covered by the MIT license above.
