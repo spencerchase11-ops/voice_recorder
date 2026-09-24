@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.StatFs
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -113,7 +114,30 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 result.success(null)
             }
             "freeBytes" -> background(result) { freeBytes(call.argument("location")) }
+            "openAppSettings" -> {
+                try {
+                    openAppSettings()
+                    result.success(null)
+                } catch (e: RuntimeException) {
+                    // e.g. no settings activity on an unusual device
+                    result.error("settings", e.message, null)
+                }
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    /** This app's page in the system settings, where the microphone can be allowed. */
+    private fun openAppSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", context.packageName, null),
+        )
+        val act = activity
+        if (act != null) {
+            act.startActivity(intent)
+        } else {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 

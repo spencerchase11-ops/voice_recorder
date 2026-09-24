@@ -48,6 +48,13 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     if (!_loaded) {
       _loaded = true;
       _app.refreshFiles();
+      // Android: until a folder is chosen there is nothing to list, and old
+      // recordings would look lost. Ask for it (this also refreshes the list).
+      if (!_app.store.isReady) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) showChooseFolderDialog(context);
+        });
+      }
     }
   }
 
@@ -79,6 +86,12 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       return;
     }
     await action(f);
+  }
+
+  Future<void> _play(RecordingFile f) async {
+    if (!await _app.togglePlay(f) && mounted) {
+      showToast(context, "Can't play this file");
+    }
   }
 
   @override
@@ -119,7 +132,11 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                     onSelect: () => setState(() => _selected = f.id),
                     onPlay: () {
                       setState(() => _selected = f.id);
-                      app.togglePlay(f);
+                      if (app.isRecording) {
+                        showToast(context, 'Stop recording to play a file');
+                        return;
+                      }
+                      _play(f);
                     },
                   );
                 },
@@ -306,20 +323,36 @@ class _RecordingRow extends StatelessWidget {
 }
 
 /// Seek bar and position shown under the selected row.
-class _SeekSection extends StatelessWidget {
+class _SeekSection extends StatefulWidget {
   const _SeekSection({required this.file});
 
   final RecordingFile file;
 
   @override
+  State<_SeekSection> createState() => _SeekSectionState();
+}
+
+class _SeekSectionState extends State<_SeekSection> {
+  /// Where the thumb is while the user drags it (0..1).
+  double? _drag;
+
+  @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final loaded = app.playback.fileId == file.id;
+    final loaded = app.playback.fileId == widget.file.id;
     final position = loaded ? app.playback.position : Duration.zero;
     final duration = loaded ? app.playback.duration : Duration.zero;
-    final progress = duration.inMilliseconds <= 0
-        ? 0.0
-        : (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+    final progress =
+        _drag ??
+        (duration.inMilliseconds <= 0
+            ? 0.0
+            : (position.inMilliseconds / duration.inMilliseconds).clamp(
+                0.0,
+                1.0,
+              ));
+    final shown = _drag != null && duration > Duration.zero
+        ? duration * _drag!
+        : position;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -330,13 +363,16 @@ class _SeekSection extends StatelessWidget {
           height: Spec.seekHeight,
           child: HoloSeekBar(
             progress: progress,
-            onSeek: (p) async {
-              if (!loaded) {
-                await app.togglePlay(file);
-                await app.playback.pause();
+            onChanged: (p) => setState(() => _drag = p),
+            onChangeEnd: (p) async {
+              setState(() => _drag = null);
+              if (app.isRecording) {
+                showToast(context, 'Stop recording to play a file');
+                return;
               }
-              final d = app.playback.duration;
-              await app.playback.seek(d * p);
+              if (!await app.seek(widget.file, p) && context.mounted) {
+                showToast(context, "Can't play this file");
+              }
             },
           ),
         ),
@@ -344,7 +380,7 @@ class _SeekSection extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(left: Spec.seekTimeLeft),
           child: AText(
-            formatPosition(position),
+            formatPosition(shown),
             style: Spec.listName,
             maxLines: 1,
           ),
@@ -355,11 +391,36 @@ class _SeekSection extends StatelessWidget {
 }
 
 /// Holo-style seek bar: thin dark track, blue thumb with a translucent halo.
-class HoloSeekBar extends StatelessWidget {
-  const HoloSeekBar({super.key, required this.progress, required this.onSeek});
+class HoloSeekBar extends StatefulWidget {
+  const HoloSeekBar({
+    super.key,
+    required this.progress,
+    required this.onChanged,
+    required this.onChangeEnd,
+  });
 
   final double progress;
-  final ValueChanged<double> onSeek;
+
+  /// The thumb moved (while dragging).
+  final ValueChanged<double> onChanged;
+
+  /// The user let go (or tapped): seek here.
+  final ValueChanged<double> onChangeEnd;
+
+  @override
+  State<HoloSeekBar> createState() => _HoloSeekBarState();
+}
+
+class _HoloSeekBarState extends State<HoloSeekBar> {
+  double? _last;
+
+  void _move(double p) => widget.onChanged(_last = p);
+
+  void _end() {
+    final p = _last;
+    _last = null;
+    if (p != null) widget.onChangeEnd(p);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -371,11 +432,14 @@ class HoloSeekBar extends StatelessWidget {
             ((p.dx - start) / math.max(1, end - start)).clamp(0.0, 1.0);
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapUp: (d) => onSeek(at(d.localPosition)),
-          onHorizontalDragUpdate: (d) => onSeek(at(d.localPosition)),
+          onTapUp: (d) => widget.onChangeEnd(at(d.localPosition)),
+          onHorizontalDragStart: (d) => _move(at(d.localPosition)),
+          onHorizontalDragUpdate: (d) => _move(at(d.localPosition)),
+          onHorizontalDragEnd: (_) => _end(),
+          onHorizontalDragCancel: _end,
           child: CustomPaint(
             size: Size(c.maxWidth, Spec.seekHeight),
-            painter: _SeekPainter(progress, start, end),
+            painter: _SeekPainter(widget.progress, start, end),
           ),
         );
       },

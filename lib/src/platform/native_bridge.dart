@@ -90,4 +90,8 @@ class NativeBridge {
 
   /// iOS: "iPhone" or "iPad", used to describe the Files app location.
   Future<String?> deviceKind() => _channel.invokeMethod<String>('deviceKind');
+
+  /// Opens this app's page in the system settings (to allow the microphone).
+  Future<void> openAppSettings() =>
+      _channel.invokeMethod<void>('openAppSettings');
 }

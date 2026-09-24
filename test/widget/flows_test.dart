@@ -1,5 +1,8 @@
 // Drives the screens the way a user would, on the reference phone.
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart' show LicensePage;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,11 +10,27 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:voice_recorder/src/core/format.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
 import 'package:voice_recorder/src/licenses.dart';
+import 'package:voice_recorder/src/ui/dialogs/dialogs.dart';
+import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
 import 'package:voice_recorder/src/ui/widgets/recorder_widgets.dart';
 
 import '../support/fakes.dart';
 import '../support/harness.dart';
+
+/// Records the methods called on the app's native channel.
+List<String> mockNativeChannel() {
+  final calls = <String>[];
+  const channel = MethodChannel('com.spencerchase.voicerecorder/native');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(channel, (call) async {
+    calls.add(call.method);
+    return null;
+  });
+  addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  return calls;
+}
 
 const _kris = 'kris n evan got back then zach.mp3';
 const _folder = '/storage/emulated/0/Recorders';
@@ -105,19 +124,79 @@ void main() {
       expect(t.store.saved, hasLength(1));
     });
 
-    testWidgets('without microphone access it explains why', (tester) async {
+    testWidgets(
+      'without microphone access it explains why and offers Settings',
+      (tester) async {
+        final calls = mockNativeChannel();
+        useReferenceDevice(tester);
+        final t = await pumpReferenceApp(tester);
+        t.engine.permission = false;
+
+        await tester.tap(labeled('Record'));
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('needs access to the microphone'),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        expect(calls, isEmpty);
+
+        await tester.tap(labeled('Record'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(HoloButton, 'Settings'));
+        await tester.pumpAndSettle();
+        expect(calls, ['openAppSettings']);
+        expect(t.controller.isRecording, isFalse);
+      },
+    );
+
+    testWidgets('a recording that cannot be saved asks for the folder again', (
+      tester,
+    ) async {
       useReferenceDevice(tester);
       final t = await pumpReferenceApp(tester);
-      t.engine.permission = false;
+      final app = t.controller;
       await tester.tap(labeled('Record'));
+      await pumpUntil(tester, () => app.isRecording && !app.isBusy);
+
+      // Folder access is lost while recording (Android).
+      t.store
+        ..failSaves = true
+        ..ready = false;
+      await tester.tap(labeled('Stop recording'));
+      await pumpUntil(tester, () => !app.isRecording && !app.isBusy);
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('needs access to the microphone'),
+        find.textContaining("The recording couldn't be saved to the folder."),
         findsOneWidget,
       );
+      expect(Directory('${t.workDir.path}/pending').listSync(), hasLength(1));
+
+      // Choosing the folder saves the kept recording.
+      t.store.failSaves = false;
       await tester.tap(find.text('OK'));
+      await pumpUntil(tester, () => t.store.saved.isNotEmpty);
       await tester.pumpAndSettle();
-      expect(t.controller.isRecording, isFalse);
+      expect(t.store.folderChoices, 1);
+      expect(Directory('${t.workDir.path}/pending').listSync(), isEmpty);
+    });
+
+    testWidgets("a file that can't be opened says so", (tester) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester);
+      t.playback.broken.add('mem://$_kris');
+      await tester.tap(labeled('Play'));
+      await tester.pump();
+      expect(find.text("Can't play this file"), findsOneWidget);
+      expect(t.playback.fileId, isNull);
+      await tester.pump(const Duration(seconds: 2));
+
+      // Once it opens again it plays.
+      t.playback.broken.clear();
+      await tester.tap(labeled('Play'));
+      await tester.pump();
+      expect(t.playback.playing, isTrue);
     });
 
     testWidgets('play and pause the last recording', (tester) async {
@@ -315,6 +394,74 @@ void main() {
       await tester.pump();
       expect(t.playback.playing, isFalse);
     });
+
+    testWidgets('asks for the folder when none is chosen yet (Android)', (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester);
+      t.store.ready = false;
+      await tester.tap(labeled('Recording list'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Choose the folder for your recordings.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('OK'));
+      await pumpUntil(tester, () => t.store.folderChoices == 1);
+      await tester.pumpAndSettle();
+      expect(find.text(_kris), findsOneWidget);
+    });
+
+    testWidgets("can't play while recording", (tester) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester);
+      final app = t.controller;
+      await tester.tap(labeled('Record'));
+      await pumpUntil(tester, () => app.isRecording && !app.isBusy);
+      // pumpAndSettle can't be used while the microphone light pulses.
+      await tester.tap(labeled('Recording list'));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.tap(labeled('Play 2026_09_20_17_26_27.mp3'));
+      await tester.pump();
+      expect(find.text('Stop recording to play a file'), findsOneWidget);
+      expect(t.playback.played, isEmpty);
+      await tester.pump(const Duration(seconds: 2));
+
+      Navigator.of(tester.element(labeled('Back'))).pop();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.tap(labeled('Stop recording'));
+      await pumpUntil(tester, () => !app.isRecording && !app.isBusy);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+      'dragging the seek bar seeks once, on release, without playing',
+      (tester) async {
+        final t = await openList(tester);
+        const name = '2026_09_20_17_26_27.mp3';
+        await tester.tap(find.text(name));
+        await tester.pumpAndSettle();
+        final bar = find.byType(HoloSeekBar);
+        final box = tester.getRect(bar);
+        // Drag the thumb from the start to the middle of the track.
+        final gesture = await tester.startGesture(
+          Offset(box.left + 23, box.center.dy),
+        );
+        await gesture.moveBy(const Offset(40, 0));
+        await gesture.moveBy(const Offset(40, 0));
+        await tester.pump();
+        expect(t.playback.fileId, isNull); // nothing loaded while dragging
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(t.playback.fileId, 'mem://$name');
+        expect(t.playback.playing, isFalse);
+        expect(t.playback.position, greaterThan(Duration.zero));
+        expect(t.playback.seeks, 1);
+      },
+    );
 
     testWidgets('back returns to the Recorder', (tester) async {
       await openList(tester);

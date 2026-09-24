@@ -114,16 +114,40 @@ class _RecorderBody extends StatelessWidget {
     }
     switch (outcome) {
       case RecordOutcome.noPermission:
-        await showMessageDialog(
+        final open = await showSpecDialog<bool>(
           context,
-          title: 'Recorder',
-          message: 'Voice Recorder needs access to the microphone. Please allow it in the system settings.',
+          (ctx) => HoloDialog(
+            title: 'Recorder',
+            message:
+                'Voice Recorder needs access to the microphone. Allow it in '
+                'Settings, then try again.',
+            buttons: [
+              HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
+              HoloButton('Settings', onTap: () => Navigator.of(ctx).pop(true)),
+            ],
+          ),
         );
+        if (open == true) await app.openAppSettings();
+      case RecordOutcome.notSaved:
+        // The file is kept in the app and saved once the folder works again.
+        if (!app.store.isReady) {
+          await showChooseFolderDialog(
+            context,
+            reason: "The recording couldn't be saved to the folder.",
+          );
+        } else {
+          showToast(
+            context,
+            "The recording couldn't be saved. It will be saved the next time "
+            'the app starts.',
+          );
+        }
       case RecordOutcome.failed:
         showToast(context, 'Recording failed');
       case RecordOutcome.needsFolder:
       case RecordOutcome.started:
       case RecordOutcome.stopped:
+      case RecordOutcome.busy:
         break;
     }
   }
@@ -201,7 +225,11 @@ class _RecorderBody extends StatelessWidget {
                 semanticLabel: app.isPlayingCurrent ? 'Pause' : 'Play',
                 onTap: app.currentFile == null || app.isRecording
                     ? null
-                    : app.togglePlayCurrent,
+                    : () async {
+                        if (!await app.togglePlayCurrent() && context.mounted) {
+                          showToast(context, "Can't play this file");
+                        }
+                      },
               ),
             ),
             Positioned(

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voice_recorder/src/app_controller.dart';
 import 'package:voice_recorder/src/audio/wav_writer.dart';
 import 'package:voice_recorder/src/core/format.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
 import 'package:voice_recorder/src/core/settings.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
@@ -187,6 +188,29 @@ void main() {
       await app.toggleRecord();
     });
 
+    test('a second tap while starting is ignored', () async {
+      await (await build()).init();
+      final first = app.toggleRecord();
+      expect(await app.toggleRecord(), RecordOutcome.busy);
+      expect(await first, RecordOutcome.started);
+      await app.toggleRecord();
+    });
+
+    test('a recording that cannot be saved is kept for later', () async {
+      await (await build()).init();
+      await app.toggleRecord();
+      store.failSaves = true;
+      expect(await app.toggleRecord(), RecordOutcome.notSaved);
+      expect(app.isRecording, isFalse);
+      final pending = Directory('${work.path}/pending').listSync();
+      expect(pending, hasLength(1));
+      expect(app.currentFile?.id, _last); // unchanged
+      store.failSaves = false;
+      await app.recoverInterrupted();
+      expect(store.saved, ['2026_09_23_19_14_05.mp3']);
+      expect(Directory('${work.path}/pending').listSync(), isEmpty);
+    });
+
     test('reports a missing microphone permission', () async {
       await (await build()).init();
       engine.permission = false;
@@ -302,6 +326,65 @@ void main() {
       expect(store.files, hasLength(9));
     });
 
+    test('a file that fails to open can be retried', () async {
+      await (await build()).init();
+      playback.broken.add(_last);
+      expect(await app.togglePlayCurrent(), isFalse);
+      expect(playback.fileId, isNull);
+      playback.broken.clear();
+      expect(await app.togglePlayCurrent(), isTrue);
+      expect(app.isPlayingCurrent, isTrue);
+    });
+
+    test('seek loads a file paused and moves to the fraction', () async {
+      await (await build()).init();
+      final f = store.files.firstWhere((f) => f.name.startsWith('2026_09_20'));
+      expect(await app.seek(f, 0.5), isTrue);
+      expect(playback.fileId, f.id);
+      expect(playback.playing, isFalse);
+      expect(playback.position, const Duration(minutes: 1, seconds: 30));
+      playback.broken.add('mem://missing.mp3');
+      final missing = f.copyWith(id: 'mem://missing.mp3');
+      expect(await app.seek(missing, 0.5), isFalse);
+    });
+
+    test(
+      'on resume, a last recording deleted elsewhere is forgotten',
+      () async {
+        await (await build()).init();
+        await app.togglePlayCurrent();
+        store.files.removeWhere((f) => f.id == _last);
+        store.free = referenceFreeBytes ~/ 2;
+        await app.onResume();
+        expect(app.currentFile, isNull);
+        expect(settings.lastFile, isNull);
+        expect(playback.fileId, isNull);
+        expect(formatRemaining(app.remaining!), '4832:36:35');
+      },
+    );
+
+    test('on resume, an unreachable folder keeps the last recording', () async {
+      await (await build()).init();
+      final throwing = _ThrowingFind(store);
+      final app2 = AppController(
+        settings: settings,
+        store: throwing,
+        engine: engine,
+        playback: playback,
+        native: const NativeBridge(),
+        workDir: () async => work,
+      );
+      addTearDown(app2.dispose);
+      await app2.init(); // find() throws: no current file yet
+      expect(app2.currentFile, isNull);
+      throwing.fail = false;
+      await app2.init();
+      expect(app2.currentFile?.id, _last);
+      throwing.fail = true;
+      await app2.onResume();
+      expect(app2.currentFile?.id, _last);
+    });
+
     test('share goes to the store', () async {
       await (await build()).init();
       await app.share(app.currentFile!);
@@ -324,4 +407,18 @@ void main() {
       expect(app.remaining, isNull);
     });
   });
+}
+
+/// A store whose lookups fail while [fail] is set (storage unreachable).
+class _ThrowingFind extends FakeStore {
+  _ThrowingFind(FakeStore base)
+    : super(files: base.files, free: base.free, ready: base.ready);
+
+  bool fail = true;
+
+  @override
+  Future<RecordingFile?> find(String id) {
+    if (fail) throw StateError('storage unreachable');
+    return super.find(id);
+  }
 }

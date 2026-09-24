@@ -11,6 +11,11 @@ abstract class Playback extends ChangeNotifier {
   Duration get position;
   Duration get duration;
 
+  /// Loads [fileId] (if it isn't already) without starting playback.
+  /// Throws if the file can't be opened; nothing is loaded then.
+  Future<void> load(String fileId, Uri uri);
+
+  /// Loads [fileId] if needed and plays it from the current position.
   Future<void> play(String fileId, Uri uri);
   Future<void> pause();
   Future<void> seek(Duration position);
@@ -65,14 +70,22 @@ class JustAudioPlayback extends Playback {
   Duration get duration => _duration;
 
   @override
+  Future<void> load(String fileId, Uri uri) async {
+    if (_fileId == fileId) return;
+    await _player.stop();
+    _fileId = null;
+    _position = Duration.zero;
+    _duration = Duration.zero;
+    notifyListeners();
+    // Only remember the file once it opened, so a failed file can be retried.
+    await _player.setAudioSource(AudioSource.uri(uri));
+    _fileId = fileId;
+    notifyListeners();
+  }
+
+  @override
   Future<void> play(String fileId, Uri uri) async {
-    if (_fileId != fileId) {
-      await _player.stop();
-      _fileId = fileId;
-      _position = Duration.zero;
-      notifyListeners();
-      await _player.setAudioSource(AudioSource.uri(uri));
-    }
+    await load(fileId, uri);
     unawaited(_player.play());
   }
 

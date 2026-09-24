@@ -77,6 +77,8 @@ decided:
 - **Rate 5 stars** opens the Play Store listing on Android. On iOS it opens
   the App Store review page once `AppConfig.appStoreId` is set; until then it
   shows a toast.
+- On iOS the app is iPhone-only, like the original phone app. iPads run it in
+  iPhone mode, so it always stays in portrait.
 - The rename dialog opens without the keyboard, like in the screenshot. Tap
   the field to edit. The characters `\ / : * ? " < > |` can't be typed.
 - All artwork was drawn from scratch to match the screenshots, nothing was

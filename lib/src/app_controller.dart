@@ -13,7 +13,20 @@ import 'core/settings.dart';
 import 'platform/native_bridge.dart';
 import 'storage/recording_store.dart';
 
-enum RecordOutcome { started, stopped, noPermission, needsFolder, failed }
+enum RecordOutcome {
+  started,
+  stopped,
+  noPermission,
+  needsFolder,
+
+  /// Recorded, but the file couldn't be moved into the folder. It stays in
+  /// the app and is saved by [AppController.recoverInterrupted] later.
+  notSaved,
+  failed,
+
+  /// A start or stop is already in progress; the tap is ignored.
+  busy,
+}
 
 /// State and actions behind the three screens.
 class AppController extends ChangeNotifier {
@@ -103,16 +116,20 @@ class AppController extends ChangeNotifier {
 
   // ------------------------------------------------------------- setup
   Future<void> init() async {
-    await store.init();
+    await _safe(store.init);
     final last = settings.lastFile;
     if (last != null) {
-      final cur = _current = await _safe<RecordingFile?>(
-        () => store.find(last),
-      );
-      if (cur == null) {
-        settings.setLast(null, Duration.zero);
-      } else if (cur.id != last) {
-        settings.setLast(cur.id, settings.lastDuration);
+      try {
+        final cur = _current = await store.find(last);
+        if (cur == null) {
+          settings.setLast(null, Duration.zero);
+        } else if (cur.id != last) {
+          settings.setLast(cur.id, settings.lastDuration);
+        }
+      } catch (e) {
+        // Storage not reachable right now: only forget the recording once it
+        // is known to be gone.
+        debugPrint('Could not look up the last recording: $e');
       }
     }
     await recoverInterrupted();
@@ -137,9 +154,34 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-checks what may have changed while the app was in the background:
+  /// the last recording may have been deleted or changed, free space too.
+  Future<void> onResume() async {
+    final cur = _current;
+    if (cur != null && !_recording) {
+      try {
+        final found = await store.find(cur.id);
+        if (_current?.id == cur.id) {
+          if (found == null) {
+            if (playback.fileId == cur.id) await playback.stop();
+            _current = null;
+            settings.setLast(null, Duration.zero);
+          } else {
+            _current = found;
+          }
+        }
+      } catch (e) {
+        // Storage not reachable right now: keep showing the file.
+        debugPrint('Could not re-check ${cur.name}: $e');
+      }
+    }
+    await refreshRemaining();
+  }
+
   /// Saves recordings left in the work directory by a crash or a kill.
   Future<void> recoverInterrupted() async {
-    if (!store.isReady) return;
+    // Never touch the file of a recording that is still running.
+    if (!store.isReady || _recording) return;
     final dir = Directory('${(await workDir()).path}/pending');
     if (!await dir.exists()) return;
     await for (final e in dir.list()) {
@@ -179,7 +221,7 @@ class AppController extends ChangeNotifier {
   // --------------------------------------------------------- recording
   /// Starts or stops a recording.
   Future<RecordOutcome> toggleRecord() async {
-    if (_busy) return RecordOutcome.failed;
+    if (_busy) return RecordOutcome.busy;
     return _recording ? _stop() : _start();
   }
 
@@ -275,9 +317,12 @@ class AppController extends ChangeNotifier {
       settings.setLast(saved.id, duration);
       return RecordOutcome.stopped;
     } catch (e) {
-      // The file stays in the work directory and is saved on next launch.
+      // The file stays in the work directory and is saved on next launch or
+      // when a folder is chosen again. Folder access may have been lost
+      // (Android), so re-check it; the UI then asks for the folder.
       debugPrint('Could not save recording: $e');
-      return RecordOutcome.failed;
+      await _safe(store.init);
+      return RecordOutcome.notSaved;
     } finally {
       _pendingFile = null;
       _pendingName = null;
@@ -289,18 +334,42 @@ class AppController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------- playback
-  Future<void> togglePlayCurrent() async {
+  /// Plays or pauses the recording shown on the Recorder screen. Returns
+  /// false if it couldn't be played.
+  Future<bool> togglePlayCurrent() async {
     final cur = _current;
-    if (cur == null || _recording) return;
-    await togglePlay(cur);
+    if (cur == null) return false;
+    return togglePlay(cur);
   }
 
-  Future<void> togglePlay(RecordingFile file) async {
-    if (_recording) return;
-    if (playback.isPlaying(file.id)) {
-      await playback.pause();
-    } else {
-      await playback.play(file.id, store.playbackUri(file));
+  /// Plays or pauses [file]. Returns false if it couldn't be played (or a
+  /// recording is running).
+  Future<bool> togglePlay(RecordingFile file) async {
+    if (_recording) return false;
+    try {
+      if (playback.isPlaying(file.id)) {
+        await playback.pause();
+      } else {
+        await playback.play(file.id, store.playbackUri(file));
+      }
+      return true;
+    } catch (e) {
+      debugPrint('Could not play ${file.name}: $e');
+      return false;
+    }
+  }
+
+  /// Moves [file]'s playback to [fraction] of its length. If it isn't loaded
+  /// yet it is loaded paused. Returns false if it couldn't be opened.
+  Future<bool> seek(RecordingFile file, double fraction) async {
+    if (_recording) return false;
+    try {
+      await playback.load(file.id, store.playbackUri(file));
+      await playback.seek(playback.duration * fraction.clamp(0.0, 1.0));
+      return true;
+    } catch (e) {
+      debugPrint('Could not seek in ${file.name}: $e');
+      return false;
     }
   }
 
@@ -341,6 +410,11 @@ class AppController extends ChangeNotifier {
 
   Future<void> share(RecordingFile file, {Rect? origin}) async {
     await _safe(() => store.share(file, origin: origin));
+  }
+
+  /// Opens this app's page in the system settings.
+  Future<void> openAppSettings() async {
+    await _safe(native.openAppSettings);
   }
 
   Future<bool> chooseFolder() async {

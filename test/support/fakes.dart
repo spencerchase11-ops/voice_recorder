@@ -17,6 +17,9 @@ class FakeStore extends RecordingStore {
   final List<RecordingFile> files;
   int? free;
   bool ready;
+
+  /// Makes [save] fail, like a folder whose access was revoked.
+  bool failSaves = false;
   final saved = <String>[];
   final shared = <String>[];
   var folderChoices = 0;
@@ -59,6 +62,7 @@ class FakeStore extends RecordingStore {
     String fileName,
     String mimeType,
   ) async {
+    if (failSaves) throw const FileSystemException('no access');
     final size = await source.length();
     await source.delete();
     final f = RecordingFile(
@@ -149,13 +153,25 @@ class FakePlayback extends Playback {
   @override
   Duration get duration => _duration;
 
+  /// Ids that fail to open, like a deleted or corrupt file.
+  final broken = <String>{};
+
   @override
-  Future<void> play(String fileId, Uri uri) async {
-    if (_id != fileId) {
-      _position = Duration.zero;
-      _duration = const Duration(minutes: 3);
+  Future<void> load(String fileId, Uri uri) async {
+    if (_id == fileId) return;
+    if (broken.contains(fileId)) {
+      _id = null;
+      throw Exception('cannot open $fileId');
     }
     _id = fileId;
+    _position = Duration.zero;
+    _duration = const Duration(minutes: 3);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> play(String fileId, Uri uri) async {
+    await load(fileId, uri);
     _playing = true;
     played.add(fileId);
     notifyListeners();
@@ -167,8 +183,11 @@ class FakePlayback extends Playback {
     notifyListeners();
   }
 
+  var seeks = 0;
+
   @override
   Future<void> seek(Duration position) async {
+    seeks++;
     _position = position;
     notifyListeners();
   }

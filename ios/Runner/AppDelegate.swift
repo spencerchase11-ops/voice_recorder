@@ -34,7 +34,13 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
       let path = (args?["location"] as? String) ?? NSHomeDirectory()
       result(Self.freeBytes(at: path))
     case "deviceKind":
-      result(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")
+      // The hardware, not the idiom: this iPhone-only app also runs on iPads.
+      result(UIDevice.current.model.hasPrefix("iPad") ? "iPad" : "iPhone")
+    case "openAppSettings":
+      if let url = URL(string: UIApplication.openSettingsURLString) {
+        UIApplication.shared.open(url)
+      }
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }

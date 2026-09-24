@@ -43,13 +43,18 @@ Future<void> shareRecording(
 }
 
 /// Explains the folder permission and opens the system folder picker.
-Future<bool> showChooseFolderDialog(BuildContext context) async {
+/// [reason] is shown first when the dialog appears because something failed.
+Future<bool> showChooseFolderDialog(
+  BuildContext context, {
+  String? reason,
+}) async {
   final app = AppScope.read(context);
   final go = await showSpecDialog<bool>(
     context,
     (ctx) => HoloDialog(
       title: 'Folder',
       message:
+          '${reason == null ? '' : '$reason\n\n'}'
           'Choose the folder for your recordings.\n\n'
           'To keep using your existing recordings, select ${app.store.folderDisplayPath} '
           '(create a folder named "Recorders" if it does not exist yet) and tap "Use this folder".',
