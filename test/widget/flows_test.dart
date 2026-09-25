@@ -328,6 +328,23 @@ void main() {
       }
     });
 
+    testWidgets('large system font sizes keep text inside the timer and tabs', (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      await pumpReferenceApp(tester);
+      final box = tester.getRect(find.byType(TimerBox));
+      final digits = tester.getRect(find.text('33:57'));
+      expect(box.contains(digits.topLeft), isTrue);
+      expect(box.contains(digits.bottomRight), isTrue);
+      // "Recording list" is shrunk to fit its third of the tab bar, not cut.
+      final tab = tester.getRect(labeled('Recording list'));
+      final label = tester.getRect(find.text('Recording list'));
+      expect(label.width, lessThanOrEqualTo(tab.width));
+      expect(label.left, greaterThanOrEqualTo(tab.left));
+    });
+
     testWidgets('share, and no ads upsell', (tester) async {
       useReferenceDevice(tester);
       final t = await pumpReferenceApp(tester);

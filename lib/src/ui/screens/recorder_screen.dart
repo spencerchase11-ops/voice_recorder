@@ -456,14 +456,17 @@ class _Tab extends StatelessWidget {
                 left: 0,
                 right: 0,
                 bottom: 0.4,
-                child: AText(
-                  label,
-                  style: Spec.tabLabel.copyWith(
-                    color: selected ? Spec.tabSelectedLabel : null,
+                // Shrinks (instead of "Recordi…") with a large font size.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AText(
+                    label,
+                    style: Spec.tabLabel.copyWith(
+                      color: selected ? Spec.tabSelectedLabel : null,
+                    ),
+                    maxLines: 1,
+                    softWrap: false,
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

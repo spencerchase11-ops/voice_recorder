@@ -17,13 +17,21 @@ class TimerBox extends StatelessWidget {
       height: Spec.timerBoxHeight,
       child: CustomPaint(
         painter: const _TimerBoxPainter(),
+        // With a large system font size (or past an hour, "1:05:03") the
+        // digits shrink to stay inside the box.
         child: Center(
-          child: AText(
-            text,
-            style: Spec.timerText,
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.visible,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: AText(
+                text,
+                style: Spec.timerText,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
+              ),
+            ),
           ),
         ),
       ),
