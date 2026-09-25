@@ -11,7 +11,10 @@ import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
 import 'package:voice_recorder/src/core/settings.dart';
+import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/storage/info_cache.dart';
+import 'package:voice_recorder/src/storage/recording_store.dart';
+import 'package:voice_recorder/src/ui/screens/common_actions.dart';
 
 import 'support/fakes.dart';
 
@@ -284,6 +287,113 @@ void main() {
       final saved = store.files.last;
       expect(saved.name, endsWith('.m4a'));
       expect(settings.lastDuration, const Duration(seconds: 90));
+    });
+  });
+
+  group('many recordings', () {
+    test(
+      'every renamed recording is read for its date, not just 200',
+      () async {
+        // 300 renamed recordings, their dates stored inside, all with the same
+        // file time (copied to this phone in one go).
+        final copied = DateTime(2026, 9, 20);
+        final many = [
+          for (var i = 0; i < 300; i++)
+            RecordingFile(
+              id: 'mem://note $i.mp3',
+              name: 'note $i.mp3',
+              size: 1,
+              modified: copied,
+            ),
+        ];
+        await build(files: many, prefs: const {});
+        for (var i = 0; i < 300; i++) {
+          store.contents['mem://note $i.mp3'] = [
+            ...id3DateTag(DateTime(2016).add(Duration(days: i))),
+            for (var f = 0; f < 3; f++) ...[
+              0xFF,
+              0xFB,
+              0xA0,
+              0xC0,
+              ...List.filled(518, 0),
+            ],
+          ];
+        }
+        await app.refreshFiles();
+        for (
+          var i = 0;
+          i < 300 && app.files.any((f) => f.recorded == null);
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(app.files.where((f) => f.recorded == null), isEmpty);
+        // In the order they were recorded, newest first.
+        expect(app.files.first.name, 'note 299.mp3');
+        expect(app.files.last.name, 'note 0.mp3');
+      },
+    );
+  });
+
+  group('iPhone import', () {
+    test('progress while it runs, then what it did', () async {
+      final docs = await Directory.systemTemp.createTemp('ios_docs');
+      addTearDown(() => docs.delete(recursive: true));
+      final native = FakeNative();
+      final answer = Completer<Map<String, int>>();
+      const channel = MethodChannel('com.spencerchase.voicerecorder/native');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            channel,
+            (call) async =>
+                call.method == 'importRecordings' ? answer.future : null,
+          );
+      SharedPreferences.setMockInitialValues({});
+      final ios = IosRecordingStore(native, documents: () async => docs);
+      final app = AppController(
+        settings: await Settings.load(),
+        store: ios,
+        engine: FakeEngine(),
+        playback: FakePlayback(),
+        native: native,
+        workDir: () async => work,
+      );
+      addTearDown(app.dispose);
+      await app.init();
+
+      final running = app.importRecordings();
+      await settle();
+      expect(app.importProgress, isNull); // the picker is still open
+      native.eventController.add(const ImportProgress(0, 0));
+      await settle();
+      expect(app.importProgress, (done: 0, total: 0)); // looking
+      native.eventController.add(const ImportProgress(1200, 2464));
+      await settle();
+      expect(app.importProgress, (done: 1200, total: 2464));
+      expect(await app.importRecordings(), isNull); // one at a time
+      answer.complete({'copied': 2400, 'skipped': 60, 'failed': 4});
+      expect(await running, (copied: 2400, skipped: 60, failed: 4));
+      expect(app.importProgress, isNull);
+    });
+
+    test('the message says what happened', () {
+      expect(
+        importMessage((copied: 2400, skipped: 60, failed: 4)),
+        "2,400 recordings imported. 60 were already here. 4 couldn't be "
+        'copied. Is the iPhone full?',
+      );
+      expect(
+        importMessage((copied: 1, skipped: 1, failed: 0)),
+        '1 recording imported. 1 was already here.',
+      );
+      expect(
+        importMessage((copied: 0, skipped: 12, failed: 0)),
+        'Nothing new to import. 12 were already here.',
+      );
+      expect(
+        importMessage((copied: 0, skipped: 0, failed: 0)),
+        'No recordings were found there (MP3, WAV, M4A, AAC or FLAC).',
+      );
     });
   });
 

@@ -273,6 +273,10 @@ class AppController extends ChangeNotifier {
   /// Recordings in the order chosen in the list (newest first by default).
   List<RecordingFile> get files => _files;
 
+  /// The folder has been listed at least once ([files] is empty until then).
+  bool get filesLoaded => _filesLoaded;
+  bool _filesLoaded = false;
+
   /// Changes whenever Recently deleted may have changed (a delete, an undo,
   /// a restore), for the screens that show it.
   int get trashVersion => _trashVersion;
@@ -353,6 +357,7 @@ class AppController extends ChangeNotifier {
   Future<void> refreshFiles() async {
     await _ready();
     final list = await _safe(store.list);
+    _filesLoaded = true;
     if (list == null) {
       _files = const [];
       notifyListeners();
@@ -363,10 +368,10 @@ class AppController extends ChangeNotifier {
     if (store.isReady && list.isNotEmpty) _info.retainOnly(list);
     _files = _sorted([for (final f in list) f.withInfo(_info[f])]);
     notifyListeners();
-    // A renamed recording keeps its date inside: read those first, so the
-    // list is in the right order.
-    for (final f in _files.reversed) {
-      if (parseTimestampName(f.baseName) == null) requestInfo(f);
+    // A renamed recording keeps its date inside: read all of those (the
+    // newest first), so the whole list is in the right order.
+    for (final f in _files) {
+      if (f.nameDate == null) _requestInfo(f, forOrder: true);
     }
   }
 
@@ -395,24 +400,35 @@ class AppController extends ChangeNotifier {
   }
 
   // ------------------------------------------------ dates and lengths
-  final _probeQueue = <String, RecordingFile>{};
+  /// Rows on screen that need their length: the newest request first.
+  final _rowQueue = <String, RecordingFile>{};
+
+  /// Recordings whose date may be stored inside (renamed ones): all of them
+  /// are read, for the list's order.
+  final _orderQueue = <String, RecordingFile>{};
   final _unreadable = <String>{};
   bool _probing = false;
 
   /// Reads [file]'s recording date and length in the background if they
   /// aren't known yet; the list shows them once they come in. The newest
   /// request is served first (the rows on screen).
-  void requestInfo(RecordingFile file) {
+  void requestInfo(RecordingFile file) => _requestInfo(file);
+
+  void _requestInfo(RecordingFile file, {bool forOrder = false}) {
     if (_info.contains(file) ||
         _unreadable.contains(RecordingInfoCache.keyOf(file))) {
       return;
     }
-    _probeQueue
-      ..remove(file.id)
-      ..[file.id] = file;
-    // Rows scrolled past long ago don't need reading any more.
-    while (_probeQueue.length > 200) {
-      _probeQueue.remove(_probeQueue.keys.first);
+    if (forOrder) {
+      _orderQueue[file.id] = file;
+    } else {
+      _rowQueue
+        ..remove(file.id)
+        ..[file.id] = file;
+      // Rows scrolled past long ago don't need reading any more.
+      while (_rowQueue.length > 200) {
+        _rowQueue.remove(_rowQueue.keys.first);
+      }
     }
     if (_probing) return;
     _probing = true;
@@ -420,11 +436,23 @@ class AppController extends ChangeNotifier {
     scheduleMicrotask(_probe);
   }
 
+  /// Results read but not shown yet: they are shown together, a few at a
+  /// time, so thousands of them don't re-sort the list thousands of times.
+  final _arrived = <String, AudioInfo>{};
+  final _sinceShown = Stopwatch()..start();
+
   Future<void> _probe() async {
     try {
-      while (_probeQueue.isNotEmpty && !_disposed) {
-        final id = _probeQueue.keys.last;
-        final file = _probeQueue.remove(id)!;
+      while (!_disposed) {
+        final RecordingFile file;
+        if (_rowQueue.isNotEmpty) {
+          file = _rowQueue.remove(_rowQueue.keys.last)!;
+        } else if (_orderQueue.isNotEmpty) {
+          file = _orderQueue.remove(_orderQueue.keys.first)!;
+        } else {
+          break;
+        }
+        _orderQueue.remove(file.id);
         if (_info.contains(file)) continue;
         AudioInfo info;
         try {
@@ -438,11 +466,38 @@ class AppController extends ChangeNotifier {
           continue;
         }
         _info.put(file, info);
-        _applyInfo(file, info);
+        if (_arrived.isEmpty) _sinceShown.reset();
+        _arrived[file.id] = info;
+        final more = _rowQueue.isNotEmpty || _orderQueue.isNotEmpty;
+        if (!more ||
+            _arrived.length >= 10 ||
+            _sinceShown.elapsedMilliseconds > 300) {
+          _showArrived();
+        }
       }
     } finally {
       _probing = false;
+      _showArrived();
     }
+  }
+
+  void _showArrived() {
+    if (_arrived.isEmpty || _disposed) return;
+    var resort = false;
+    final files = <RecordingFile>[];
+    for (final f in _files) {
+      final info = _arrived[f.id];
+      if (info == null) {
+        files.add(f);
+        continue;
+      }
+      final updated = f.withInfo(info);
+      if (updated.date != f.date) resort = true;
+      files.add(updated);
+    }
+    _arrived.clear();
+    _files = resort ? _sorted(files) : files;
+    notifyListeners();
   }
 
   Future<AudioInfo> _readInfo(RecordingFile file) async {
@@ -452,18 +507,6 @@ class AppController extends ChangeNotifier {
     } finally {
       await a.close();
     }
-  }
-
-  void _applyInfo(RecordingFile file, AudioInfo info) {
-    final i = _files.indexWhere((f) => f.id == file.id);
-    if (i < 0) return;
-    final old = _files[i];
-    final updated = old.withInfo(info);
-    if (updated == old) return;
-    final files = [..._files]..[i] = updated;
-    _files = updated.date == old.date ? files : _sorted(files);
-    // Rows that come in together are drawn in the same frame.
-    notifyListeners();
   }
 
   /// Stores [recorded] inside the file [f] (a new recording's date).
@@ -1075,6 +1118,9 @@ class AppController extends ChangeNotifier {
         await _onMediaButton(action, position);
       case RecordingButton(:final action):
         await _onRecordingButton(action);
+      case ImportProgress(:final done, :final total):
+        _importProgress = (done: done, total: total);
+        notifyListeners();
     }
   }
 
@@ -1184,7 +1230,8 @@ class AppController extends ChangeNotifier {
       }
       moved.add(t);
       gone.add(f.id);
-      _probeQueue.remove(f.id);
+      _rowQueue.remove(f.id);
+      _orderQueue.remove(f.id);
       if (_current?.id == f.id) {
         current = (name: f.name, duration: settings.lastDuration);
         _current = null;
@@ -1221,7 +1268,8 @@ class AppController extends ChangeNotifier {
         missing == 1
             ? "A recording couldn't be put back. It is still in Recently "
                   'deleted (Settings).'
-            : "$missing recordings couldn't be put back. They are still in "
+            : "${formatCount(missing)} recordings couldn't be put back. They are "
+                  'still in '
                   'Recently deleted (Settings).',
       );
     }
@@ -1307,15 +1355,25 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// iOS: copies recordings picked in the Files app into the folder. Returns
-  /// how many were copied, or null (cancelled, or not available).
-  Future<int?> importRecordings() async {
+  /// iOS: copies recordings picked in the Files app into the folder (null
+  /// if cancelled, or not available). [importProgress] follows it.
+  Future<ImportResult?> importRecordings() async {
     final s = store;
-    if (s is! IosRecordingStore) return null;
-    final n = await _safe(s.importRecordings);
-    if (n != null && n > 0) await refreshFiles();
-    return n;
+    if (s is! IosRecordingStore || _importProgress != null) return null;
+    try {
+      final result = await _safe(s.importRecordings);
+      if (result != null && result.copied > 0) await refreshFiles();
+      return result;
+    } finally {
+      _importProgress = null;
+      notifyListeners();
+    }
   }
+
+  /// How far an import from Files has got (total 0: still looking through
+  /// the folders); null when none runs.
+  ({int done, int total})? get importProgress => _importProgress;
+  ({int done, int total})? _importProgress;
 
   /// Opens this app's page in the system settings.
   Future<void> openAppSettings() async {

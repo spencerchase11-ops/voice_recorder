@@ -121,7 +121,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       title: 'Delete forever',
       message: items.length == 1
           ? 'The recording in Recently deleted will be deleted for good.'
-          : 'All ${items.length} recordings in Recently deleted will be '
+          : 'All ${formatCount(items.length)} recordings in Recently deleted will be '
                 'deleted for good.',
       ok: 'Delete',
     );

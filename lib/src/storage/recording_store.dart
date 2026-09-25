@@ -331,9 +331,10 @@ class IosRecordingStore extends RecordingStore {
     return _fromFile(await File(file.id).rename(target.path));
   }
 
-  /// Copies recordings picked in the Files app into the folder. Returns how
-  /// many were copied (null if the picker was cancelled).
-  Future<int?> importRecordings() => _native.importRecordings(_dir.path);
+  /// Copies recordings picked in the Files app into the folder (null if the
+  /// picker was cancelled).
+  Future<ImportResult?> importRecordings() =>
+      _native.importRecordings(_dir.path);
 
   @override
   Future<RecordingFile?> find(String id) async {

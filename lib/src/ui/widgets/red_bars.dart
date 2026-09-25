@@ -85,7 +85,8 @@ class _DividerPainter extends CustomPainter {
 }
 
 /// A header/footer button: an invisible 48 dp touch target with a white
-/// pressed highlight around an icon positioned by its measured centre.
+/// pressed highlight around an icon positioned by its measured centre. The
+/// icon is dimmed while the button can't be used (during a recording).
 class BarButton extends StatelessWidget {
   const BarButton({
     super.key,
@@ -113,7 +114,9 @@ class BarButton extends StatelessWidget {
         onTap: onTap,
         semanticLabel: semanticLabel,
         highlight: const Color(0x33FFFFFF),
-        child: Center(child: child),
+        child: Center(
+          child: Opacity(opacity: onTap == null ? 0.4 : 1, child: child),
+        ),
       ),
     );
   }

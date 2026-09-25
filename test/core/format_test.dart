@@ -27,6 +27,10 @@ void main() {
     expect(formatListDate(DateTime(2026, 9, 3, 23, 59)), '2026-09-03');
     expect(formatListSize(39819 * 1024 + 1023), '39819KB');
     expect(formatListSize(0), '0KB');
+    expect(formatCount(2464), '2,464');
+    expect(formatCount(1234567), '1,234,567');
+    expect(formatCount(999), '999');
+    expect(formatCount(0), '0');
   });
 
   test('new recordings are named after the start time', () {

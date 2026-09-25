@@ -47,7 +47,20 @@ with [LAME](https://lame.sourceforge.io), which lives in the local plugin
   under *On My iPhone → Voice Recorder → Recorders*, and in Finder when the
   phone is connected. **Settings → Folder** opens it in Files, and
   **Settings → Import recordings** copies MP3, WAV, M4A, AAC and FLAC files
-  (or whole folders of them) from Files, iCloud Drive or a USB drive into it.
+  (or whole folders of them, subfolders included) from Files, iCloud Drive or
+  a USB drive into it.
+
+  Importing a whole library (say 2,500 recordings moved over from an Android
+  phone): pick the folder that holds them. Settings shows how far it has got
+  and keeps the screen on; at the end it says how many were imported, how
+  many were already there and how many couldn't be copied. From *On My
+  iPhone* the copies are clones: instant, and they take no extra space. From
+  iCloud Drive each recording is downloaded first. If the import is
+  interrupted (the app closed, the phone out of space), run it again: what is
+  already there is skipped. The originals stay where they were; delete them
+  in Files once you're happy with the import. Renamed recordings keep their
+  date only if it was stored in them (see below) or their file date survived
+  the move.
 
 A recording is written to the app's private storage while it runs. It is
 moved into the folder when you stop. If the app is killed while recording,

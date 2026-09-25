@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config.dart';
+import '../../core/format.dart';
 import '../../core/recording_format.dart';
 import '../../core/settings.dart';
 import '../app_scope.dart';
@@ -60,16 +61,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _import() async {
     final app = AppScope.read(context);
-    final n = await app.importRecordings();
-    if (!mounted || n == null) return;
-    showToast(
-      context,
-      n == 0
-          ? 'No new recordings were found there (MP3, WAV, M4A, AAC or FLAC)'
-          : n == 1
-          ? '1 recording imported'
-          : '$n recordings imported',
-    );
+    final result = await app.importRecordings();
+    if (!mounted || result == null) return;
+    showToast(context, importMessage(result), long: true);
   }
 
   @override
@@ -184,8 +178,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         color: Color(0xFFFFFFFF),
                       ),
                       title: 'Import recordings',
-                      summary: 'From Files, iCloud Drive or a USB drive',
-                      onTap: _import,
+                      summary: switch (app.importProgress) {
+                        null => 'From Files, iCloud Drive or a USB drive',
+                        (done: _, total: 0) => 'Looking for recordings…',
+                        (:final done, :final total) =>
+                          'Importing ${formatCount(done)} of '
+                              '${formatCount(total)}… Keep the app open.',
+                      },
+                      onTap: app.importProgress == null ? _import : null,
                     ),
                   _Item(
                     icon: const InkIcon(
@@ -197,7 +197,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     summary: switch (deleted) {
                       null || 0 => 'Deleted recordings are kept for 30 days',
                       1 => '1 recording, kept for 30 days',
-                      _ => '$deleted recordings, kept for 30 days',
+                      _ =>
+                        '${formatCount(deleted)} recordings, kept for 30 days',
                     },
                     divider: false,
                     onTap: _openRecentlyDeleted,

@@ -27,6 +27,21 @@ class MediaButton extends NativeEvent {
   String toString() => 'MediaButton($action, $position)';
 }
 
+/// iOS: how far an import of recordings has got ([total] is 0 while the
+/// picked folders are still being looked through).
+class ImportProgress extends NativeEvent {
+  const ImportProgress(this.done, this.total);
+
+  final int done;
+  final int total;
+
+  @override
+  String toString() => 'ImportProgress($done of $total)';
+}
+
+/// What an import of recordings did.
+typedef ImportResult = ({int copied, int skipped, int failed});
+
 /// A button in the Android recording notification: pause, resume or stop.
 class RecordingButton extends NativeEvent {
   const RecordingButton(this.action);
@@ -68,6 +83,13 @@ class NativeBridge {
           );
         case 'recordingAction':
           c.add(RecordingButton(args['action']! as String));
+        case 'importProgress':
+          c.add(
+            ImportProgress(
+              (args['done'] as int?) ?? 0,
+              (args['total'] as int?) ?? 0,
+            ),
+          );
         default:
           debugPrint('Unknown call from the platform: ${call.method}');
       }
@@ -261,10 +283,22 @@ class NativeBridge {
   Future<String?> deviceKind() => _channel.invokeMethod<String>('deviceKind');
 
   /// iOS: lets the user pick audio files or folders (in Files, iCloud Drive,
-  /// on a USB drive) and copies the recordings among them into
-  /// [destination]. Returns how many were copied, or null if cancelled.
-  Future<int?> importRecordings(String destination) => _channel
-      .invokeMethod<int>('importRecordings', {'destination': destination});
+  /// on a USB drive) and copies the recordings among them (subfolders too)
+  /// into [destination], reporting [ImportProgress] meanwhile. Null if
+  /// cancelled.
+  Future<ImportResult?> importRecordings(String destination) async {
+    final m = await _channel.invokeMapMethod<String, Object?>(
+      'importRecordings',
+      {'destination': destination},
+    );
+    if (m == null) return null;
+    int count(String key) => (m[key] as int?) ?? 0;
+    return (
+      copied: count('copied'),
+      skipped: count('skipped'),
+      failed: count('failed'),
+    );
+  }
 
   /// Opens this app's page in the system settings (to allow the microphone).
   Future<void> openAppSettings() =>

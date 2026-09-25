@@ -269,7 +269,7 @@ Future<bool> showDeleteDialog(
       icon: const HoloWarningIcon(),
       message: count == 1
           ? 'Are you sure to delete file? /$fileName'
-          : 'Are you sure to delete $count files?',
+          : 'Are you sure to delete ${formatCount(count)} files?',
       buttons: [
         HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
         HoloButton('OK', onTap: () => Navigator.of(ctx).pop(true)),

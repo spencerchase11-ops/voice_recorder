@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart'
@@ -270,6 +271,17 @@ class _RecordingListScreenState extends State<RecordingListScreen>
               child: BrushedMetal(
                 child: visible.isEmpty && (_query ?? '').trim().isNotEmpty
                     ? const _Empty('No recordings match')
+                    : app.files.isEmpty && app.filesLoaded && app.store.isReady
+                    ? _Empty(
+                        Platform.isIOS
+                            ? 'No recordings yet.\n\nTo add the recordings '
+                                  'you have in the Files app, use Import '
+                                  'recordings in Settings.'
+                            : 'No recordings in this folder yet:\n'
+                                  '${app.store.folderDisplayPath}\n\nTo use '
+                                  'another folder, choose it under Folder in '
+                                  'Settings.',
+                      )
                     : ListView.builder(
                         padding: const EdgeInsets.only(top: Spec.listTopGap),
                         keyboardDismissBehavior:
@@ -359,7 +371,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
           visible.isNotEmpty && visible.every((f) => ticked.contains(f.id));
       // Rows that went away meanwhile (deleted elsewhere) don't count.
       return RedHeader(
-        title: '${_tickedFiles(visible).length} selected',
+        title: '${formatCount(_tickedFiles(visible).length)} selected',
         children: [
           BarButton(
             center: const Offset(22.0, 24.0),

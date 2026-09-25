@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../../app_controller.dart';
 import '../../core/format.dart';
 import '../../core/recording_file.dart';
+import '../../platform/native_bridge.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
 import '../widgets/toast.dart';
@@ -104,7 +105,7 @@ Future<bool> deleteRecordings(
   if (files.length > 20) {
     showToast(
       context,
-      'Moving ${files.length} recordings to Recently deleted…',
+      'Moving ${formatCount(files.length)} recordings to Recently deleted…',
       long: true,
     );
   }
@@ -116,10 +117,11 @@ Future<bool> deleteRecordings(
   }
   final n = deleted.items.length;
   final message = deleted.failed > 0
-      ? "Deleted $n. ${deleted.failed} couldn't be deleted."
+      ? "Deleted ${formatCount(n)}. ${formatCount(deleted.failed)} couldn't be "
+            'deleted.'
       : n == 1
       ? 'Moved to Recently deleted'
-      : '$n recordings moved to Recently deleted';
+      : '${formatCount(n)} recordings moved to Recently deleted';
   showActionToast(
     context,
     message,
@@ -181,6 +183,24 @@ Future<bool> showChooseFolderDialog(
   );
   if (go != true || !context.mounted) return false;
   return app.chooseFolder();
+}
+
+/// The message after an import from Files (iPhone).
+String importMessage(ImportResult r) {
+  String count(int n, String one, String more) =>
+      n == 1 ? one : '${formatCount(n)} $more';
+  if (r.copied + r.skipped + r.failed == 0) {
+    return 'No recordings were found there (MP3, WAV, M4A, AAC or FLAC).';
+  }
+  return [
+    if (r.copied > 0)
+      '${count(r.copied, '1 recording', 'recordings')} imported.'
+    else if (r.failed == 0)
+      'Nothing new to import.',
+    if (r.skipped > 0) '${count(r.skipped, '1 was', 'were')} already here.',
+    if (r.failed > 0)
+      "${formatCount(r.failed)} couldn't be copied. Is the iPhone full?",
+  ].join(' ');
 }
 
 /// Tells the user why pressing play didn't play anything.
