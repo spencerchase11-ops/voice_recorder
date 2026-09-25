@@ -11,6 +11,7 @@ import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/settings.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
+import 'package:voice_recorder/src/storage/recording_store.dart';
 import 'package:voice_recorder/src/ui/screens/common_actions.dart';
 import 'package:voice_recorder/src/ui/widgets/toast.dart';
 
@@ -162,11 +163,78 @@ void main() {
       expect(r.stored, 12);
       expect(app.datesToStore, hasLength(18));
       // A long job keeps the screen on, and lets it sleep again after.
-      final screen = [
+      List<Object?> screen() => [
         for (final c in calls)
           if (c.method == 'keepScreenOn') (c.arguments as Map)['on'],
       ];
-      expect(screen, [true, false]);
+      expect(screen(), [true, false]);
+    });
+
+    test('two long jobs at once: the screen sleeps only after both', () async {
+      await build([for (var i = 0; i < 50; i++) _file('memo $i.mp3', ended)]);
+      await app.refreshFiles();
+      List<Object?> screen() => [
+        for (final c in calls)
+          if (c.method == 'keepScreenOn') (c.arguments as Map)['on'],
+      ];
+      final gate = Completer<void>();
+      store.slow = gate;
+      final first = app.delete(app.files.sublist(0, 25));
+      await settle();
+      final second = app.delete(app.files.sublist(25));
+      await settle();
+      expect(screen(), [true]);
+      gate.complete();
+      store.slow = null;
+      await first;
+      await second;
+      expect(screen(), [true, false]);
+    });
+
+    test('unknown until the folder has been listed (Settings first)', () async {
+      await build([renamed]);
+      store.contents[renamed.id] = _mp3();
+      expect(app.datesToStore, isNull);
+      await app.refreshFiles();
+      for (var i = 0; i < 50 && app.datesToStore == null; i++) {
+        await settle();
+      }
+      expect(app.datesToStore!.map((f) => f.name), [renamed.name]);
+      // And unknown while the folder can't be read.
+      store.failLists = true;
+      await app.refreshFiles();
+      expect(app.datesToStore, isNull);
+    });
+
+    test('a write that failed is tried again, with the same date', () async {
+      await ready();
+      store.roomFor[renamed.id] = 10;
+      await app.storeDates(app.datesToStore!);
+      expect(app.datesToStore!.map((f) => f.name), [renamed.name]);
+      store.roomFor.remove(renamed.id);
+      final r = await app.storeDates(app.datesToStore!);
+      expect(r.stored, 1);
+      final info = await readAudioInfo(
+        MemoryBytes(store.contents[renamed.id]!),
+        renamed.name,
+      );
+      expect(info.recorded, ended);
+      expect(app.datesToStore, isEmpty);
+    });
+
+    test('one deleted before it was read and brought back is read', () async {
+      await build([renamed]);
+      store.contents[renamed.id] = _mp3();
+      store.unreadable.add(renamed.id); // not readable for now
+      await app.refreshFiles();
+      await settle();
+      final deleted = await app.delete([...app.files]);
+      store.unreadable.clear();
+      await app.undoDelete(deleted);
+      for (var i = 0; i < 50 && app.datesToStore == null; i++) {
+        await settle();
+      }
+      expect(app.datesToStore, hasLength(1));
     });
 
     test('the message says what happened', () {
@@ -254,21 +322,72 @@ void main() {
   });
 
   group('Recently deleted', () {
-    test('what was deleted while the clock was wrong gets its 30 days '
-        'from now', () async {
-      final wrong = [
-        // Deleted with the clock in 2024 (before this app existed).
-        _file(TrashedRecording.hiddenName('old.mp3', DateTime(2024, 3)), now),
-        // Deleted with the clock years ahead.
-        _file(TrashedRecording.hiddenName('ahead.mp3', DateTime(2031)), now),
+    test('what was deleted while the clock was set before 2025 gets its 30 '
+        'days from now; two of the same name stay two', () async {
+      final old = [
+        _file(TrashedRecording.hiddenName('memo.mp3', DateTime(2024, 3)), now),
+        _file(TrashedRecording.hiddenName('memo.mp3', DateTime(2024, 4)), now),
       ];
-      await build(wrong);
-      final items = await app.deletedRecordings();
-      expect(items!.map((t) => t.originalName), {'old.mp3', 'ahead.mp3'});
+      await build(old);
+      final items = (await app.deletedRecordings())!;
+      expect(items.map((t) => t.originalName), ['memo.mp3', 'memo.mp3']);
+      expect(items.map((t) => t.file.name).toSet(), hasLength(2));
       for (final t in items) {
-        expect(t.deletedAt, now);
+        expect(t.daysLeft(now), 30);
       }
       expect(store.deletedForGood, isEmpty);
+    });
+
+    test(
+      'one dated in the future is left alone (the clock may be wrong '
+      'now), and nothing is deleted while the clock is before 2025',
+      () async {
+        final ahead = _file(
+          TrashedRecording.hiddenName('ahead.mp3', DateTime(2027)),
+          now,
+        );
+        final old = _file(
+          TrashedRecording.hiddenName('old.mp3', DateTime(2026, 1)),
+          now,
+        );
+        await build([ahead, old]);
+        now = DateTime(2020); // booted with a stale clock
+        final items = (await app.deletedRecordings())!;
+        expect(items.map((t) => t.file.name), {ahead.name, old.name});
+        expect(store.deletedForGood, isEmpty);
+        now = DateTime(2026, 9, 25, 12); // the clock is right again
+        final later = (await app.deletedRecordings())!;
+        expect(later.single.originalName, 'ahead.mp3'); // old.mp3 expired
+        expect(later.single.daysLeft(now), 30);
+      },
+    );
+
+    test('iPhone: two of the same name re-dated at once stay two', () async {
+      final docs = await Directory.systemTemp.createTemp('ios_docs');
+      addTearDown(() => docs.delete(recursive: true));
+      final dir = Directory('${docs.path}/Recorders')..createSync();
+      for (final at in [DateTime(2024, 3), DateTime(2024, 4)]) {
+        File('${dir.path}/${TrashedRecording.hiddenName('memo.mp3', at)}')
+            .writeAsBytesSync([at.month]);
+      }
+      SharedPreferences.setMockInitialValues({});
+      final ios = AppController(
+        settings: await Settings.load(),
+        store: IosRecordingStore(FakeNative(), documents: () async => docs),
+        engine: FakeEngine(),
+        playback: FakePlayback(),
+        native: FakeNative(),
+        workDir: () async => work,
+        clock: () => now,
+      );
+      addTearDown(ios.dispose);
+      await ios.init();
+      final items = (await ios.deletedRecordings())!;
+      expect(items, hasLength(2));
+      expect(
+        {for (final t in items) File(t.file.id).readAsBytesSync().single},
+        {3, 4},
+      );
     });
 
     test('listing it from a screen that purges is not a change', () async {

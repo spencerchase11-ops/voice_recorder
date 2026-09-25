@@ -356,6 +356,8 @@ class IosRecordingStore extends RecordingStore {
   @override
   Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
     final target = File('${_dir.path}/$fileName');
+    // A rename would replace a file of that name: refuse.
+    if (await target.exists()) return null;
     return _fromFile(await File(file.id).rename(target.path));
   }
 

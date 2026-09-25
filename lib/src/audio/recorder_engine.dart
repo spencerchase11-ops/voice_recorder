@@ -348,16 +348,21 @@ class RecordPluginEngine implements RecorderEngine {
       if (e.begin) {
         _paused = true;
         if (!_userPaused) _interrupted.add(true);
-      } else if (e.type == AudioInterruptionType.pause && _userPaused) {
-        // Over, and to be resumed: the plugin resumes the recorder (and
-        // reports it, see _onState; if it can't, the recording stays
-        // paused). Paused by the user meanwhile: pause it again once it
-        // has resumed.
-        Timer(const Duration(milliseconds: 500), () {
-          if (_running && !_stopping && _userPaused) {
-            unawaited(_pauseQuietly());
-          }
-        });
+      } else if (e.type == AudioInterruptionType.pause) {
+        // Over, and to be resumed: the plugin resumes the recorder without
+        // reporting it either (its state never left "recording", and it
+        // only reports changes), so it is reported here.
+        if (_userPaused) {
+          // Paused by the user meanwhile: pause it again once it has.
+          Timer(const Duration(milliseconds: 500), () {
+            if (_running && !_stopping && _userPaused) {
+              unawaited(_pauseQuietly());
+            }
+          });
+        } else {
+          _paused = false;
+          _interrupted.add(false);
+        }
       }
     });
   }

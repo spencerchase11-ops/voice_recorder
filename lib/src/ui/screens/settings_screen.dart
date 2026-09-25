@@ -40,9 +40,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// The controller's trash version counted last.
   int? _counted;
 
+  bool _listed = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Android: "Store dates in recordings" needs the folder's recordings,
+    // which may not have been listed yet (Settings opens from the
+    // Recorder).
+    if (!_listed && Platform.isAndroid) {
+      _listed = true;
+      unawaited(AppScope.read(context).refreshFiles());
+    }
     // Counted again after a delete or an undo (the undo toast stays up
     // across screens).
     final version = AppScope.of(context).trashVersion;
@@ -117,6 +126,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// kept when the recordings are moved to a new phone.
   Future<void> _storeDates() async {
     final app = AppScope.read(context);
+    if (!app.store.isReady) {
+      await showChooseFolderDialog(context);
+      return;
+    }
     final files = app.datesToStore;
     if (files == null) {
       showToast(
@@ -285,6 +298,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       title: 'Store dates in recordings',
                       summary: switch (app.datesToStore?.length) {
+                        _ when !app.store.isReady =>
+                          'Choose the recordings folder first',
                         null => 'Checking the recordings…',
                         0 => 'Every recording has its date inside',
                         1 =>

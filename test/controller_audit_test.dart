@@ -429,11 +429,11 @@ void main() {
 
     test('the message says what happened', () {
       expect(
-        importMessage(result(copied: 2400, skipped: 60, failed: 4, full: 3)),
-        '2,400 recordings imported. 60 were already in the app. 3 '
-        "couldn't be copied because the iPhone is full. 1 couldn't be "
-        'copied. Import again to try them once more (what is already in '
-        'the app is skipped).',
+        importMessage(result(copied: 2400, skipped: 60, failed: 2, full: 1)),
+        '2,400 recordings imported. 60 were already in the app. The iPhone '
+        'is full, so the import stopped. Free some space, then import the '
+        "same folder again to go on. 1 couldn't be copied. Import again to "
+        'try them once more (what is already in the app is skipped).',
       );
       expect(
         importMessage(result(copied: 1, skipped: 1)),

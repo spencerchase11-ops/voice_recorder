@@ -256,16 +256,28 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
   private static let stopLock = NSLock()
   private static var stopRequested = false
 
+  /// The read in progress, which Cancel interrupts (it may be waiting for
+  /// a download from iCloud).
+  private static var reading: NSFileCoordinator?
+
   static func cancel() {
     stopLock.lock()
     stopRequested = true
+    let current = reading
     stopLock.unlock()
+    current?.cancel()
   }
 
   private static var cancelled: Bool {
     stopLock.lock()
     defer { stopLock.unlock() }
     return stopRequested
+  }
+
+  private static func setReading(_ coordinator: NSFileCoordinator?) {
+    stopLock.lock()
+    reading = coordinator
+    stopLock.unlock()
   }
 
   /// Shows the Files picker: for a folder (all the recordings in it), or
@@ -410,13 +422,21 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
       for next in todo[i..<min(i + fetchAhead, todo.count)] {
         try? FileManager.default.startDownloadingUbiquitousItem(at: next.url)
       }
-      autoreleasepool {
-        switch copyOne(item.url, into: destination) {
-        case .copied: copied += 1
-        case .skipped: skipped += 1
-        case .failed: failed += 1
-        case .full: full += 1
-        }
+      let outcome = autoreleasepool { copyOne(item.url, into: destination) }
+      if outcome == .failed && cancelled {
+        // Its read was interrupted by Cancel: not a failure.
+        stopped = true
+        break
+      }
+      switch outcome {
+      case .copied: copied += 1
+      case .skipped: skipped += 1
+      case .failed: failed += 1
+      case .full: full += 1
+      }
+      if outcome == .full {
+        // The rest wouldn't fit either (and would only start downloads).
+        break
       }
       if Date().timeIntervalSince(lastReport) > 0.25 || i == todo.count - 1 {
         lastReport = Date()
@@ -515,7 +535,10 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     var outcome = Outcome.failed
     var error: NSError?
     // Coordinated, so a file that lives only in iCloud is downloaded first.
-    NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &error) { url in
+    let coordinator = NSFileCoordinator()
+    setReading(coordinator)
+    defer { setReading(nil) }
+    coordinator.coordinate(readingItemAt: source, options: [], error: &error) { url in
       let fm = FileManager.default
       let name = url.lastPathComponent
       let ext = (name as NSString).pathExtension

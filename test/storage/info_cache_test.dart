@@ -102,6 +102,18 @@ void main() {
     );
   });
 
+  test('a date kept here only (its write failed) is remembered', () async {
+    final a = cache();
+    a.put(rec, info, onlyHere: true);
+    await a.save();
+    final b = cache();
+    await b.load();
+    expect(b[rec], info);
+    expect(b.dateOnlyHere(rec), isTrue);
+    b.put(rec, info); // written into the file after all
+    expect(b.dateOnlyHere(rec), isFalse);
+  });
+
   test('a changed file is read again', () async {
     final a = cache();
     a.put(rec, info);

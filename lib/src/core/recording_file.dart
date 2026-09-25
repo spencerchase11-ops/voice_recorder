@@ -152,9 +152,10 @@ class TrashedRecording {
   /// seconds, and are never taken for ours).
   static final _early = RegExp(r'^\.trashed-(\d{13})-(.+)$');
 
-  /// For the early prefix: the earliest deletion time taken as real (older
-  /// values are someone else's naming, not a deletion by this app).
-  static final _earliest = DateTime(2025);
+  /// The earliest deletion time that can be right: this app didn't exist
+  /// before. (For the early prefix, older values are someone else's
+  /// naming, not a deletion by this app.)
+  static final earliest = DateTime(2025);
 
   /// The deleted recording [file] stands for, or null for other files.
   static TrashedRecording? parse(RecordingFile file) {
@@ -164,7 +165,7 @@ class TrashedRecording {
     final original = m.group(2)!;
     if (!isAudioFileName(original)) return null;
     final at = DateTime.fromMillisecondsSinceEpoch(int.parse(m.group(1)!));
-    if (ours == null && at.isBefore(_earliest)) return null;
+    if (ours == null && at.isBefore(earliest)) return null;
     return TrashedRecording(file: file, originalName: original, deletedAt: at);
   }
 
@@ -179,12 +180,6 @@ class TrashedRecording {
   }
 
   bool expired(DateTime now) => !deletedAt.add(trashRetention).isAfter(now);
-
-  /// Whether the deletion time can be right: not before this app existed,
-  /// nor in the future (the phone's clock was wrong when it was deleted).
-  bool plausible(DateTime now) =>
-      !deletedAt.isBefore(_earliest) &&
-      !deletedAt.isAfter(now.add(const Duration(days: 1)));
 }
 
 /// Extensions the recording list shows (files the original app could create

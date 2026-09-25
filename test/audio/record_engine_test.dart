@@ -245,11 +245,10 @@ void main() {
       calls.add(AudioInterruptionEvent(true, AudioInterruptionType.unknown));
       await Future<void>.delayed(Duration.zero);
       expect(interruptions, [true]);
+      // Resumed: the plugin resumes the recorder without saying so either
+      // (record_ios only reports changes, and its state never left
+      // "recording").
       calls.add(AudioInterruptionEvent(false, AudioInterruptionType.pause));
-      await Future<void>.delayed(Duration.zero);
-      // Resumed only once the plugin has resumed the recorder (it may fail).
-      expect(interruptions, [true]);
-      platform.emit(RecordState.record);
       await Future<void>.delayed(Duration.zero);
       expect(interruptions, [true, false]);
 

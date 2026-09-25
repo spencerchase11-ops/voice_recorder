@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import '../../core/format.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
+import '../widgets/toast.dart';
 
 /// Shows [builder] centred over a 60% black scrim, like an Android dialog.
 Future<T?> showSpecDialog<T>(
@@ -57,42 +58,67 @@ Future<void> showMessageDialog(
 /// job is still finding out).
 typedef JobState = ({int done, int total});
 
-/// A Holo dialog following a long job, which only the job's end (or its
-/// Cancel button, if [onCancel] is given) closes. [label] says what is
-/// happening, from [state].
+/// A Holo dialog following a long job, which only the job's end closes.
+/// [label] says what is happening, from [state]. With [onCancel], a Cancel
+/// button asks the job to stop (it says "Stopping…" until it has).
 class ProgressDialogRoute extends RawDialogRoute<void> {
   ProgressDialogRoute({
     required String title,
     required ValueListenable<JobState> state,
     required String Function(JobState state) label,
     VoidCallback? onCancel,
-  }) : super(
-         barrierDismissible: false,
-         barrierColor: Spec.dialogScrim,
-         transitionDuration: const Duration(milliseconds: 150),
-         transitionBuilder: _fade,
-         pageBuilder: (ctx, _, _) => PopScope(
-           canPop: false,
-           child: PlainText(
-             child: ScreenFrameInsets(
-               child: ValueListenableBuilder<JobState>(
-                 valueListenable: state,
-                 builder: (ctx, s, _) => HoloDialog(
-                   title: title,
-                   body: _ProgressBody(
-                     label: label(s),
-                     value: s.total == 0 ? 0 : s.done / s.total,
-                   ),
-                   buttons: [
-                     if (onCancel != null)
-                       HoloButton('Cancel', onTap: onCancel),
-                   ],
-                 ),
-               ),
-             ),
-           ),
-         ),
-       );
+  }) : this._(title, state, label, onCancel, ValueNotifier(false));
+
+  ProgressDialogRoute._(
+    String title,
+    ValueListenable<JobState> state,
+    String Function(JobState state) label,
+    VoidCallback? onCancel,
+    ValueNotifier<bool> stopping,
+  ) : super(
+        barrierDismissible: false,
+        barrierColor: Spec.dialogScrim,
+        transitionDuration: const Duration(milliseconds: 150),
+        transitionBuilder: _fade,
+        pageBuilder: (ctx, _, _) => PopScope(
+          canPop: false,
+          child: PlainText(
+            child: ScreenFrameInsets(
+              child: ListenableBuilder(
+                listenable: Listenable.merge([state, stopping]),
+                builder: (ctx, _) {
+                  final s = state.value;
+                  return HoloDialog(
+                    title: title,
+                    body: _ProgressBody(
+                      label: stopping.value ? 'Stopping…' : label(s),
+                      value: s.total == 0 ? 0 : s.done / s.total,
+                    ),
+                    buttons: [
+                      if (onCancel != null && !stopping.value)
+                        HoloButton(
+                          'Cancel',
+                          onTap: () {
+                            stopping.value = true;
+                            onCancel();
+                          },
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+  @override
+  TickerFuture didPush() {
+    // An Undo toast stays above dialogs: tapping it now would start a
+    // second job alongside this one.
+    hideActionToast();
+    return super.didPush();
+  }
 }
 
 class _ProgressBody extends StatelessWidget {
@@ -159,12 +185,7 @@ Future<T> runWithProgress<T>(
     title: title,
     state: state,
     label: label,
-    onCancel: cancellable
-        ? () {
-            stop = true;
-            state.value = (done: state.value.done, total: state.value.total);
-          }
-        : null,
+    onCancel: cancellable ? () => stop = true : null,
   );
   unawaited(navigator.push(route));
   try {

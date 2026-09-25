@@ -109,6 +109,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: 'Restore all',
     );
     if (!ok || !mounted) return;
+    var tried = 0;
     final n = await runWithProgress(
       context,
       title: 'Restoring',
@@ -116,10 +117,15 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       label: (s) =>
           'Restoring ${formatCount(s.done)} of ${formatCount(s.total)} '
           'recordings…',
-      job: (onProgress, cancelled) =>
-          app.restoreAll(items, onProgress: onProgress, cancelled: cancelled),
+      job: (onProgress, cancelled) => app.restoreAll(
+        items,
+        onProgress: (done, total) => onProgress(tried = done, total),
+        cancelled: cancelled,
+      ),
     );
     if (!mounted) return;
+    final stopped = tried < items.length;
+    if (n == 0 && stopped) return; // cancelled before any
     showToast(
       context,
       n == 0
@@ -152,6 +158,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: t == null ? 'Delete all' : 'Delete',
     );
     if (!ok || !mounted) return;
+    var tried = 0;
     final n = await runWithProgress(
       context,
       title: 'Deleting',
@@ -161,12 +168,22 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
           'recordings…',
       job: (onProgress, cancelled) => app.deleteForever(
         targets,
-        onProgress: onProgress,
+        onProgress: (done, total) => onProgress(tried = done, total),
         cancelled: cancelled,
       ),
     );
     if (!mounted) return;
-    if (n == 0) {
+    if (tried < targets.length) {
+      // Stopped: say what was done (the rest are still here).
+      if (n > 0) {
+        showToast(
+          context,
+          n == 1
+              ? 'Deleted 1 recording, then stopped'
+              : 'Deleted ${formatCount(n)} recordings, then stopped',
+        );
+      }
+    } else if (n == 0) {
       showToast(
         context,
         _problem(
@@ -175,8 +192,8 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
               : "Couldn't delete the recordings",
         ),
       );
-    } else if (n < targets.length) {
-      final left = targets.length - n;
+    } else if (n < tried) {
+      final left = tried - n;
       showToast(
         context,
         left == 1

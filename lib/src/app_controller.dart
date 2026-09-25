@@ -305,13 +305,17 @@ class AppController extends ChangeNotifier {
   /// long: the phone going to sleep would pause it.
   Future<T> _awake<T>(int count, Future<T> Function() job) async {
     if (count <= 20) return job();
-    await _safe(() => native.keepScreenOn(true));
+    // Two can run at once (an undo during another delete): the screen may
+    // sleep again once both are done.
+    if (_awakeJobs++ == 0) await _safe(() => native.keepScreenOn(true));
     try {
       return await job();
     } finally {
-      await _safe(() => native.keepScreenOn(false));
+      if (--_awakeJobs == 0) await _safe(() => native.keepScreenOn(false));
     }
   }
+
+  int _awakeJobs = 0;
 
   // ------------------------------------------------------------- setup
   /// Loads the folder, the last recording and recovers cut-off recordings.
@@ -577,14 +581,21 @@ class AppController extends ChangeNotifier {
   /// Null while they are still being read.
   List<RecordingFile>? get datesToStore {
     if (!store.fileTimesAreDates) return const [];
+    // Not known before the folder has been listed (Settings can be opened
+    // first), nor while it can't be read.
+    if (!_filesLoaded || _filesError || !store.isReady) return null;
     final out = <RecordingFile>[];
     for (final f in _files) {
       if (f.nameDate != null || !canStoreRecordedDate(f.name)) continue;
       if (_unreadable.contains(RecordingInfoCache.keyOf(f))) continue;
       final info = _info[f];
       if (info == null) return null;
-      // A length means the file could be read (it can take a date).
-      if (info.recorded == null && info.duration != null) out.add(f);
+      // A length means the file could be read (it can take a date). A date
+      // whose write failed before is tried again.
+      if ((info.recorded == null && info.duration != null) ||
+          _info.dateOnlyHere(f)) {
+        out.add(f);
+      }
     }
     return out;
   }
@@ -618,12 +629,13 @@ class AppController extends ChangeNotifier {
         stoppedAt = file.name;
       }
       if (ok || stoppedAt != null) {
-        // Its size and time have changed: keep its date under them (also
-        // when the write failed and was undone, as its time changed).
+        // Its size and time have changed: keep its date under them. When
+        // the write failed (and was undone), the date is kept here only,
+        // and it is written again the next time.
         final now = await _safe(() => store.find(file.id));
         if (now != null) {
           final info = AudioInfo(recorded: date, duration: duration);
-          _info.put(now, info);
+          _info.put(now, info, onlyHere: !ok);
           changed[file.id] = now.withInfo(info);
         }
       }
@@ -678,7 +690,9 @@ class AppController extends ChangeNotifier {
       length: info?.duration,
     );
     final date = named ?? file.modified;
-    if (known != null && date == known) return known;
+    if (known != null && date == known && !_info.dateOnlyHere(file)) {
+      return known;
+    }
     // On iPhone a file's time is when it was copied there, not a recording
     // date: writing it into the file would make a wrong date stick.
     if (named == null && !store.fileTimesAreDates) return date;
@@ -1462,6 +1476,9 @@ class AppController extends ChangeNotifier {
         if (!ids.contains(x.id)) x,
       for (final f in added) f.withInfo(_info[f]),
     ]);
+    for (final f in added) {
+      if (f.nameDate == null) _requestInfo(f, forOrder: true);
+    }
   }
 
   /// What is in Recently deleted, most recently deleted first. What has been
@@ -1501,12 +1518,19 @@ class AppController extends ChangeNotifier {
     _lastPurge = now;
     final items = <TrashedRecording>[];
     var purged = 0;
+    // A clock set before this app existed is wrong: nothing is dated by
+    // it, nor deleted for good.
+    final clockRight = !now.isBefore(TrashedRecording.earliest);
+    var retimed = 0;
     for (final t in list) {
-      if (!t.plausible(now)) {
+      if (clockRight && t.deletedAt.isBefore(TrashedRecording.earliest)) {
+        // Deleted while the clock was wrong: its 30 days start now (each
+        // at its own millisecond, so two of the same name stay two).
+        final at = now.add(Duration(milliseconds: retimed++));
         items.add(
-          await _safe<TrashedRecording?>(() => store.retime(t, now)) ?? t,
+          await _safe<TrashedRecording?>(() => store.retime(t, at)) ?? t,
         );
-      } else if (!t.expired(now)) {
+      } else if (!clockRight || !t.expired(now)) {
         items.add(t);
       } else if (await _safe(() => store.delete(t.file)) ?? false) {
         purged++;

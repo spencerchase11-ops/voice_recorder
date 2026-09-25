@@ -267,7 +267,8 @@ String importMessage(ImportResult r) {
     if (r.skipped > 0)
       '${count(r.skipped, '1 was', 'were')} already in the app.',
     if (r.full > 0)
-      "${formatCount(r.full)} couldn't be copied because the iPhone is full.",
+      'The iPhone is full, so the import stopped. Free some space, then '
+          'import the same folder again to go on.',
     if (other > 0)
       "${formatCount(other)} couldn't be copied. Import again to try them "
           'once more (what is already in the app is skipped).',

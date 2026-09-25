@@ -58,9 +58,10 @@ with [LAME](https://lame.sourceforge.io), which lives in the local plugin
   formats the app doesn't take (like AMR or OGG) were left out. From *On My
   iPhone* the copies are usually clones: instant, and they take no extra
   space. From iCloud Drive each recording is downloaded first, a few ahead
-  of the one being copied. If the import is interrupted (cancelled, the app
-  closed, the phone out of space), import the same folder again: what is
-  already in the app is skipped before anything is downloaded. The originals
+  of the one being copied. If the iPhone gets full, the import stops there.
+  If the import is interrupted (cancelled, the app closed, the phone out of
+  space), import the same folder again: what is already in the app is
+  skipped before anything is downloaded. The originals
   stay where they were; delete them in Files once you're happy with the
   import. Renamed recordings keep their date only if it is stored in them
   (see *Moving to a new phone* below) or their file date survived the move.
@@ -79,7 +80,8 @@ A deleted recording gets a hidden name in the same folder
 apps, and it can come back. After 30 days the app deletes it for good (it
 checks when it starts, when you come back to it after a few hours, and when
 Settings or Recently deleted opens). A recording deleted while the phone's
-clock was wrong gets its 30 days from when the app next sees it. Recently deleted
+clock was set before 2025 gets its 30 days from when the app next sees it,
+and nothing is deleted for good while the clock reads before 2025. Recently deleted
 belongs to the folder: after switching to another folder, what was deleted in
 the old one stays there, hidden, and comes back into Recently deleted when you
 switch back. The app can't clean up when it is uninstalled, so empty Recently
@@ -137,7 +139,9 @@ phone, before copying:
    with thousands). Tap it and confirm. For each of them, the date the list
    shows is stored inside the file (see above; the sound isn't touched). A
    dialog shows the progress and can cancel it; running it again carries on
-   with the rest. Other apps will show these files as modified that day.
+   with the rest (and with any whose write failed, for example on a full
+   storage; their date is kept in the app meanwhile). Other apps will show
+   these files as modified that day.
    Recordings that can't hold a date (AAC, FLAC, AMR, OGG, damaged files)
    are listed at the end; putting the date at the start of their names
    (`2016_05_23_18_14_00 lunch.mp3`) keeps it.

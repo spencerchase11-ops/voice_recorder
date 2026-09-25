@@ -45,7 +45,8 @@ typedef ImportResult = ({
   int skipped,
   int failed,
 
-  /// Of [failed], those that didn't fit (the iPhone is full).
+  /// Of [failed], the one that didn't fit: the iPhone is full, and the
+  /// import stopped there.
   int full,
 
   /// Sound files in formats the app doesn't take (AMR, Ogg…), left out.

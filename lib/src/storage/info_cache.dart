@@ -19,6 +19,10 @@ class RecordingInfoCache {
 
   final Future<File> Function()? _locate;
   final _map = <String, AudioInfo>{};
+
+  /// Files whose date is known only here: writing it into the file failed,
+  /// after the write had changed the file's time (see [dateOnlyHere]).
+  final _onlyHere = <String>{};
   Timer? _saveTimer;
   bool _dirty = false;
 
@@ -37,8 +41,9 @@ class RecordingInfoCache {
       final json = jsonDecode(await f.readAsString());
       if (json is! Map) return;
       json.forEach((k, v) {
-        if (k is! String || v is! List || v.length != 2) return;
+        if (k is! String || v is! List || v.length < 2) return;
         final r = v[0], d = v[1];
+        if (v.length > 2 && v[2] == 1) _onlyHere.add(k);
         _map[k] = AudioInfo(
           recorded: switch (r) {
             final String t => DateTime.tryParse(t),
@@ -58,10 +63,21 @@ class RecordingInfoCache {
 
   bool contains(RecordingFile f) => _map.containsKey(keyOf(f));
 
-  void put(RecordingFile f, AudioInfo info) {
+  /// Whether [f]'s date is known only here, not in the file (a write that
+  /// failed): it should be written again.
+  bool dateOnlyHere(RecordingFile f) => _onlyHere.contains(keyOf(f));
+
+  /// Remembers [info] for [f]; [onlyHere] marks a date the file doesn't
+  /// hold (see [dateOnlyHere]).
+  void put(RecordingFile f, AudioInfo info, {bool onlyHere = false}) {
     final key = keyOf(f);
-    if (_map[key] == info) return;
+    if (_map[key] == info && _onlyHere.contains(key) == onlyHere) return;
     _map[key] = info;
+    if (onlyHere) {
+      _onlyHere.add(key);
+    } else {
+      _onlyHere.remove(key);
+    }
     _changed();
   }
 
@@ -70,6 +86,7 @@ class RecordingInfoCache {
     final keep = {for (final f in files) keyOf(f)};
     final before = _map.length;
     _map.removeWhere((k, _) => !keep.contains(k));
+    _onlyHere.removeWhere((k) => !keep.contains(k));
     if (_map.length != before) _changed();
   }
 
@@ -97,6 +114,7 @@ class RecordingInfoCache {
           // Local clock time without a zone: `2026-09-25T10:00:00.000`.
           e.value.recorded?.toLocal().toIso8601String(),
           e.value.duration?.inMilliseconds,
+          if (_onlyHere.contains(e.key)) 1,
         ],
     };
     try {
