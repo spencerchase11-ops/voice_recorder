@@ -32,20 +32,25 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   /// How many recordings are in Recently deleted (null until known).
   int? _deleted;
-  bool _loaded = false;
+
+  /// The controller's trash version counted last.
+  int? _counted;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_loaded) {
-      _loaded = true;
+    // Counted again after a delete or an undo (the undo toast stays up
+    // across screens).
+    final version = AppScope.of(context).trashVersion;
+    if (_counted != version) {
+      _counted = version;
       _countDeleted();
     }
   }
 
   Future<void> _countDeleted() async {
-    final n = (await AppScope.read(context).deletedRecordings()).length;
-    if (mounted) setState(() => _deleted = n);
+    final list = await AppScope.read(context).deletedRecordings();
+    if (mounted) setState(() => _deleted = list?.length);
   }
 
   Future<void> _openRecentlyDeleted() async {
@@ -60,7 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showToast(
       context,
       n == 0
-          ? 'No new recordings were found there'
+          ? 'No new recordings were found there (MP3, WAV, M4A, AAC or FLAC)'
           : n == 1
           ? '1 recording imported'
           : '$n recordings imported',
@@ -208,7 +213,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     summary: settings.lockScreenControls
                         ? 'Keeps playing in the background, with controls on '
                               'the lock screen'
-                        : 'Playback stops when you leave the app',
+                        : 'Playback stops when you leave the app or lock the phone',
                     trailing: _HoloCheckBox(
                       checked: settings.lockScreenControls,
                     ),
@@ -387,7 +392,7 @@ class _Item extends StatelessWidget {
       children: [
         PressableArea(
           onTap: onTap,
-          selected: checked,
+          checked: checked,
           semanticLabel: summary == null ? title : '$title, $summary',
           child: ConstrainedBox(
             constraints: const BoxConstraints(

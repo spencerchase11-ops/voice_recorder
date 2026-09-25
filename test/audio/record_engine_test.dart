@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lame_mp3/src/native_library.dart';
 import 'package:record/record.dart';
@@ -221,6 +222,44 @@ void main() {
       await feed(_tone(4410), 2); // in between: dropped
       await engine.stop();
       expect(await File(path).length(), 44 + 8820);
+    },
+  );
+
+  test(
+    'iOS, M4A: calls pause the timer, and a paused one stays paused',
+    () async {
+      // The system pauses the M4A recorder for a call without the plugin
+      // saying so: the audio session's interruptions tell.
+      final calls = StreamController<AudioInterruptionEvent>.broadcast();
+      addTearDown(calls.close);
+      engine = RecordPluginEngine(
+        isAndroid: false,
+        sessionInterruptions: calls.stream,
+      );
+      final interruptions = <bool>[];
+      engine.interrupted.listen(interruptions.add);
+      await engine.start(
+        RecordingProfile.of(RecordingType.m4a, RecordingQuality.best),
+        '${dir.path}/a.m4a',
+      );
+      calls.add(AudioInterruptionEvent(true, AudioInterruptionType.unknown));
+      await Future<void>.delayed(Duration.zero);
+      expect(interruptions, [true]);
+      calls.add(AudioInterruptionEvent(false, AudioInterruptionType.pause));
+      await Future<void>.delayed(Duration.zero);
+      expect(interruptions, [true, false]);
+
+      // Paused by the user during the next call: after it ends (and iOS
+      // resumes the recorder), it is paused again.
+      calls.add(AudioInterruptionEvent(true, AudioInterruptionType.unknown));
+      await Future<void>.delayed(Duration.zero);
+      await engine.pause();
+      final pauses = platform.pauses;
+      calls.add(AudioInterruptionEvent(false, AudioInterruptionType.pause));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(platform.pauses, pauses + 1);
+      expect(interruptions, [true, false, true]);
+      await engine.stop();
     },
   );
 

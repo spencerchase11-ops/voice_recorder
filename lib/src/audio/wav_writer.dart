@@ -102,7 +102,8 @@ class WavWriter {
   /// A header still holding the placeholder (no data size) gets the size of
   /// everything after it, less a partly written sample at the end; a valid
   /// data size is kept (the recording was finished, and the date chunk may
-  /// follow the data).
+  /// follow the data), also a size of 0 in a header that [close] finished
+  /// (a recording with no sound, followed by its date).
   static Future<void> repair(
     File file, {
     required int sampleRate,
@@ -112,14 +113,17 @@ class WavWriter {
     if (length < 44) return;
     final raf = await file.open(mode: FileMode.append);
     try {
-      await raf.setPosition(40);
-      final field = await raf.read(4);
-      final declared = field.length < 4
-          ? 0
-          : ByteData.sublistView(field).getUint32(0, Endian.little);
+      await raf.setPosition(0);
+      final h = await raf.read(44);
+      final sizes = ByteData.sublistView(h);
+      final riff = h.length < 8 ? 0 : sizes.getUint32(4, Endian.little);
+      final declared = h.length < 44 ? 0 : sizes.getUint32(40, Endian.little);
       final available = length - 44;
+      final finished = declared == 0
+          ? length > 44 && riff + 8 == length
+          : declared <= available;
       var data = declared;
-      if (data == 0 || data > available) {
+      if (!finished) {
         data = available - available % (channels * 2);
         if (44 + data < length) {
           await raf.truncate(44 + data);

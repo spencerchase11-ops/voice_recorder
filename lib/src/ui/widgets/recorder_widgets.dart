@@ -73,6 +73,8 @@ class _TimerBoxState extends State<TimerBox>
                       animation: _blink,
                       builder: (context, child) => Opacity(
                         opacity: _blink.value < 0.6 ? 1 : 0,
+                        // Screen readers keep the time while it blinks.
+                        alwaysIncludeSemantics: true,
                         child: child,
                       ),
                       child: digits,

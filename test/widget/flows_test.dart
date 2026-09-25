@@ -439,6 +439,8 @@ void main() {
       );
       await tester.tap(find.text('OK'));
       await pumpUntil(tester, () => t.store.folderChoices == 1);
+      // Nothing to list until then; the folder's recordings come in now.
+      await pumpUntil(tester, () => t.controller.files.isNotEmpty);
       await tester.pumpAndSettle();
       expect(find.text(_kris), findsOneWidget);
     });

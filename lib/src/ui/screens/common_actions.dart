@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../../app_controller.dart';
+import '../../core/format.dart';
 import '../../core/recording_file.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
@@ -77,6 +78,10 @@ Future<RecordingFile?> renameRecording(
   final app = AppScope.read(context);
   final name = await showRenameDialog(context, file.baseName);
   if (name == null || !context.mounted) return null;
+  if (sanitizeFileName(name).isEmpty) {
+    showToast(context, 'Enter a name for the file');
+    return null;
+  }
   final renamed = await app.rename(file, name);
   if (renamed == null && context.mounted) showToast(context, 'Rename failed');
   return renamed;
@@ -96,6 +101,13 @@ Future<bool> deleteRecordings(
     count: files.length,
   );
   if (!confirmed || !context.mounted) return false;
+  if (files.length > 20) {
+    showToast(
+      context,
+      'Moving ${files.length} recordings to Recently deleted…',
+      long: true,
+    );
+  }
   final deleted = await app.delete(files);
   if (!context.mounted) return deleted.items.isNotEmpty;
   if (deleted.items.isEmpty) {
@@ -132,11 +144,17 @@ Future<void> shareRecordings(
   Rect? origin,
 }) async {
   final app = AppScope.read(context);
+  if (files.length > maxShareCount) {
+    showToast(context, 'Share up to $maxShareCount recordings at a time');
+    return;
+  }
   final box = context.findRenderObject() as RenderBox?;
   final rect =
       origin ??
       (box == null ? null : box.localToGlobal(Offset.zero) & box.size);
-  await app.shareAll(files, origin: rect);
+  if (!await app.shareAll(files, origin: rect) && context.mounted) {
+    showToast(context, "Couldn't open sharing");
+  }
 }
 
 /// Explains the folder permission and opens the system folder picker.

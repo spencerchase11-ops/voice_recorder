@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/storage/recording_store.dart';
 
@@ -47,6 +48,34 @@ void main() {
       'On My iPhone/Voice Recorder/Recorders/take.mp3',
     );
     expect(store.playbackUri(a), Uri.file(a.id));
+  });
+
+  test('Recently deleted: out of the list, back under a free name', () async {
+    final store = await open('A');
+    final take = await store.save(
+      await pending('x.mp3'),
+      'take.mp3',
+      'audio/mpeg',
+    );
+    final t = (await store.trash(take, DateTime(2026, 9, 25)))!;
+    expect(await store.list(), isEmpty);
+    expect((await store.listTrash()).single.originalName, 'take.mp3');
+    // A new "take.mp3" meanwhile: the old one comes back beside it.
+    await store.save(await pending('y.mp3'), 'take.mp3', 'audio/mpeg');
+    final back = (await store.restore(t))!;
+    expect(back.name, 'take (1).mp3');
+    expect(await store.listTrash(), isEmpty);
+  });
+
+  test("Recently deleted: the early test builds' names too", () async {
+    final store = await open('A');
+    final dir = Directory('${root.path}/A/Documents/Recorders');
+    final ms = DateTime(2026, 9, 20).millisecondsSinceEpoch;
+    await File('${dir.path}/.trashed-$ms-old.mp3').writeAsBytes([1]);
+    await File('${dir.path}/.hidden-notes.mp3').writeAsBytes([1]);
+    final trash = await store.listTrash();
+    expect(trash.single.originalName, 'old.mp3');
+    expect(trash.single, isA<TrashedRecording>());
   });
 
   test('lists audio files only', () async {

@@ -1,35 +1,71 @@
 import 'dart:async';
 
+import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
 import '../spec.dart';
 import 'frame.dart';
 
+/// Distance of a toast's bottom edge from the screen's: above the action
+/// bar, or just above the keyboard while it is up.
+double _toastBottom(BuildContext context, double aboveBar) {
+  final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+  return keyboard > 0
+      ? keyboard + 16
+      : MediaQuery.viewPaddingOf(context).bottom + aboveBar;
+}
+
+/// Reads [message] out with a screen reader (iOS; on Android the toast is a
+/// live region, which TalkBack reads when it appears).
+void _announce(BuildContext context, String message) {
+  if (!MediaQuery.supportsAnnounceOf(context)) return;
+  unawaited(
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      TextDirection.ltr,
+    ),
+  );
+}
+
+OverlayEntry? _toast;
+Timer? _toastTimer;
+
 /// An Android-style toast; [long] keeps it up longer, for longer messages.
+/// A newer one replaces it.
 void showToast(BuildContext context, String message, {bool long = false}) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
-  late OverlayEntry entry;
-  entry = OverlayEntry(
+  _removeToast();
+  final entry = OverlayEntry(
     builder: (ctx) => Positioned(
       left: 24,
       right: 24,
-      bottom: MediaQuery.viewPaddingOf(ctx).bottom + 88,
+      // Above the undo toast, when both show.
+      bottom: _toastBottom(ctx, _actionToast == null ? 88 : 144),
       child: IgnorePointer(
         child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xE6333333),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontFamily: Spec.font,
-                fontSize: 14,
-                color: Color(0xFFFFFFFF),
+          child: PlainText(
+            child: Semantics(
+              liveRegion: true,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xE6333333),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: Spec.font,
+                    fontSize: 14,
+                    color: Color(0xFFFFFFFF),
+                  ),
+                ),
               ),
             ),
           ),
@@ -38,7 +74,19 @@ void showToast(BuildContext context, String message, {bool long = false}) {
     ),
   );
   overlay.insert(entry);
-  Timer(Duration(milliseconds: long ? 3500 : 2000), entry.remove);
+  _toast = entry;
+  _toastTimer = Timer(Duration(milliseconds: long ? 3500 : 2000), _removeToast);
+  _announce(context, message);
+}
+
+void _removeToast() {
+  final e = _toast;
+  _toast = null;
+  _toastTimer?.cancel();
+  _toastTimer = null;
+  e
+    ?..remove()
+    ..dispose();
 }
 
 OverlayEntry? _actionToast;
@@ -57,20 +105,26 @@ void showActionToast(
   if (overlay == null) return;
   hideActionToast();
   late OverlayEntry entry;
+  var removed = false;
   void remove() {
+    if (removed) return;
+    removed = true;
     if (_actionToast == entry) {
       _actionToast = null;
+      _hideAction = null;
       _actionTimer?.cancel();
       _actionTimer = null;
     }
-    if (entry.mounted) entry.remove();
+    entry
+      ..remove()
+      ..dispose();
   }
 
   entry = OverlayEntry(
     builder: (ctx) => Positioned(
       left: 16,
       right: 16,
-      bottom: MediaQuery.viewPaddingOf(ctx).bottom + 80,
+      bottom: _toastBottom(ctx, 80),
       child: Center(
         child: PlainText(
           child: Container(
@@ -129,16 +183,19 @@ void showActionToast(
       ),
     ),
   );
-  _actionToast = entry;
   overlay.insert(entry);
+  _actionToast = entry;
+  _hideAction = remove;
   _actionTimer = Timer(duration, remove);
+  _announce(context, message);
 }
+
+/// Removes the showing action toast.
+VoidCallback? _hideAction;
 
 /// Removes the action toast, if one is showing.
 void hideActionToast() {
-  final e = _actionToast;
-  _actionToast = null;
-  _actionTimer?.cancel();
-  _actionTimer = null;
-  if (e != null && e.mounted) e.remove();
+  final hide = _hideAction;
+  _hideAction = null;
+  hide?.call();
 }

@@ -239,6 +239,8 @@ class PressableArea extends StatefulWidget {
     this.highlight = const Color(0x6633B5E5),
     this.semanticLabel,
     this.selected,
+    this.checked,
+    this.excludeSemantics = true,
   });
 
   final Widget child;
@@ -247,8 +249,16 @@ class PressableArea extends StatefulWidget {
   final Color highlight;
   final String? semanticLabel;
 
-  /// For accessibility: whether this item is ticked (selection mode).
+  /// For accessibility: whether this item is ticked (selection mode) or the
+  /// open one.
   final bool? selected;
+
+  /// For accessibility: the state of an on/off row.
+  final bool? checked;
+
+  /// The [semanticLabel] says all the child's texts do, which would be read
+  /// out twice otherwise. False for rows with buttons of their own inside.
+  final bool excludeSemantics;
 
   @override
   State<PressableArea> createState() => _PressableAreaState();
@@ -264,23 +274,28 @@ class _PressableAreaState extends State<PressableArea> {
   @override
   Widget build(BuildContext context) {
     final enabled = widget.onTap != null;
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      selected: widget.selected,
-      label: widget.semanticLabel,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: enabled ? (_) => _set(true) : null,
-        onTapUp: enabled ? (_) => _set(false) : null,
-        onTapCancel: enabled ? () => _set(false) : null,
-        onTap: widget.onTap,
-        onLongPress: widget.onLongPress == null
-            ? null
-            : () {
-                _set(false);
-                widget.onLongPress!();
-              },
+    // The gestures' tap and long-press actions and these properties make one
+    // node for screen readers.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: enabled ? (_) => _set(true) : null,
+      onTapUp: enabled ? (_) => _set(false) : null,
+      onTapCancel: enabled ? () => _set(false) : null,
+      onTap: widget.onTap,
+      onLongPress: widget.onLongPress == null
+          ? null
+          : () {
+              _set(false);
+              widget.onLongPress!();
+            },
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        selected: widget.selected,
+        checked: widget.checked,
+        label: widget.semanticLabel,
+        excludeSemantics:
+            widget.excludeSemantics && widget.semanticLabel != null,
         child: Stack(
           fit: StackFit.passthrough,
           children: [

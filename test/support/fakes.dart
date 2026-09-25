@@ -46,6 +46,10 @@ class FakeStore extends RecordingStore {
 
   /// Makes [renameTo] (rename, trash, restore) fail.
   bool failRenames = false;
+
+  /// What the folder makes of a name it is given (some providers change
+  /// names, e.g. drop a leading dot).
+  String Function(String name)? alterName;
   final deletedForGood = <String>[];
 
   @override
@@ -65,10 +69,12 @@ class FakeStore extends RecordingStore {
     return true;
   }
 
+  /// Like the Android store: nothing to list without the folder.
   @override
   Future<List<RecordingFile>> list() async => [
-    for (final f in files)
-      if (isAudioFileName(f.name)) f,
+    if (ready)
+      for (final f in files)
+        if (isAudioFileName(f.name)) f,
   ];
 
   @override
@@ -92,9 +98,10 @@ class FakeStore extends RecordingStore {
     if (failRenames) return null;
     final i = files.indexWhere((f) => f.id == file.id);
     if (i < 0) return null;
+    final name = alterName?.call(fileName) ?? fileName;
     final r = RecordingFile(
-      id: 'mem://$fileName',
-      name: fileName,
+      id: 'mem://$name',
+      name: name,
       size: file.size,
       modified: file.modified,
     );
@@ -111,7 +118,10 @@ class FakeStore extends RecordingStore {
   @override
   Future<ByteAccess> openBytes(RecordingFile file, {bool write = false}) async {
     opens++;
-    if (unreadable.contains(file.id)) {
+    // Like the real stores: a missing file can't be opened (and writing
+    // never creates one).
+    if (unreadable.contains(file.id) ||
+        (write && !files.any((f) => f.id == file.id))) {
       throw const FileSystemException('gone');
     }
     return MemoryBytes(contents.putIfAbsent(file.id, () => <int>[]));
@@ -268,9 +278,22 @@ class FakePlayback extends Playback {
   /// Ids that fail to open, like a deleted or corrupt file.
   final broken = <String>{};
 
+  /// Holds [load] until completed, like a file that takes a while to open
+  /// (nothing counts as loaded meanwhile, as with just_audio).
+  Completer<void>? loadGate;
+  var _loads = 0;
+
   @override
   Future<void> load(String fileId, Uri uri) async {
     if (_id == fileId) return;
+    final ticket = ++_loads;
+    final gate = loadGate;
+    if (gate != null) {
+      _id = null;
+      _playing = false;
+      await gate.future;
+      if (ticket != _loads) return; // stopped or replaced meanwhile
+    }
     if (broken.contains(fileId)) {
       _id = null;
       throw Exception('cannot open $fileId');
@@ -289,6 +312,7 @@ class FakePlayback extends Playback {
   @override
   Future<void> play(String fileId, Uri uri) async {
     await load(fileId, uri);
+    if (_id != fileId) return; // superseded, like the real one
     if (audioBusy) throw const AudioBusyException();
     _playing = true;
     played.add(fileId);
@@ -312,6 +336,7 @@ class FakePlayback extends Playback {
 
   @override
   Future<void> stop() async {
+    _loads++; // a load in progress is cancelled
     _id = null;
     _playing = false;
     _position = Duration.zero;
@@ -369,10 +394,14 @@ String baseOf(String name) => splitExtension(name).$1;
 
 /// [ByteAccess] over bytes in memory.
 class MemoryBytes implements ByteAccess {
-  MemoryBytes(this.data);
+  MemoryBytes(this.data, {this.room});
 
   final List<int> data;
   var closed = false;
+
+  /// Bytes the file may still grow by (a nearly full storage): a write past
+  /// that writes what fits and then fails.
+  int? room;
 
   @override
   Future<int> length() async => data.length;
@@ -386,10 +415,23 @@ class MemoryBytes implements ByteAccess {
 
   @override
   Future<void> write(int offset, List<int> bytes) async {
-    if (data.length < offset + bytes.length) {
-      data.addAll(List.filled(offset + bytes.length - data.length, 0));
+    var n = bytes.length;
+    final grow = offset + n - data.length;
+    final limit = room;
+    if (limit != null && grow > limit) n -= grow - limit;
+    if (data.length < offset + n) {
+      data.addAll(List.filled(offset + n - data.length, 0));
     }
-    data.setRange(offset, offset + bytes.length, bytes);
+    data.setRange(offset, offset + n, bytes);
+    if (limit != null && grow > 0) room = math.max(0, limit - grow);
+    if (n < bytes.length) {
+      throw const FileSystemException('No space left on device');
+    }
+  }
+
+  @override
+  Future<void> truncate(int length) async {
+    if (length < data.length) data.removeRange(length, data.length);
   }
 
   @override

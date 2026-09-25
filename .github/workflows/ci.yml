@@ -4,9 +4,14 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # Weekly: keeps the test signing key's cache in use (see the android job).
+  schedule:
+    - cron: '17 6 * * 1'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A manual run replaces the push run of the same commit (it builds iOS
+  # too); the weekly run stands apart.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'schedule' && 'weekly' || 'build' }}
   cancel-in-progress: true
 
 env:
@@ -15,6 +20,7 @@ env:
 jobs:
   test:
     name: Analyze and test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +50,8 @@ jobs:
 
   android:
     name: Android build
+    # Only a commit that passes its tests gets an APK for the phone.
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,8 +69,8 @@ jobs:
       # certificate makes Play reject them, like any debug build). The key is
       # kept in the Actions cache so each new test APK installs as an update
       # over the previous one; Android refuses an update signed with another
-      # key. GitHub deletes a cache that goes unused for 7 days, and then the
-      # next APK gets a new key.
+      # key. GitHub deletes a cache that goes unused for 7 days (then the next
+      # APK would get a new key): the weekly run below keeps it in use.
       - name: Restore the test signing key
         uses: actions/cache@v4
         with:
@@ -88,9 +96,21 @@ jobs:
           name: voice-recorder-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
+  keep-signing-key:
+    name: Keep the test signing key
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore the test signing key (counts as a use)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.voice-recorder-test-key
+          key: android-test-signing-key-v2
+
   ios:
     name: iOS build (no code signing)
-    # macOS minutes are expensive: run on main and on demand only.
+    # macOS minutes are expensive: run on demand (Actions > CI > Run
+    # workflow) and on main only.
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: macos-latest
     steps:

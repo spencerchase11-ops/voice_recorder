@@ -36,10 +36,15 @@ Future<void> main() async {
     native: native,
     workDir: getApplicationSupportDirectory,
     isAndroid: Platform.isAndroid,
+    // Out of backups: on Android through backup_rules.xml, on iOS by living
+    // in Caches (which iOS may empty; the files are then read again).
     info: RecordingInfoCache(
-      file: () async => File(
-        '${(await getApplicationSupportDirectory()).path}/recording_info.json',
-      ),
+      file: () async {
+        final dir = Platform.isIOS
+            ? await getApplicationCacheDirectory()
+            : await getApplicationSupportDirectory();
+        return File('${dir.path}/recording_info.json');
+      },
     ),
   );
   runApp(VoiceRecorderApp(controller: controller));

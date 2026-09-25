@@ -33,7 +33,8 @@ import android.view.KeyEvent
  * The Flutter side plays the audio and sends the player's state
  * ([update]); the buttons go back to it as "mediaAction" calls. It runs while
  * something plays and for [IDLE_TIMEOUT_MS] after a pause, so the recording
- * can be resumed from the lock screen, then goes away.
+ * can be resumed from the lock screen, then goes away ("dismiss": the
+ * recording stays loaded, paused, in the app).
  */
 class PlaybackService : Service() {
 
@@ -49,13 +50,25 @@ class PlaybackService : Service() {
     private lateinit var session: MediaSession
     private val handler = Handler(Looper.getMainLooper())
     private var inForeground = false
+
+    /** Shut down: start commands still queued for it are ignored. */
+    private var stopped = false
     private var shown: Info? = null
     private var art: Bitmap? = null
 
-    // Paused for a while: the controls go away.
-    private val idleTimeout = Runnable {
-        NativePlugin.emit("mediaAction", mapOf("action" to "dismiss"))
-        shutDown()
+    /** When the controls go away if still paused ([SystemClock.elapsedRealtime]). */
+    private var idleDeadline = 0L
+
+    // Checked every minute the phone is awake, against a clock that also
+    // counts the time it slept (Handler delays don't).
+    private val idleCheck = object : Runnable {
+        override fun run() {
+            if (SystemClock.elapsedRealtime() >= idleDeadline) {
+                dismiss()
+            } else {
+                handler.postDelayed(this, IDLE_CHECK_MS)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -64,6 +77,11 @@ class PlaybackService : Service() {
         super.onCreate()
         instance = this
         session = MediaSession(this, "VoiceRecorder").apply {
+            // Android 7 only gives headset buttons to sessions that ask.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            }
             setCallback(callback, handler)
             setSessionActivity(openApp())
             isActive = true
@@ -72,27 +90,29 @@ class PlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A button pressed just as the controls went away.
+        if (stopped) return START_NOT_STICKY
         when (intent?.action) {
             ACTION_TOGGLE -> send(if (shown?.playing == true) "pause" else "play")
             ACTION_REWIND -> send("rewind")
             ACTION_FORWARD -> send("forward")
             ACTION_DISMISS -> {
-                send("dismiss")
-                shutDown()
+                dismiss()
                 return START_NOT_STICKY
             }
         }
         // Started with startForegroundService(): the foreground must follow,
-        // even if the controls were cleared meanwhile.
-        val info = pending
+        // even if the controls were cleared meanwhile. (After a button, the
+        // new state comes back from the Flutter side through update().)
         if (!inForeground) {
+            val info = pending
             if (!goForeground(info)) return START_NOT_STICKY
             if (info == null) {
                 shutDown()
                 return START_NOT_STICKY
             }
+            apply(info)
         }
-        if (info != null) apply(info)
         return START_NOT_STICKY
     }
 
@@ -153,16 +173,28 @@ class PlaybackService : Service() {
                 )
                 .build(),
         )
-        if (inForeground) {
+        // The notification shows only the name and play or pause (Android
+        // drops updates that come faster than a few a second).
+        if (inForeground && (previous == null || previous.title != info.title || previous.playing != info.playing)) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(NOTIFICATION_ID, buildNotification(info))
         }
-        handler.removeCallbacks(idleTimeout)
-        if (!info.playing) handler.postDelayed(idleTimeout, IDLE_TIMEOUT_MS)
+        handler.removeCallbacks(idleCheck)
+        if (!info.playing) {
+            idleDeadline = SystemClock.elapsedRealtime() + IDLE_TIMEOUT_MS
+            handler.postDelayed(idleCheck, IDLE_CHECK_MS)
+        }
+    }
+
+    /** Takes the controls away; the Flutter side keeps the recording, paused. */
+    private fun dismiss() {
+        send("dismiss")
+        shutDown()
     }
 
     private fun shutDown() {
-        handler.removeCallbacks(idleTimeout)
+        stopped = true
+        handler.removeCallbacks(idleCheck)
         if (instance === this) instance = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         inForeground = false
@@ -171,15 +203,12 @@ class PlaybackService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // Swiped away from Recents while paused: nothing to keep around.
-        if (shown?.playing != true) {
-            send("dismiss")
-            shutDown()
-        }
+        if (shown?.playing != true) dismiss()
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(idleTimeout)
+        handler.removeCallbacks(idleCheck)
         if (instance === this) instance = null
         session.isActive = false
         session.release()
@@ -197,7 +226,9 @@ class PlaybackService : Service() {
     private val callback = object : MediaSession.Callback() {
         override fun onPlay() = send("play")
         override fun onPause() = send("pause")
-        override fun onStop() = send("stop")
+
+        // Also the media player's Dismiss button (Android 14 and later).
+        override fun onStop() = dismiss()
         override fun onSeekTo(pos: Long) = send("seek", pos)
         override fun onFastForward() = send("forward")
         override fun onRewind() = send("rewind")
@@ -329,6 +360,7 @@ class PlaybackService : Service() {
         private const val CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 2
         private const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L
+        private const val IDLE_CHECK_MS = 60 * 1000L
         private const val ACTION_TOGGLE = "com.spencerchase.voicerecorder.playback.TOGGLE"
         private const val ACTION_REWIND = "com.spencerchase.voicerecorder.playback.REWIND"
         private const val ACTION_FORWARD = "com.spencerchase.voicerecorder.playback.FORWARD"

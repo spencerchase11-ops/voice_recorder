@@ -61,10 +61,30 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
       // The hardware, not the idiom: this iPhone-only app also runs on iPads.
       result(UIDevice.current.model.hasPrefix("iPad") ? "iPad" : "iPhone")
     case "resetAudioSampleRate":
-      // A recording at a low quality leaves its sample rate as the session's
-      // preference, which can make later playback sound muffled.
-      try? AVAudioSession.sharedInstance().setPreferredSampleRate(48000)
+      // After a recording. A low quality leaves its sample rate as the
+      // session's preference, which can make later playback sound muffled.
+      // And other apps' audio it paused (music, a podcast) may go on: iOS
+      // tells them once this app's session lets go.
+      let session = AVAudioSession.sharedInstance()
+      try? session.setPreferredSampleRate(48000)
+      try? session.setActive(false, options: .notifyOthersOnDeactivation)
       result(nil)
+    case "excludeFromBackup":
+      // A recording in progress (possibly gigabytes of WAV) stays out of
+      // iCloud and computer backups.
+      guard let path = args?["path"] as? String else {
+        result(FlutterError(code: "bad_args", message: "No path", details: nil))
+        return
+      }
+      var url = URL(fileURLWithPath: path)
+      var values = URLResourceValues()
+      values.isExcludedFromBackup = true
+      do {
+        try url.setResourceValues(values)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "backup", message: error.localizedDescription, details: nil))
+      }
     case "openAppSettings":
       if let url = URL(string: UIApplication.openSettingsURLString) {
         UIApplication.shared.open(url)
@@ -185,13 +205,20 @@ final class NowPlaying {
 /// Copies recordings the user picks in the Files app (single files or whole
 /// folders, from On My iPhone, iCloud Drive or a USB drive) into the
 /// recordings folder.
-final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
+final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
+  UIAdaptivePresentationControllerDelegate
+{
+  /// The formats iPhones play (AMR, Ogg and Opus files would only fail).
   private static let audioExtensions: Set<String> = [
-    "mp3", "wav", "m4a", "aac", "amr", "3gp", "ogg", "opus", "flac",
+    "mp3", "wav", "m4a", "aac", "flac",
   ]
+
+  /// Name start of a file being copied in; renamed once complete.
+  private static let partialPrefix = ".importing-"
 
   private var destination: URL?
   private var result: FlutterResult?
+  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   func pick(into destination: URL, result: @escaping FlutterResult) {
     guard self.result == nil else {
@@ -204,10 +231,13 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
     }
     self.destination = destination
     self.result = result
+    Self.removePartialCopies(in: destination)
     let picker = UIDocumentPickerViewController(
       forOpeningContentTypes: [.audio, .folder], asCopy: false)
     picker.allowsMultipleSelection = true
     picker.delegate = self
+    // Swiping the sheet down doesn't always count as Cancel.
+    picker.presentationController?.delegate = self
     presenter.present(picker, animated: true)
   }
 
@@ -215,10 +245,18 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
     finish(nil)
   }
 
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+    finish(nil)
+  }
+
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
     guard let destination = destination else {
       finish(nil)
       return
+    }
+    // A long copy (from iCloud or a USB drive) goes on if the user leaves.
+    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Import recordings") {
+      [weak self] in self?.endBackgroundTask()
     }
     DispatchQueue.global(qos: .userInitiated).async {
       let count = Self.copy(urls, into: destination)
@@ -230,7 +268,23 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
     let r = result
     result = nil
     destination = nil
+    endBackgroundTask()
     r?(count)
+  }
+
+  private func endBackgroundTask() {
+    guard backgroundTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(backgroundTask)
+    backgroundTask = .invalid
+  }
+
+  /// Copies an earlier import didn't finish (the app was closed meanwhile).
+  private static func removePartialCopies(in folder: URL) {
+    let fm = FileManager.default
+    let items = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+    for item in items where item.lastPathComponent.hasPrefix(partialPrefix) {
+      try? fm.removeItem(at: item)
+    }
   }
 
   private static func isAudio(_ url: URL) -> Bool {
@@ -304,11 +358,17 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
           n += 1
         } while fm.fileExists(atPath: target.path)
       }
+      // Under a hidden name until complete, so a copy cut short never shows
+      // up as a recording.
+      let partial = destination.appendingPathComponent(
+        "\(partialPrefix)\(UUID().uuidString).\((name as NSString).pathExtension)")
       do {
-        try fm.copyItem(at: url, to: target)
+        try fm.copyItem(at: url, to: partial)
+        try fm.moveItem(at: partial, to: target)
         copied = true
       } catch {
-        NSLog("Voice Recorder: could not import \(name): \(error)")
+        try? fm.removeItem(at: partial)
+        NSLog("Voice Recorder: could not import %@: %@", name, "\(error)")
       }
     }
     return copied

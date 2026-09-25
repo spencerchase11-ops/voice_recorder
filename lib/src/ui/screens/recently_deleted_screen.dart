@@ -27,24 +27,47 @@ class RecentlyDeletedScreen extends StatefulWidget {
 class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
   List<TrashedRecording>? _items;
   String? _selected;
-  bool _loaded = false;
+
+  /// The folder couldn't be read.
+  bool _failed = false;
+
+  /// A restore or delete is being carried out: more taps wait for it.
+  bool _busy = false;
+
+  /// The controller's trash version shown last.
+  int? _shown;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_loaded) {
-      _loaded = true;
+    // Loaded again after a change elsewhere (an undo from the toast).
+    final version = AppScope.of(context).trashVersion;
+    if (_shown != version) {
+      _shown = version;
       _load();
     }
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     final items = await AppScope.read(context).deletedRecordings();
     if (!mounted) return;
     setState(() {
-      _items = items;
-      if (!items.any((t) => t.file.id == _selected)) _selected = null;
+      _failed = items == null;
+      _items = items ?? const [];
+      if (!_items!.any((t) => t.file.id == _selected)) _selected = null;
     });
+  }
+
+  /// Runs [action] unless another one is running.
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   TrashedRecording? get _selectedItem {
@@ -54,7 +77,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
     return null;
   }
 
-  Future<void> _restore() async {
+  Future<void> _restore() => _run(() async {
     final t = _selectedItem;
     if (t == null) {
       showToast(context, 'Please select a file');
@@ -67,9 +90,9 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       restored == null ? 'Restore failed' : 'Restored ${restored.name}',
     );
     await _load();
-  }
+  });
 
-  Future<void> _deleteForever() async {
+  Future<void> _deleteForever() => _run(() async {
     final t = _selectedItem;
     if (t == null) {
       showToast(context, 'Please select a file');
@@ -83,13 +106,13 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: 'Delete',
     );
     if (!ok || !mounted) return;
-    if (await app.deleteForever([t]) == 0 && mounted) {
-      showToast(context, 'Delete failed');
-    }
+    final n = await app.deleteForever([t]);
+    if (!mounted) return;
+    if (n == 0) showToast(context, 'Delete failed');
     await _load();
-  }
+  });
 
-  Future<void> _empty() async {
+  Future<void> _empty() => _run(() async {
     final items = _items ?? const <TrashedRecording>[];
     if (items.isEmpty) return;
     final app = AppScope.read(context);
@@ -104,11 +127,12 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
     );
     if (!ok || !mounted) return;
     final n = await app.deleteForever(items);
-    if (n < items.length && mounted) {
+    if (!mounted) return;
+    if (n < items.length) {
       showToast(context, "${items.length - n} couldn't be deleted");
     }
     await _load();
-  }
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -149,8 +173,18 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
             child: BrushedMetal(
               child: items == null
                   ? const SizedBox.expand()
+                  : _failed
+                  ? const _Message(
+                      "Recently deleted can't be read right now. Check that "
+                      'the recordings folder is still there (Settings > '
+                      'Folder).',
+                    )
                   : items.isEmpty
-                  ? const _Empty()
+                  ? const _Message(
+                      'No recently deleted recordings.\n\n'
+                      'Deleted recordings stay here for 30 days, so you can '
+                      'put them back.',
+                    )
                   : ListView.builder(
                       padding: const EdgeInsets.only(top: Spec.listTopGap),
                       itemCount: items.length,
@@ -190,22 +224,18 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
   }
 }
 
-class _Empty extends StatelessWidget {
-  const _Empty();
+class _Message extends StatelessWidget {
+  const _Message(this.text);
+
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.fromLTRB(24, 48, 24, 0),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 0),
       child: Align(
         alignment: Alignment.topCenter,
-        child: AText(
-          'No recently deleted recordings.\n\n'
-          'Deleted recordings stay here for 30 days, so you can put them '
-          'back.',
-          style: Spec.listDetail,
-          textAlign: TextAlign.center,
-        ),
+        child: AText(text, style: Spec.listDetail, textAlign: TextAlign.center),
       ),
     );
   }
@@ -234,6 +264,9 @@ class _DeletedRow extends StatelessWidget {
         PressableArea(
           onTap: onTap,
           semanticLabel: item.originalName,
+          selected: selected,
+          // The date and days left are read after the name.
+          excludeSemantics: false,
           child: Container(
             color: selected ? Spec.listSelected : null,
             height: Spec.listRowPadding * 2 + lineBox * 2,
@@ -246,11 +279,13 @@ class _DeletedRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                AText(
-                  item.originalName,
-                  style: Spec.listName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                ExcludeSemantics(
+                  child: AText(
+                    item.originalName,
+                    style: Spec.listName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 Row(
                   children: [

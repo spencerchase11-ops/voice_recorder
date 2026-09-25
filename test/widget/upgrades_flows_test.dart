@@ -180,6 +180,43 @@ void main() {
       expect(t.playback.speed, 1.25);
     });
 
+    testWidgets('toasts are plain white text', (tester) async {
+      await openList(tester);
+      await tester.tap(labeled('Rename')); // nothing selected
+      await tester.pump();
+      final rich = tester.widget<RichText>(
+        find.descendant(
+          of: find.text('Please select a file'),
+          matching: find.byType(RichText),
+        ),
+      );
+      // Not the yellow, underlined text Flutter shows without a style.
+      expect(rich.text.style!.decoration, TextDecoration.none);
+      expect(rich.text.style!.fontWeight, FontWeight.w400);
+      await tester.pump(const Duration(seconds: 3));
+    });
+
+    testWidgets('deleting from search results keeps the keyboard down', (
+      tester,
+    ) async {
+      await openList(tester);
+      await tester.tap(labeled('Search'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(EditableText), 'kris');
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text(_kris));
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isFalse);
+      await tester.tap(labeled('Delete'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      // Back to the search results, without the keyboard over the undo toast.
+      expect(find.text('lunch w kris team convo .mp3'), findsOneWidget);
+      expect(tester.testTextInput.isVisible, isFalse);
+      await waitOutUndo(tester);
+    });
+
     testWidgets('lengths show up once read', (tester) async {
       useReferenceDevice(tester);
       final files = referenceRecordings();
@@ -228,7 +265,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(settings.lockScreenControls, isFalse);
       expect(
-        find.text('Playback stops when you leave the app'),
+        find.text('Playback stops when you leave the app or lock the phone'),
         findsOneWidget,
       );
 
@@ -286,6 +323,25 @@ void main() {
       );
       await tester.pump(const Duration(seconds: 3)); // toasts
     });
+  });
+
+  testWidgets('Settings counts again after an undo', (tester) async {
+    useReferenceDevice(tester);
+    await pumpReferenceApp(tester);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 recording, kept for 30 days'), findsOneWidget);
+    // The undo toast is still up over Settings.
+    await tester.tap(labeled('Undo'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Deleted recordings are kept for 30 days'),
+      findsOneWidget,
+    );
   });
 
   test('a trashed file keeps its name for later', () {

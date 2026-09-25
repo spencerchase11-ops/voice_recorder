@@ -25,12 +25,17 @@ abstract class ByteAccess {
   /// access opened for writing.
   Future<void> write(int offset, List<int> bytes);
 
+  /// Cuts the file to [length] bytes (to undo a write that failed halfway).
+  /// Only for an access opened for writing.
+  Future<void> truncate(int length);
+
+  /// Closes it, making what was written durable first.
   Future<void> close();
 }
 
 /// [ByteAccess] to a local file.
 class FileByteAccess implements ByteAccess {
-  FileByteAccess._(this._raf);
+  FileByteAccess._(this._raf, this._writable);
 
   static Future<FileByteAccess> open(File file, {bool write = false}) async {
     // Append mode would create a missing file (e.g. one deleted in the
@@ -41,10 +46,12 @@ class FileByteAccess implements ByteAccess {
     return FileByteAccess._(
       // Dart's append mode reads and writes anywhere (it doesn't truncate).
       await file.open(mode: write ? FileMode.append : FileMode.read),
+      write,
     );
   }
 
   final RandomAccessFile _raf;
+  final bool _writable;
 
   @override
   Future<int> length() => _raf.length();
@@ -62,7 +69,16 @@ class FileByteAccess implements ByteAccess {
   }
 
   @override
-  Future<void> close() => _raf.close();
+  Future<void> truncate(int length) => _raf.truncate(length);
+
+  @override
+  Future<void> close() async {
+    try {
+      if (_writable) await _raf.flush();
+    } finally {
+      await _raf.close();
+    }
+  }
 }
 
 /// When a recording was made and how long it plays; null where the file
@@ -74,11 +90,6 @@ class AudioInfo {
 
   final DateTime? recorded;
   final Duration? duration;
-
-  AudioInfo copyWith({DateTime? recorded, Duration? duration}) => AudioInfo(
-    recorded: recorded ?? this.recorded,
-    duration: duration ?? this.duration,
-  );
 
   @override
   bool operator ==(Object other) =>
@@ -95,7 +106,7 @@ class AudioInfo {
 
 /// Formats whose files can carry a recording date ([writeRecordedDate]).
 bool canStoreRecordedDate(String fileName) => switch (_ext(fileName)) {
-  'mp3' || 'wav' || 'm4a' || 'mp4' || '3gp' => true,
+  'mp3' || 'wav' || 'm4a' || '3gp' => true,
   _ => false,
 };
 
@@ -108,7 +119,7 @@ Future<AudioInfo> readAudioInfo(ByteAccess a, String fileName) async {
     return switch (_ext(fileName)) {
       'mp3' => await _mp3Info(a),
       'wav' => await _wavInfo(a),
-      'm4a' || 'mp4' || '3gp' => await _mp4Info(a),
+      'm4a' || '3gp' => await _mp4Info(a),
       _ => AudioInfo.empty,
     };
   } on RangeError {
@@ -121,17 +132,20 @@ Future<AudioInfo> readAudioInfo(ByteAccess a, String fileName) async {
 /// Stores [recorded] inside the file, for a file that doesn't have a date
 /// yet (its name is about to change, and with it the date in the name).
 /// Appends a small tag (MP3, WAV) or sets the creation time (M4A). Returns
-/// false when the format or the file doesn't allow it.
+/// false when the format or the file doesn't allow it, and for a date that
+/// wouldn't be read back (a placeholder such as 1970, or one in the future).
+/// A write that fails halfway is undone before the error is thrown.
 Future<bool> writeRecordedDate(
   ByteAccess a,
   String fileName,
   DateTime recorded,
 ) async {
+  if (!_plausible(recorded)) return false;
   try {
     return switch (_ext(fileName)) {
       'mp3' => await _appendId3(a, recorded),
       'wav' => await _appendWavInfo(a, recorded),
-      'm4a' || 'mp4' || '3gp' => await _setMp4Created(a, recorded),
+      'm4a' || '3gp' => await _setMp4Created(a, recorded),
       _ => false,
     };
   } on RangeError {
@@ -176,32 +190,46 @@ String _isoLocal(DateTime t) =>
 
 final _dateText = RegExp(
   r'^\s*(\d{4})[-:/.](\d{1,2})[-:/.](\d{1,2})'
-  r'(?:[ T_](\d{1,2})[-:._](\d{2})(?:[-:._](\d{2}))?)?\s*(Z)?',
+  r'(?:[ T_](\d{1,2})(?:[-:._](\d{2})(?:[-:._](\d{2})(?:[.,]\d+)?)?)?)?'
+  r'\s*(Z|[+-]\d{2}(?::?\d{2})?)?',
 );
 
 /// A full date (at least year, month and day) written in a tag, e.g.
 /// `2026-09-25T03:30:00`, `2026-09-25 03:30`, `2026:09:25`. Local time unless
-/// it ends in `Z`. Null for partial dates such as a bare year.
+/// it ends in `Z` or an offset such as `+02:00`. Null for partial dates such
+/// as a bare year.
 DateTime? parseDateText(String s) {
   final m = _dateText.firstMatch(s);
   if (m == null) return null;
   int part(int i) => m.group(i) == null ? 0 : int.parse(m.group(i)!);
   final y = part(1), mo = part(2), d = part(3);
   final h = part(4), mi = part(5), sec = part(6);
-  final t = m.group(7) == null
-      ? DateTime(y, mo, d, h, mi, sec)
-      : DateTime.utc(y, mo, d, h, mi, sec).toLocal();
-  final check = m.group(7) == null ? t : t.toUtc();
   // DateTime rolls impossible values over (month 13): reject those.
-  if (check.year != y ||
-      check.month != mo ||
-      check.day != d ||
-      check.hour != h ||
-      check.minute != mi ||
-      check.second != sec) {
+  final u = DateTime.utc(y, mo, d, h, mi, sec);
+  if (u.year != y ||
+      u.month != mo ||
+      u.day != d ||
+      u.hour != h ||
+      u.minute != mi ||
+      u.second != sec) {
     return null;
   }
+  final zone = m.group(7);
+  final t = zone == null
+      ? DateTime(y, mo, d, h, mi, sec)
+      : u.subtract(_utcOffset(zone)).toLocal();
   return _plausible(t) ? t : null;
+}
+
+/// `Z`, `+02`, `+0200` or `-02:30` as a duration ahead of UTC.
+Duration _utcOffset(String zone) {
+  if (zone == 'Z') return Duration.zero;
+  final digits = zone.substring(1).replaceAll(':', '');
+  final offset = Duration(
+    hours: int.parse(digits.substring(0, 2)),
+    minutes: digits.length >= 4 ? int.parse(digits.substring(2, 4)) : 0,
+  );
+  return zone.startsWith('-') ? -offset : offset;
 }
 
 /// Rejects placeholder dates (zero, 1904, 1970) and dates in the future.
@@ -300,6 +328,31 @@ String _decodeText(Uint8List data) {
   return nul < 0 ? s : s.substring(0, nul);
 }
 
+final _frameId = RegExp(r'^[A-Z0-9]+$');
+
+/// The size of the ID3v2.4 frame at [pos]: a syncsafe number by the
+/// standard, but some taggers (older iTunes) wrote a plain one. Whichever
+/// lands on the next frame (or the end of the frames) is taken.
+int _v24FrameSize(Uint8List body, int pos) {
+  final safe = _synchsafe(body, pos + 4);
+  final plain = _u32be(body, pos + 4);
+  if (safe == plain) return safe;
+  if (((body[pos + 4] | body[pos + 5] | body[pos + 6] | body[pos + 7]) &
+          0x80) !=
+      0) {
+    return plain; // can't be syncsafe
+  }
+  bool fits(int size) {
+    final next = pos + 10 + size;
+    if (next >= body.length) return next == body.length;
+    if (body[next] == 0) return true; // padding
+    return next + 4 <= body.length &&
+        _frameId.hasMatch(_ascii(body, next, next + 4));
+  }
+
+  return fits(safe) || !fits(plain) ? safe : plain;
+}
+
 /// The recording date in an ID3v2.2/2.3/2.4 [tag] (starting at its header).
 DateTime? parseId3Date(Uint8List tag) {
   if (!_isId3(tag, 0, 'ID3')) return null;
@@ -318,15 +371,15 @@ DateTime? parseId3Date(Uint8List tag) {
   final text = <String, String>{};
   while (pos + headLen <= body.length) {
     final id = _ascii(body, pos, pos + idLen);
-    if (!RegExp(r'^[A-Z0-9]+$').hasMatch(id) || id.length != idLen) break;
+    if (!_frameId.hasMatch(id) || id.length != idLen) break;
     final frameSize = switch (major) {
       2 => (body[pos + 3] << 16) | (body[pos + 4] << 8) | body[pos + 5],
       3 => _u32be(body, pos + 4),
-      _ => _synchsafe(body, pos + 4),
+      _ => _v24FrameSize(body, pos),
     };
     var start = pos + headLen;
     final end = start + frameSize;
-    if (frameSize <= 0 || end > body.length) break;
+    if (end > body.length) break;
     if (id.startsWith('T')) {
       var skip = false;
       Uint8List? data;
@@ -375,13 +428,16 @@ class _Mp3Layout {
     this.end,
     this.recorded,
     this.appendedAt,
-    this.v1,
-  );
+    this.v1, {
+    required this.appended,
+    required this.otherTags,
+  });
 
   /// First byte after a leading ID3v2 tag.
   final int start;
 
-  /// First byte of the trailing tags (an appended ID3v2 tag, ID3v1).
+  /// First byte of the trailing tags (an appended ID3v2 tag, APE, Lyrics3,
+  /// ID3v1).
   final int end;
   final DateTime? recorded;
 
@@ -390,6 +446,13 @@ class _Mp3Layout {
 
   /// The ID3v1 tag at the very end, if any.
   final Uint8List? v1;
+
+  /// An appended ID3v2 tag is there already.
+  final bool appended;
+
+  /// APE or Lyrics3 tags precede ID3v1: a tag appended after them would
+  /// hide them from the programs that read them.
+  final bool otherTags;
 }
 
 Future<_Mp3Layout> _mp3Layout(ByteAccess a) async {
@@ -412,9 +475,11 @@ Future<_Mp3Layout> _mp3Layout(ByteAccess a) async {
     }
   }
   final appendedAt = end;
+  var appended = false;
   if (end - start >= 20) {
     final foot = await a.read(end - 10, 10);
     if (_isId3(foot, 0, '3DI')) {
+      appended = true;
       final size = _synchsafe(foot, 6);
       final tagStart = end - 20 - size;
       if (tagStart >= start) {
@@ -424,7 +489,32 @@ Future<_Mp3Layout> _mp3Layout(ByteAccess a) async {
       }
     }
   }
-  return _Mp3Layout(start, end, recorded, appendedAt, v1);
+  var otherTags = false;
+  if (end - start >= 32) {
+    final t = await a.read(end - 32, 32);
+    if (_ascii(t, 0, 8) == 'APETAGEX') {
+      otherTags = true;
+      // Its size counts the items and this footer; a header may come first.
+      final header = (_u32le(t, 20) & 0x80000000) != 0 ? 32 : 0;
+      final size = _u32le(t, 12) + header;
+      if (size <= end - start) end -= size;
+    } else if (_ascii(t, 23, 32) == 'LYRICS200') {
+      otherTags = true;
+      final size = int.tryParse(_ascii(t, 17, 23));
+      if (size != null && size + 15 <= end - start) end -= size + 15;
+    } else if (_ascii(t, 23, 32) == 'LYRICSEND') {
+      otherTags = true;
+    }
+  }
+  return _Mp3Layout(
+    start,
+    end,
+    recorded,
+    appendedAt,
+    v1,
+    appended: appended,
+    otherTags: otherTags,
+  );
 }
 
 // Layer III bitrates (kbit/s) by MPEG-1 / MPEG-2 and 2.5 and bitrate index.
@@ -468,6 +558,42 @@ const _sampleRates = {
   0: [11025, 12000, 8000], // MPEG-2.5
 };
 
+/// An MPEG audio Layer III frame header.
+typedef _Frame = ({
+  int version,
+  int rateIndex,
+  int sampleRate,
+  int kbps,
+  int samples,
+  int length,
+  bool mono,
+});
+
+/// The Layer III frame header at [i] in [b], or null.
+_Frame? _frameAt(Uint8List b, int i) {
+  if (i + 4 > b.length || b[i] != 0xFF || (b[i + 1] & 0xE0) != 0xE0) {
+    return null;
+  }
+  final version = (b[i + 1] >> 3) & 3; // 3 = 1, 2 = 2, 0 = 2.5
+  final layer = (b[i + 1] >> 1) & 3; // 1 = Layer III
+  final bitrateIndex = b[i + 2] >> 4;
+  final rateIndex = (b[i + 2] >> 2) & 3;
+  if (version == 1 || layer != 1) return null;
+  if (bitrateIndex == 0 || bitrateIndex == 15 || rateIndex == 3) return null;
+  final sampleRate = _sampleRates[version]![rateIndex];
+  final kbps = (version == 3 ? _bitratesV1 : _bitratesV2)[bitrateIndex];
+  final padding = (b[i + 2] >> 1) & 1;
+  return (
+    version: version,
+    rateIndex: rateIndex,
+    sampleRate: sampleRate,
+    kbps: kbps,
+    samples: version == 3 ? 1152 : 576,
+    length: (version == 3 ? 144000 : 72000) * kbps ~/ sampleRate + padding,
+    mono: (b[i + 3] >> 6) == 3,
+  );
+}
+
 /// Playing time of the MPEG frames between [start] and [end].
 Future<Duration?> _mp3Duration(ByteAccess a, int start, int end) async {
   if (end - start < 4) return null;
@@ -475,19 +601,22 @@ Future<Duration?> _mp3Duration(ByteAccess a, int start, int end) async {
   for (final window in const [4096, 65536]) {
     final buf = await a.read(start, math.min(window, end - start));
     for (var i = 0; i + 4 <= buf.length; i++) {
-      if (buf[i] != 0xFF || (buf[i + 1] & 0xE0) != 0xE0) continue;
-      final version = (buf[i + 1] >> 3) & 3; // 3 = 1, 2 = 2, 0 = 2.5
-      final layer = (buf[i + 1] >> 1) & 3; // 1 = Layer III
-      final bitrateIndex = buf[i + 2] >> 4;
-      final rateIndex = (buf[i + 2] >> 2) & 3;
-      if (version == 1 || layer != 1) continue;
-      if (bitrateIndex == 0 || bitrateIndex == 15 || rateIndex == 3) continue;
-      final sampleRate = _sampleRates[version]![rateIndex];
-      final kbps = (version == 3 ? _bitratesV1 : _bitratesV2)[bitrateIndex];
-      final samplesPerFrame = version == 3 ? 1152 : 576;
-      final mono = (buf[i + 3] >> 6) == 3;
+      final f = _frameAt(buf, i);
+      if (f == null) continue;
+      // Bytes that only look like a header (in another format, say) aren't
+      // followed by a frame like it; the last frame reaches the end.
+      final next = i + f.length;
+      if (next < end - start) {
+        final h = next + 4 <= buf.length
+            ? Uint8List.sublistView(buf, next, next + 4)
+            : await a.read(start + next, 4);
+        final g = _frameAt(h, 0);
+        if (g == null || g.version != f.version || g.rateIndex != f.rateIndex) {
+          continue;
+        }
+      }
       // A Xing/Info header (VBR, or CBR from some encoders) counts frames.
-      final side = version == 3 ? (mono ? 17 : 32) : (mono ? 9 : 17);
+      final side = f.version == 3 ? (f.mono ? 17 : 32) : (f.mono ? 9 : 17);
       final x = i + 4 + side;
       if (x + 12 <= buf.length) {
         final tag = _ascii(buf, x, x + 4);
@@ -495,14 +624,14 @@ Future<Duration?> _mp3Duration(ByteAccess a, int start, int end) async {
           if ((_u32be(buf, x + 4) & 1) != 0) {
             final frames = _u32be(buf, x + 8);
             return Duration(
-              microseconds: frames * samplesPerFrame * 1000000 ~/ sampleRate,
+              microseconds: frames * f.samples * 1000000 ~/ f.sampleRate,
             );
           }
         }
       }
       // Constant bitrate: the size tells the time.
       final audioBytes = end - start - i;
-      return Duration(microseconds: audioBytes * 8000 ~/ kbps);
+      return Duration(microseconds: audioBytes * 8000 ~/ f.kbps);
     }
     if (buf.length < window) break; // searched everything there is
   }
@@ -519,16 +648,43 @@ Future<AudioInfo> _mp3Info(ByteAccess a) async {
 
 Future<bool> _appendId3(ByteAccess a, DateTime recorded) async {
   final layout = await _mp3Layout(a);
-  // Only real MP3s, and only once.
   if (layout.recorded != null) return true;
+  // Only once, and never in front of tags it would hide.
+  if (layout.appended || layout.otherTags) return false;
+  // Only real MP3s.
   if (await _mp3Duration(a, layout.start, layout.end) == null) return false;
+  final at = layout.appendedAt;
   final v1 = layout.v1;
   // An appended tag goes before an ID3v1 tag, which stays last.
-  await a.write(layout.appendedAt, [
-    ...id3DateTag(recorded, footer: true),
-    ...?v1,
-  ]);
+  await _undoable(
+    a,
+    await a.length(),
+    () => a.write(at, [...id3DateTag(recorded, footer: true), ...?v1]),
+    original: v1 == null ? null : (at, v1),
+  );
   return true;
+}
+
+/// Runs [write], which changes the end of a file [length] bytes long. If it
+/// fails halfway (e.g. the storage filled up), the [original] bytes go back
+/// in place and the file is cut back to [length] before the error is thrown.
+Future<void> _undoable(
+  ByteAccess a,
+  int length,
+  Future<void> Function() write, {
+  (int, List<int>)? original,
+}) async {
+  try {
+    await write();
+  } catch (_) {
+    try {
+      if (original != null) await a.write(original.$1, original.$2);
+      await a.truncate(length);
+    } catch (_) {
+      // Nothing more can be done; the first error is the one to report.
+    }
+    rethrow;
+  }
 }
 
 // ======================================================================
@@ -652,8 +808,11 @@ Future<bool> _appendWavInfo(ByteAccess a, DateTime recorded) async {
   final chunk = wavInfoChunk(recorded);
   final total = length + pad.length + chunk.length;
   if (total - 8 > 0xFFFFFFFF) return false;
-  await a.write(length, [...pad, ...chunk]);
-  await a.write(4, _le32(total - 8));
+  final riffSize = await a.read(4, 4);
+  await _undoable(a, length, () async {
+    await a.write(length, [...pad, ...chunk]);
+    await a.write(4, _le32(total - 8));
+  }, original: (4, riffSize));
   return true;
 }
 
@@ -688,6 +847,15 @@ Future<_Box?> _findBox(ByteAccess a, int from, int to, String type) async {
   return null;
 }
 
+/// Whether the file has its index: a complete "moov" box.
+Future<bool> mp4HasIndex(ByteAccess a) async {
+  try {
+    return await _findBox(a, 0, await a.length(), 'moov') != null;
+  } on RangeError {
+    return false;
+  }
+}
+
 /// The movie header ("mvhd") inside the index ("moov").
 Future<_Box?> _mvhd(ByteAccess a) async {
   final length = await a.length();
@@ -696,12 +864,18 @@ Future<_Box?> _mvhd(ByteAccess a) async {
   return _findBox(a, moov.body, moov.end, 'mvhd');
 }
 
+/// Bytes of a movie header up to its duration: version 0 has 32-bit times,
+/// version 1 64-bit ones.
+int _mvhdLength(int version) => version == 1 ? 32 : 20;
+
 Future<AudioInfo> _mp4Info(ByteAccess a) async {
   final mvhd = await _mvhd(a);
   if (mvhd == null) return AudioInfo.empty;
   final b = await a.read(mvhd.body, 32);
+  if (b.isEmpty) return AudioInfo.empty;
   final v1 = b[0] == 1;
-  if (b.length < (v1 ? 32 : 20)) return AudioInfo.empty;
+  final need = _mvhdLength(b[0]);
+  if (b.length < need || mvhd.end - mvhd.body < need) return AudioInfo.empty;
   final created = v1 ? _u64be(b, 4) : _u32be(b, 4);
   final timescale = v1 ? _u32be(b, 20) : _u32be(b, 12);
   final length = v1 ? _u64be(b, 24) : _u32be(b, 16);
@@ -725,7 +899,7 @@ Future<bool> _setMp4Created(ByteAccess a, DateTime recorded) async {
   final mvhd = await _mvhd(a);
   if (mvhd == null) return false;
   final b = await a.read(mvhd.body, 12);
-  if (b.length < 12) return false;
+  if (b.length < 12 || mvhd.end - mvhd.body < _mvhdLength(b[0])) return false;
   final seconds = recorded.millisecondsSinceEpoch ~/ 1000 + _mp4EpochOffset;
   if (b[0] == 1) {
     final v = ByteData(8)..setUint64(0, seconds);

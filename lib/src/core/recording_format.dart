@@ -2,16 +2,15 @@
 library;
 
 enum RecordingType {
-  mp3('MP3', 'mp3', 'audio/mpeg'),
-  wav('WAV', 'wav', 'audio/x-wav'),
-  m4a('M4A', 'm4a', 'audio/mp4');
+  mp3('MP3', 'mp3'),
+  wav('WAV', 'wav'),
+  m4a('M4A', 'm4a');
 
-  const RecordingType(this.label, this.extension, this.mimeType);
+  const RecordingType(this.label, this.extension);
 
   /// Text shown in Settings ("Recording type / MP3").
   final String label;
   final String extension;
-  final String mimeType;
 }
 
 enum RecordingQuality {

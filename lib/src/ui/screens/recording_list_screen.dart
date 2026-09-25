@@ -49,6 +49,15 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   late AppController _app;
   bool _loaded = false;
 
+  /// A delete, rename or share is being carried out: more taps wait.
+  bool _busy = false;
+
+  // The last search result, and what it was worked out from (the screen
+  // rebuilds many times a second while something plays).
+  List<RecordingFile>? _matchedFrom;
+  String? _matchedQuery;
+  List<RecordingFile> _matched = const [];
+
   @override
   void initState() {
     super.initState();
@@ -92,7 +101,10 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   List<RecordingFile> _visible(List<RecordingFile> files) {
     final q = (_query ?? '').trim().toLowerCase();
     if (q.isEmpty) return files;
-    return [
+    if (identical(files, _matchedFrom) && q == _matchedQuery) return _matched;
+    _matchedFrom = files;
+    _matchedQuery = q;
+    return _matched = [
       for (final f in files)
         if (f.name.toLowerCase().contains(q) ||
             formatListDate(f.date).contains(q))
@@ -138,10 +150,22 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   void _endSelecting() => setState(() => _ticked = null);
 
   void _toggleTick(RecordingFile f) {
+    final t = _ticked;
+    if (t == null) return;
     setState(() {
-      final t = _ticked!;
       if (!t.remove(f.id)) t.add(f.id);
     });
+  }
+
+  /// Runs [action] unless another one is running.
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      await action();
+    } finally {
+      _busy = false;
+    }
   }
 
   Future<void> _sort() async {
@@ -174,7 +198,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     return [f];
   }
 
-  Future<void> _delete(List<RecordingFile> visible) async {
+  Future<void> _delete(List<RecordingFile> visible) => _run(() async {
     final files = _targets(visible);
     if (files == null) return;
     if (await deleteRecordings(context, files) && mounted) {
@@ -183,9 +207,9 @@ class _RecordingListScreenState extends State<RecordingListScreen>
         _ticked = null;
       });
     }
-  }
+  });
 
-  Future<void> _rename(List<RecordingFile> visible) async {
+  Future<void> _rename(List<RecordingFile> visible) => _run(() async {
     final files = _targets(visible);
     if (files == null) return;
     if (files.length > 1) {
@@ -202,17 +226,23 @@ class _RecordingListScreenState extends State<RecordingListScreen>
         }
       });
     }
-  }
+  });
 
-  Future<void> _share(List<RecordingFile> visible, Rect origin) async {
-    final files = _targets(visible);
-    if (files == null) return;
-    await shareRecordings(context, files, origin: origin);
-  }
+  Future<void> _share(List<RecordingFile> visible, Rect origin) =>
+      _run(() async {
+        final files = _targets(visible);
+        if (files == null) return;
+        await shareRecordings(context, files, origin: origin);
+      });
 
   Future<void> _play(RecordingFile f) async {
     final outcome = await _app.togglePlay(f);
     if (mounted) showPlayProblem(context, outcome);
+  }
+
+  void _open(RecordingFile f) {
+    _searchFocus.unfocus();
+    setState(() => _selected = f.id);
   }
 
   @override
@@ -242,6 +272,8 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                     ? const _Empty('No recordings match')
                     : ListView.builder(
                         padding: const EdgeInsets.only(top: Spec.listTopGap),
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
                         itemCount: visible.length,
                         itemBuilder: (context, i) {
                           final f = visible[i];
@@ -260,10 +292,10 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                             file: f,
                             selected: f.id == _selected,
                             open: f.id == _selected,
-                            onSelect: () => setState(() => _selected = f.id),
+                            onSelect: () => _open(f),
                             onLongPress: () => _startSelecting(f),
                             onPlay: () {
-                              setState(() => _selected = f.id);
+                              _open(f);
                               if (app.isRecording) {
                                 showToast(
                                   context,
@@ -325,8 +357,9 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     if (ticked != null) {
       final all =
           visible.isNotEmpty && visible.every((f) => ticked.contains(f.id));
+      // Rows that went away meanwhile (deleted elsewhere) don't count.
       return RedHeader(
-        title: '${ticked.length} selected',
+        title: '${_tickedFiles(visible).length} selected',
         children: [
           BarButton(
             center: const Offset(22.0, 24.0),
@@ -372,7 +405,6 @@ class _RecordingListScreenState extends State<RecordingListScreen>
               child: TextField(
                 controller: _search,
                 focusNode: _searchFocus,
-                autofocus: true,
                 cursorColor: _white,
                 textInputAction: TextInputAction.search,
                 style: const TextStyle(
@@ -570,11 +602,13 @@ class _RecordingRow extends StatelessWidget {
             left: Spec.listTextLeft,
             right: Spec.listTextRight,
             top: Spec.listRowPadding,
-            child: AText(
-              file.name,
-              style: Spec.listName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            child: ExcludeSemantics(
+              child: AText(
+                file.name,
+                style: Spec.listName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
           Positioned(
@@ -613,8 +647,11 @@ class _RecordingRow extends StatelessWidget {
         PressableArea(
           onTap: onSelect,
           onLongPress: onLongPress,
-          selected: ticking ? selected : null,
+          selected: selected,
           semanticLabel: file.name,
+          // The date, length and size are read after the name; the buttons
+          // inside are separate.
+          excludeSemantics: false,
           child: Container(
             color: selected ? Spec.listSelected : null,
             child: Column(
@@ -655,12 +692,22 @@ class _SeekSectionState extends State<_SeekSection> {
     return true;
   }
 
+  Future<void> _skip(AppController app, Duration delta) async {
+    if (_blocked(app)) return;
+    if (!await app.skip(delta, file: widget.file) && mounted) {
+      showToast(context, "Can't play this file");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final loaded = app.playback.fileId == widget.file.id;
     final position = loaded ? app.playback.position : Duration.zero;
-    final duration = loaded ? app.playback.duration : Duration.zero;
+    // Not loaded yet: the length read from the file, for a drag's time.
+    final duration = loaded
+        ? app.playback.duration
+        : widget.file.duration ?? Duration.zero;
     final progress =
         _drag ??
         (duration.inMilliseconds <= 0
@@ -714,11 +761,7 @@ class _SeekSectionState extends State<_SeekSection> {
                 semanticLabel: 'Back 10 seconds',
                 height: controlsHeight,
                 lineBox: lineBox,
-                onTap: () {
-                  if (!_blocked(app)) {
-                    app.skip(-skipInterval, file: widget.file);
-                  }
-                },
+                onTap: () => _skip(app, -skipInterval),
                 child: const InkIcon(
                   AppIcons.replay10,
                   size: Size(17.6, 22.0),
@@ -732,21 +775,21 @@ class _SeekSectionState extends State<_SeekSection> {
                 lineBox: lineBox,
                 width: 56,
                 onTap: app.cycleSpeed,
-                child: AText(
-                  formatSpeed(app.settings.playbackSpeed),
-                  style: Spec.listName,
-                  maxLines: 1,
+                // "1.25x" at a large text size.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AText(
+                    formatSpeed(app.settings.playbackSpeed),
+                    style: Spec.listName,
+                    maxLines: 1,
+                  ),
                 ),
               ),
               _ControlButton(
                 semanticLabel: 'Forward 10 seconds',
                 height: controlsHeight,
                 lineBox: lineBox,
-                onTap: () {
-                  if (!_blocked(app)) {
-                    app.skip(skipInterval, file: widget.file);
-                  }
-                },
+                onTap: () => _skip(app, skipInterval),
                 child: const InkIcon(
                   AppIcons.forward10,
                   size: Size(17.6, 22.0),
@@ -842,16 +885,26 @@ class _HoloSeekBarState extends State<HoloSeekBar> {
         final end = c.maxWidth - Spec.seekEndFromRight;
         double at(Offset p) =>
             ((p.dx - start) / math.max(1, end - start)).clamp(0.0, 1.0);
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (d) => widget.onChangeEnd(at(d.localPosition)),
-          onHorizontalDragStart: (d) => _move(at(d.localPosition)),
-          onHorizontalDragUpdate: (d) => _move(at(d.localPosition)),
-          onHorizontalDragEnd: (_) => _end(),
-          onHorizontalDragCancel: _end,
-          child: CustomPaint(
-            size: Size(c.maxWidth, Spec.seekHeight),
-            painter: _SeekPainter(widget.progress, start, end),
+        final p = widget.progress;
+        return Semantics(
+          slider: true,
+          label: 'Position',
+          value: '${(p * 100).round()}%',
+          increasedValue: '${(math.min(1.0, p + 0.05) * 100).round()}%',
+          decreasedValue: '${(math.max(0.0, p - 0.05) * 100).round()}%',
+          onIncrease: () => widget.onChangeEnd(math.min(1.0, p + 0.05)),
+          onDecrease: () => widget.onChangeEnd(math.max(0.0, p - 0.05)),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: (d) => widget.onChangeEnd(at(d.localPosition)),
+            onHorizontalDragStart: (d) => _move(at(d.localPosition)),
+            onHorizontalDragUpdate: (d) => _move(at(d.localPosition)),
+            onHorizontalDragEnd: (_) => _end(),
+            onHorizontalDragCancel: _end,
+            child: CustomPaint(
+              size: Size(c.maxWidth, Spec.seekHeight),
+              painter: _SeekPainter(widget.progress, start, end),
+            ),
           ),
         );
       },

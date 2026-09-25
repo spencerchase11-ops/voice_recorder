@@ -34,6 +34,13 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Android 16 ignores the portrait lock on large screens (tablets,
+                 foldables) for apps that target it. The screens are a phone's
+                 portrait layout: keep them upright there too, while Android
+                 still allows it. -->
+            <property
+                android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+                android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

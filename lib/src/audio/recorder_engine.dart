@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:record/record.dart';
 
 import '../core/recording_format.dart';
@@ -96,12 +97,15 @@ Uint8List downmixToMono(Uint8List stereo) {
 /// Dart from the PCM stream (MP3 through the bundled LAME encoder); M4A uses
 /// the platform AAC encoder.
 class RecordPluginEngine implements RecorderEngine {
-  RecordPluginEngine({bool? isAndroid})
+  /// [sessionInterruptions] stands in for the audio session's (tests).
+  RecordPluginEngine({bool? isAndroid, this._sessionInterruptions})
     : _recorder = AudioRecorder(),
       _isAndroid = isAndroid ?? Platform.isAndroid;
 
   final AudioRecorder _recorder;
   final bool _isAndroid;
+  final Stream<AudioInterruptionEvent>? _sessionInterruptions;
+  StreamSubscription<AudioInterruptionEvent>? _sessionSub;
   final _levels = StreamController<double>.broadcast();
   final _interrupted = StreamController<bool>.broadcast();
   final _ended = StreamController<CaptureEnd>.broadcast();
@@ -216,6 +220,7 @@ class RecordPluginEngine implements RecorderEngine {
     if (profile.type == RecordingType.m4a) {
       await _recorder.start(_config(profile, AudioEncoder.aacLc), path: path);
       _running = true;
+      if (!_isAndroid) await _watchInterruptions();
       // iOS reports average power in this mode, about 10 dB below the peak
       // level the other formats show.
       final boost = _isAndroid ? 0.0 : 10.0;
@@ -330,6 +335,36 @@ class RecordPluginEngine implements RecorderEngine {
     }
   }
 
+  /// iOS, M4A: a call pauses the platform's recorder without the plugin
+  /// reporting it (it only reports its own pauses), so the audio session's
+  /// interruptions are followed here: the timer stops with the sound.
+  Future<void> _watchInterruptions() async {
+    final events =
+        _sessionInterruptions ??
+        (await AudioSession.instance).interruptionEventStream;
+    await _sessionSub?.cancel();
+    _sessionSub = events.listen((e) {
+      if (!_running || _stopping) return;
+      if (e.begin) {
+        _paused = true;
+        if (!_userPaused) _interrupted.add(true);
+      } else if (e.type == AudioInterruptionType.pause) {
+        // Over, and to be resumed: the plugin resumes the recorder.
+        if (_userPaused) {
+          // Paused by the user meanwhile: pause it again once it has.
+          Timer(const Duration(milliseconds: 500), () {
+            if (_running && !_stopping && _userPaused) {
+              unawaited(_pauseQuietly());
+            }
+          });
+        } else {
+          _paused = false;
+          _interrupted.add(false);
+        }
+      }
+    });
+  }
+
   Future<void> _pauseQuietly() async {
     try {
       await _recorder.pause();
@@ -390,6 +425,8 @@ class RecordPluginEngine implements RecorderEngine {
     _stopping = true;
     _watchdog?.cancel();
     _watchdog = null;
+    await _sessionSub?.cancel();
+    _sessionSub = null;
     Object? error;
     try {
       await _recorder.stop();
@@ -431,6 +468,7 @@ class RecordPluginEngine implements RecorderEngine {
   @override
   Future<void> dispose() async {
     _watchdog?.cancel();
+    await _sessionSub?.cancel();
     await _stateSub?.cancel();
     await _pcmSub?.cancel();
     await _ampSub?.cancel();

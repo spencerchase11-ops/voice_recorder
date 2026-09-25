@@ -49,7 +49,23 @@ class JustAudioPlayback extends Playback {
           _rewinding = true;
           unawaited(_rewind());
         }
-        _playing = s.playing && s.processingState != ProcessingState.completed;
+        // Idle: nothing loaded, or an error ended playback (just_audio then
+        // still says "playing").
+        _playing =
+            s.playing &&
+            s.processingState != ProcessingState.completed &&
+            s.processingState != ProcessingState.idle;
+        notifyListeners();
+      }),
+    );
+    _subs.add(
+      _player.errorStream.listen((e) {
+        // The file couldn't be read on (e.g. its storage went away): show it
+        // stopped, and open it afresh on the next play.
+        debugPrint('Playback error: ${e.message}');
+        _fileId = null;
+        _playing = false;
+        unawaited(_player.pause().catchError((Object _) {}));
         notifyListeners();
       }),
     );
@@ -105,12 +121,15 @@ class JustAudioPlayback extends Playback {
     _duration = Duration.zero;
     notifyListeners();
     // Only remember the file once it opened, so a failed file can be retried.
+    final Duration? length;
     try {
-      await _player.setAudioSource(AudioSource.uri(uri));
+      length = await _player.setAudioSource(AudioSource.uri(uri));
     } on PlayerInterruptedException {
       return; // a newer load (another tap) replaced this one
     }
     _fileId = fileId;
+    // Known now (the duration stream may tell a moment later).
+    if (length != null) _duration = length;
     notifyListeners();
   }
 

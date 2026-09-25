@@ -167,6 +167,13 @@ class NativeBridge {
         'bytes': Uint8List.fromList(bytes),
       });
 
+  /// Cuts the document to [length] bytes.
+  Future<void> truncateDocument(int handle, int length) =>
+      _channel.invokeMethod<void>('truncateDocument', {
+        'handle': handle,
+        'length': length,
+      });
+
   Future<void> closeDocument(int handle) =>
       _channel.invokeMethod<void>('closeDocument', {'handle': handle});
 
@@ -240,10 +247,15 @@ class NativeBridge {
   Future<int?> freeBytes(String path) =>
       _channel.invokeMethod<int>('freeBytes', {'location': path});
 
-  /// iOS: undoes the preferred sample rate a recording set on the audio
-  /// session, so later playback isn't resampled to a low rate.
+  /// iOS: after a recording, undoes the preferred sample rate it set on the
+  /// audio session (so later playback isn't resampled to a low rate) and
+  /// lets other apps' audio that the recording paused carry on.
   Future<void> resetAudioSampleRate() =>
       _channel.invokeMethod<void>('resetAudioSampleRate');
+
+  /// iOS: keeps [path] (a folder) out of iCloud and computer backups.
+  Future<void> excludeFromBackup(String path) =>
+      _channel.invokeMethod<void>('excludeFromBackup', {'path': path});
 
   /// iOS: "iPhone" or "iPad", used to describe the Files app location.
   Future<String?> deviceKind() => _channel.invokeMethod<String>('deviceKind');

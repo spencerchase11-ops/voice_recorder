@@ -45,7 +45,9 @@ with [LAME](https://lame.sourceforge.io), which lives in the local plugin
   You can change the folder under **Settings → Folder**.
 - **iOS:** `Documents/Recorders` inside the app. It shows up in the Files app
   under *On My iPhone → Voice Recorder → Recorders*, and in Finder when the
-  phone is connected. **Settings → Folder** opens it in Files.
+  phone is connected. **Settings → Folder** opens it in Files, and
+  **Settings → Import recordings** copies MP3, WAV, M4A, AAC and FLAC files
+  (or whole folders of them) from Files, iCloud Drive or a USB drive into it.
 
 A recording is written to the app's private storage while it runs. It is
 moved into the folder when you stop. If the app is killed while recording,
@@ -58,7 +60,13 @@ again.
 
 A deleted recording gets a hidden name in the same folder
 (`.vr-deleted-<time>-<name>`), so it is out of the list, file managers and music
-apps, and it can come back. After 30 days the app deletes it for good.
+apps, and it can come back. After 30 days the app deletes it for good (it
+checks when it starts and every few hours while it runs). Recently deleted
+belongs to the folder: after switching to another folder, what was deleted in
+the old one stays there, hidden, and comes back into Recently deleted when you
+switch back. The app can't clean up when it is uninstalled, so empty Recently
+deleted first if you uninstall it; otherwise those files stay in the folder,
+hidden.
 
 ### Recording dates
 
@@ -72,18 +80,28 @@ New recordings are named after the time they started
 | M4A | the movie header's creation time (`moov`/`mvhd`) |
 
 So a recording keeps its place in the list whatever it is renamed to, and
-other apps (music players, file managers, computers) can show the date too.
+other apps (music players, file managers, computers) can show the date of a
+new recording too.
+
 When a recording without a stored date is renamed (for example one made by
 the original app), the app adds it first: from the name if it is a timestamp,
 else from the file's modification time. MP3 files get a small ID3v2.4 tag at
 the end (before an ID3v1 tag, if there is one), WAV files a `LIST` chunk, and
-M4A files have their creation time set; the audio itself isn't touched.
+M4A files have their creation time set; the audio itself isn't touched. A
+write that fails halfway (a full storage) is undone. Other apps read the WAV
+and M4A dates; a tag at the end of an MP3 is standard, but most players only
+look at the start, so there the date is mainly for this app. Files that can't
+hold a date (AAC, AMR, OGG, Opus, FLAC, or a damaged file) keep it in the
+app's memory of dates and lengths only.
 
 The list takes each recording's date from, in this order: the date stored in
-the file, the time in its name, its modification time. Dates and lengths are
-read from the files when they are first shown, and remembered between
-launches (`recording_info.json` in the app's private storage), so a folder of
-thousands of recordings opens quickly.
+the file, the time in its name, its modification time. One exception: the
+original app's M4A files store the time a recording *ended*, so when a
+timestamp name is up to the recording's length earlier, the name wins. Dates
+and lengths are read from the files when they are first shown, and
+remembered between launches (`recording_info.json` in the app's private
+storage, left out of backups), so a folder of thousands of recordings opens
+quickly.
 
 "Remaining time" is how long you can record and still save the file. On
 Android a recording is copied into the folder when it stops, so on internal
@@ -103,7 +121,8 @@ are left, a recording stops and is saved, and a new one won't start.
   sounds and alarms are recorded along with everything else, and during a
   phone call Android gives the app silence. On iPhone, calls and Siri pause
   the recording and the timer, and recording resumes when they end (or when
-  you return to the app, if iOS didn't resume it).
+  you return to the app, if iOS didn't resume it; during a call it stays
+  paused).
 - If recording stops on its own, what was recorded is saved and the app
   says so (when you're back in the app, if it happened in the background).
   That happens after a system error, when audio stops arriving for 5 seconds,
@@ -113,13 +132,15 @@ are left, a recording stops and is saved, and a new one won't start.
   is resumed. On iPhone, a recording you paused stays paused after a call.
   On Android, the recording notification has Pause/Resume and Stop buttons.
 - **Other apps' audio.** Music from other apps pauses while you record and
-  continues afterwards (Android asks for exclusive audio focus for the
-  length of the recording; iOS does this by itself).
+  can continue afterwards (Android asks for exclusive audio focus for the
+  length of the recording; on iPhone the app releases its audio session when
+  a recording stops, which tells the other app it may go on).
 - **Noise reduction** (Settings) uses the system's noise suppressor on
   Android and voice processing on iPhone. It applies to MP3 and WAV
   recordings.
-- **Shortcut.** Long-press the app icon and choose Record (Android) or
-  Record (iPhone quick action) to open the app and start recording.
+- **Shortcut.** Long-press the app icon and choose *Start recording*
+  (Android; some launchers show *Record*) or *Record* (iPhone) to open the
+  app and start recording.
 
 ### Playback in the background
 
@@ -130,13 +151,15 @@ playing when you leave the app or lock the phone:
   session shows a notification (back 10 s, play/pause, forward 10 s and a
   seek bar) and the same controls on the lock screen and, from Android 13, in
   the media player in Quick Settings. Headset and Bluetooth buttons work
-  (next/previous skip 10 seconds). After 10 minutes paused, or when the
-  notification is swiped away, the controls go away.
+  (next/previous skip 10 seconds). After 10 minutes paused (sleep time
+  counts), or when you dismiss the player (Android 14 and later), the
+  controls go away; the recording stays paused where it was in the app, and
+  playing it again brings them back.
 - **iOS:** the lock screen and Control Center show the recording ("Now
   Playing") with the same controls.
 
 With it off, there are no such controls and playback pauses when you leave
-the app.
+the app or lock the phone.
 
 ## Differences from the original
 
@@ -210,7 +233,9 @@ flutter build ipa                # iOS archive for App Store Connect (needs sign
      host it somewhere public.
    - *App Store:* the privacy "nutrition label" is "Data Not Collected".
      `ios/Runner/PrivacyInfo.xcprivacy` already declares the free-disk-space
-     reads (for "Remaining time") and file-date reads (for the list).
+     reads (for "Remaining time"), file-date reads (for the list) and the
+     settings storage (UserDefaults). `Info.plist` says the app uses no
+     encryption beyond the system's, so uploads skip that question.
 6. **LGPL.** LAME is LGPL-licensed. The app shows its license under
    *Settings → About → Licenses* and says where its source is. See
    [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what the LGPL expects
@@ -247,15 +272,21 @@ flutter test                              # unit, widget, controller and golden 
   (ID3v2.2 to 2.4, appended tags, ID3v1), WAV (`LIST`, `bext`) and M4A
   files, including damaged ones.
 
-CI (`.github/workflows/ci.yml`) runs formatting, analysis and all tests. It
-also builds a release APK and uploads it as an artifact. The APK is signed
-with a test key that CI keeps in the Actions cache, so each new test APK
-installs as an update over the last one. GitHub deletes a cache that goes
-unused for 7 days. After such a break the next APK gets a new key, and the
-test app has to be uninstalled once before it installs. The test key is fine
-for your own phone, not for Play uploads. The APK's version code is the CI
-run number, so *Settings → About* shows which test build is installed. The
-iOS build (no code signing) runs on `main` and on manual runs.
+CI (`.github/workflows/ci.yml`) runs formatting, analysis and all tests.
+When they pass, it also builds a release APK and uploads it as an artifact.
+The APK is signed with a test key that CI keeps in the Actions cache, so each
+new test APK installs as an update over the last one. GitHub deletes a cache
+that goes unused for 7 days, so a weekly run keeps it in use; if it is lost
+anyway, the next APK gets a new key and the test app has to be uninstalled
+once before it installs. The test key is fine for your own phone, not for
+Play uploads. The APK's version code is the CI run number, so *Settings →
+About* shows which test build is installed. The iOS build (no code signing)
+runs when started by hand (*Actions → CI → Run workflow*) and on `main`.
+
+Moving between a test APK and the Google Play version (either way) needs an
+uninstall first, because they are signed with different keys. Your
+recordings stay in the folder; you choose the folder once more, and the
+settings start over.
 
 ## Project layout
 

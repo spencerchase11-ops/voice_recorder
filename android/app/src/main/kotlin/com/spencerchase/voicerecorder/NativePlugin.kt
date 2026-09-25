@@ -29,6 +29,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.ExecutorService
@@ -49,6 +50,9 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     private var channel: MethodChannel? = null
     private var binding: ActivityPluginBinding? = null
     private var pendingPick: MethodChannel.Result? = null
+
+    /** The activity that opened the folder picker. */
+    private var pickOpener: WeakReference<Activity>? = null
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
@@ -141,6 +145,10 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 document(call).write(call.argument<Number>("offset")!!.toLong(), call.argument<ByteArray>("bytes")!!)
                 null
             }
+            "truncateDocument" -> background(result) {
+                document(call).truncate(call.argument<Number>("length")!!.toLong())
+                null
+            }
             "closeDocument" -> background(result) {
                 documents.remove(call.argument<Int>("handle")!!)?.close()
                 null
@@ -230,8 +238,16 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             return
         }
         if (pendingPick != null) {
-            result.error("busy", "The folder picker is already open", null)
-            return
+            // Still open, unless the activity that opened it is gone for good
+            // (the app was swiped away meanwhile): its answer never comes.
+            // (A recreated activity gets it, through onActivityResult.)
+            val opener = pickOpener?.get()
+            if (opener != null && !opener.isDestroyed) {
+                result.error("busy", "The folder picker is already open", null)
+                return
+            }
+            pendingPick?.success(null)
+            pendingPick = null
         }
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -240,6 +256,7 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         try {
             act.startActivityForResult(intent, REQUEST_PICK_FOLDER)
             pendingPick = result
+            pickOpener = WeakReference(act)
         } catch (e: ActivityNotFoundException) {
             result.error("no_picker", "This device has no folder picker", null)
         }
@@ -387,6 +404,11 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             val buf = ByteBuffer.wrap(bytes)
             var pos = offset
             while (buf.hasRemaining()) pos += out.write(buf, pos)
+        }
+
+        fun truncate(length: Long) {
+            val out = output ?: throw IllegalStateException("The document was opened read-only")
+            out.truncate(length)
         }
 
         fun close() {

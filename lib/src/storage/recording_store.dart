@@ -44,8 +44,16 @@ abstract class RecordingStore extends ChangeNotifier {
   /// folder (see [TrashedRecording]). Null if the folder refused.
   Future<TrashedRecording?> trash(RecordingFile file, DateTime now) async {
     final hidden = TrashedRecording.hiddenName(file.name, now);
+    // A name Recently deleted wouldn't know would hide the file for good.
+    if (TrashedRecording.parse(file.copyWith(name: hidden)) == null) {
+      return null;
+    }
     final moved = await renameTo(file, hidden);
-    return moved == null ? null : TrashedRecording.parse(moved);
+    if (moved == null) return null;
+    final t = TrashedRecording.parse(moved);
+    // The folder changed the name on the way: put the file back.
+    if (t == null) await renameTo(moved, file.name);
+    return t;
   }
 
   /// What is in Recently deleted.
@@ -277,10 +285,8 @@ class IosRecordingStore extends RecordingStore {
 
   /// There is no folder picker on iOS; this opens the folder in Files instead.
   @override
-  Future<bool> chooseFolder() async {
-    await launchUrl(Uri.parse('shareddocuments://${_dir.path}'));
-    return true;
-  }
+  Future<bool> chooseFolder() =>
+      launchUrl(Uri.parse('shareddocuments://${_dir.path}'));
 
   RecordingFile _fromFile(File f) {
     final stat = f.statSync();
@@ -308,7 +314,7 @@ class IosRecordingStore extends RecordingStore {
     if (!await _dir.exists()) return const [];
     return [
       for (final f in _dir.listSync().whereType<File>())
-        if (f.uri.pathSegments.last.startsWith(TrashedRecording.prefix))
+        if (f.uri.pathSegments.last.startsWith('.'))
           ?TrashedRecording.parse(_fromFile(f)),
     ];
   }
@@ -433,6 +439,10 @@ class _DocumentBytes implements ByteAccess {
   @override
   Future<void> write(int offset, List<int> bytes) =>
       _native.writeDocument(_handle, offset, bytes);
+
+  @override
+  Future<void> truncate(int length) =>
+      _native.truncateDocument(_handle, length);
 
   @override
   Future<void> close() => _native.closeDocument(_handle);

@@ -56,7 +56,8 @@ class _RecorderScreenState extends State<RecorderScreen> {
     final app = AppScope.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final cur = app.currentFile;
-    final canAct = cur != null && !app.isRecording;
+    // Not while a recording starts or is being saved either.
+    final canAct = cur != null && !app.isRecording && !app.isBusy;
 
     return ScreenFrame(
       child: Column(
@@ -231,7 +232,7 @@ class _RecorderBody extends StatelessWidget {
                   disabledAsset: 'assets/images/play_disabled.png',
                   size: Spec.playButtonCanvas,
                   semanticLabel: app.isPlayingCurrent ? 'Pause' : 'Play',
-                  onTap: app.currentFile == null
+                  onTap: app.currentFile == null || app.isBusy
                       ? null
                       : () async {
                           final outcome = await app.togglePlayCurrent();

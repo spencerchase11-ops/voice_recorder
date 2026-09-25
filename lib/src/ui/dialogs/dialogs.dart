@@ -5,6 +5,7 @@ import 'package:flutter/material.dart'
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../core/format.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
 
@@ -300,22 +301,6 @@ Future<bool> showConfirmDialog(
   return answer ?? false;
 }
 
-/// A Holo message with a single OK button.
-Future<void> showMessageDialog(
-  BuildContext context, {
-  required String title,
-  required String message,
-}) {
-  return showSpecDialog<void>(
-    context,
-    (ctx) => HoloDialog(
-      title: title,
-      message: message,
-      buttons: [HoloButton('OK', onTap: () => Navigator.of(ctx).pop())],
-    ),
-  );
-}
-
 /// Holo single-choice list; returns the chosen index.
 Future<int?> showChoiceDialog(
   BuildContext context, {
@@ -485,6 +470,8 @@ class _RenameDialogState extends State<_RenameDialog> {
                   textInputAction: TextInputAction.done,
                   inputFormatters: [
                     FilteringTextInputFormatter.deny(RegExp(r'[\\/:*?"<>|]')),
+                    // File names are limited (the folder cuts longer ones).
+                    LengthLimitingTextInputFormatter(maxNameLength),
                   ],
                   onSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(

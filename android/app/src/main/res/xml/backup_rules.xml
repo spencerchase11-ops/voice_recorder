@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android 11 and older. Recordings still being saved (files/pending) stay on
-     the device; settings may be backed up. -->
+     the device, and so do the dates and lengths read from the recordings
+     (recording_info.json: names of this phone's files, useless elsewhere);
+     settings may be backed up. -->
 <full-backup-content>
     <exclude domain="file" path="pending/" />
+    <exclude domain="file" path="recording_info.json" />
+    <exclude domain="file" path="recording_info.json.tmp" />
 </full-backup-content>

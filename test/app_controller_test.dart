@@ -1,12 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'dart:async';
-
 import 'package:voice_recorder/src/app_controller.dart';
 import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/recorder_engine.dart';
@@ -64,7 +62,16 @@ void main() {
     return app;
   }
 
-  setUp(() async => work = await Directory.systemTemp.createTemp('vr_ctrl'));
+  setUp(() async {
+    work = await Directory.systemTemp.createTemp('vr_ctrl');
+    // The platform side answers nothing (tests that look at the calls mock
+    // it themselves).
+    const channel = MethodChannel('com.spencerchase.voicerecorder/native');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  });
   tearDown(() => work.delete(recursive: true));
 
   group('init', () {
@@ -240,7 +247,7 @@ void main() {
       'leaves interrupted recordings alone until a folder is chosen',
       () async {
         final pending = Directory('${work.path}/pending')..createSync();
-        File('${pending.path}/a.mp3').writeAsBytesSync(List.filled(10, 1));
+        File('${pending.path}/a.mp3').writeAsBytesSync(List.filled(100, 1));
         await (await build(prefs: const {}, ready: false)).init();
         expect(store.saved, isEmpty);
         expect(await app.chooseFolder(), isTrue);
@@ -490,7 +497,7 @@ void main() {
     });
 
     test(
-      'a recording that could not continue after an interruption is saved',
+      "a recording that can't continue yet stays paused (a call goes on)",
       () async {
         await (await build()).init();
         final notices = <String>[];
@@ -498,12 +505,21 @@ void main() {
         await app.toggleRecord();
         engine.interruptController.add(true);
         await Future<void>.delayed(Duration.zero);
+        // Back in the app during the call: the microphone is still taken.
         engine.resumeError = StateError('microphone still in use');
         await app.onResume();
         await Future<void>.delayed(Duration.zero);
-        expect(app.isRecording, isFalse);
+        expect(app.isRecording, isTrue);
+        expect(app.isInterrupted, isTrue);
+        expect(store.saved, isEmpty);
+        expect(notices, isEmpty);
+        // The call ends; the recording goes on, and is saved when stopped.
+        engine.resumeError = null;
+        engine.interruptController.add(false);
+        await Future<void>.delayed(Duration.zero);
+        expect(app.isInterrupted, isFalse);
+        await app.toggleRecord();
         expect(store.saved, hasLength(1));
-        expect(notices.single, contains("couldn't continue"));
       },
     );
 
@@ -581,10 +597,15 @@ void main() {
       await (await build(isAndroid: true)).init();
       Iterable<String> service() => calls.where((c) => c.contains('Service'));
       await app.toggleRecord();
-      expect(service(), ['startRecordingService:0']);
+      await Future<void>.delayed(Duration.zero);
+      // Started, then its timer set to the recording's.
+      expect(service(), [
+        'startRecordingService:0',
+        'updateRecordingService:0',
+      ]);
       await app.toggleRecord();
       // The service keeps the process alive until the file is in the folder.
-      expect(service(), ['startRecordingService:0', 'stopRecordingService:1']);
+      expect(service().last, 'stopRecordingService:1');
     });
   });
 
@@ -800,7 +821,7 @@ void main() {
 
     test('share goes to the store', () async {
       await (await build()).init();
-      await app.share(app.currentFile!);
+      await app.shareAll([app.currentFile!]);
       expect(store.shared, ['kris n evan got back then zach.mp3']);
     });
 

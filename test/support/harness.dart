@@ -89,6 +89,14 @@ Future<TestApp> pumpReferenceApp(
     'last_file': ?current,
     'last_duration_ms': lastDuration.inMilliseconds,
   });
+  // The app's platform calls answer nothing, unless the test mocked them.
+  const channel = MethodChannel('com.spencerchase.voicerecorder/native');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  if (messenger.checkMockMessageHandler(channel.name, null)) {
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  }
   final work = await tester.runAsync(
     () => Directory.systemTemp.createTemp('vr_test'),
   );

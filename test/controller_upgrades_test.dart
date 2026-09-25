@@ -291,11 +291,18 @@ void main() {
       native.eventController.add(const MediaButton('dismiss'));
       await settle();
       expect(named('clearMediaSession'), hasLength(1));
-      // Unloaded: a pause from a call can't resume without controls.
-      expect(playback.fileId, isNull);
-      // Dismissed controls come back with the next play.
+      // Still loaded, where it was.
+      expect(playback.fileId, file.id);
+      expect(playback.position, const Duration(minutes: 3));
+      // Resuming by itself after a call (just_audio does), without the
+      // controls: paused again.
+      await playback.play(file.id, Uri.parse(file.id));
+      await settle();
+      expect(playback.playing, isFalse);
+      // Dismissed controls come back with the next play in the app.
       await app.togglePlay(file);
       await settle();
+      expect(playback.playing, isTrue);
       expect(lastUpdate()['playing'], isTrue);
     });
 
@@ -522,7 +529,7 @@ void main() {
       await build();
       await app.refreshFiles();
       await app.delete(app.files.sublist(0, 2));
-      final trash = await app.deletedRecordings();
+      final trash = (await app.deletedRecordings())!;
       final restored = await app.restoreDeleted(trash.first);
       expect(restored, isNotNull);
       expect(app.files.map((f) => f.id), contains(restored!.id));
@@ -565,7 +572,7 @@ void main() {
       await settle();
       expect(store.deletedForGood, hasLength(1));
       expect(store.deletedForGood.single, endsWith('-old.mp3'));
-      final left = await app.deletedRecordings();
+      final left = (await app.deletedRecordings())!;
       expect(left.single.originalName, 'recent.mp3');
       expect(left.single.daysLeft(_now), 1);
     });
@@ -588,14 +595,16 @@ void main() {
         TrashedRecording.parse(named('.trashed-1790000000-a.mp3')),
         isNull,
       );
-      // Not audio, or not a plausible time.
+      // Not audio.
       expect(
         TrashedRecording.parse(named('.vr-deleted-1790000000000-a.txt')),
         isNull,
       );
+      // Ours whatever the time (deleted with the phone's clock far off).
       expect(
-        TrashedRecording.parse(named('.vr-deleted-0000000000123-a.mp3')),
-        isNull,
+        TrashedRecording.parse(named('.vr-deleted-0000000000123-a.mp3'))
+            ?.originalName,
+        'a.mp3',
       );
       // Ours, also from early test builds (milliseconds, 13 digits).
       final hidden = TrashedRecording.hiddenName('a.mp3', _now);
