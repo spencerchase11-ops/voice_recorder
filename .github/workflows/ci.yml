@@ -56,16 +56,33 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      # Test builds are signed with a debug key (no android/key.properties in
-      # CI): fine for sideloading and testing, not for Play uploads. Keep the
-      # same key from run to run so a new test APK installs as an update over
-      # the previous one (Android refuses updates signed with another key).
-      - name: Reuse the test signing key
+      # Test builds are signed with a test key that only CI has: fine for
+      # sideloading and testing, not for Play uploads (its "Android Debug"
+      # certificate makes Play reject them, like any debug build). The key is
+      # kept in the Actions cache so each new test APK installs as an update
+      # over the previous one; Android refuses an update signed with another
+      # key. GitHub deletes a cache that goes unused for 7 days, and then the
+      # next APK gets a new key.
+      - name: Restore the test signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: android-test-signing-key-v1
-      - run: flutter build apk --release
+          path: ~/.voice-recorder-test-key
+          key: android-test-signing-key-v2
+      - name: Sign with the test key
+        run: |
+          key="$HOME/.voice-recorder-test-key/test.jks"
+          if [ ! -f "$key" ]; then
+            mkdir -p "$(dirname "$key")"
+            keytool -genkeypair -keystore "$key" -storetype PKCS12 \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          printf '%s\n' storePassword=android keyPassword=android \
+            keyAlias=androiddebugkey "storeFile=$key" > android/key.properties
+      # The run number becomes the version code, so Settings → About shows
+      # which test build is installed.
+      - run: flutter build apk --release --build-number=${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: voice-recorder-apk

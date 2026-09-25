@@ -185,9 +185,13 @@ flutter test                              # unit, widget, controller and golden 
   rename, list selection, a list of 2,500 recordings, and settings.
 
 CI (`.github/workflows/ci.yml`) runs formatting, analysis and all tests. It
-also builds a release APK and uploads it as an artifact, signed with a test
-key that CI keeps between runs, so each new test APK installs as an update
-over the last one. That's fine for your own phone, not for Play uploads. The
+also builds a release APK and uploads it as an artifact. The APK is signed
+with a test key that CI keeps in the Actions cache, so each new test APK
+installs as an update over the last one. GitHub deletes a cache that goes
+unused for 7 days. After such a break the next APK gets a new key, and the
+test app has to be uninstalled once before it installs. The test key is fine
+for your own phone, not for Play uploads. The APK's version code is the CI
+run number, so *Settings → About* shows which test build is installed. The
 iOS build (no code signing) runs on `main` and on manual runs.
 
 ## Project layout
