@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart'
     show Material, MaterialType, TextField, InputDecoration, InputBorder;
 import 'package:flutter/services.dart';
@@ -23,11 +25,157 @@ Future<T?> showSpecDialog<T>(
     transitionDuration: const Duration(milliseconds: 150),
     pageBuilder: (ctx, _, _) =>
         PlainText(child: ScreenFrameInsets(child: builder(ctx))),
-    transitionBuilder: (ctx, anim, _, child) => FadeTransition(
-      opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
-      child: child,
-    ),
+    transitionBuilder: _fade,
   );
+}
+
+Widget _fade(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondary,
+  Widget child,
+) => FadeTransition(
+  opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+  child: child,
+);
+
+/// A Holo message with an OK button.
+Future<void> showMessageDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+}) => showSpecDialog<void>(
+  context,
+  (ctx) => HoloDialog(
+    title: title,
+    message: message,
+    buttons: [HoloButton('OK', onTap: () => Navigator.of(ctx).pop())],
+  ),
+);
+
+/// How far a long job has got: [done] of [total] (a total of 0 while the
+/// job is still finding out).
+typedef JobState = ({int done, int total});
+
+/// A Holo dialog following a long job, which only the job's end (or its
+/// Cancel button, if [onCancel] is given) closes. [label] says what is
+/// happening, from [state].
+class ProgressDialogRoute extends RawDialogRoute<void> {
+  ProgressDialogRoute({
+    required String title,
+    required ValueListenable<JobState> state,
+    required String Function(JobState state) label,
+    VoidCallback? onCancel,
+  }) : super(
+         barrierDismissible: false,
+         barrierColor: Spec.dialogScrim,
+         transitionDuration: const Duration(milliseconds: 150),
+         transitionBuilder: _fade,
+         pageBuilder: (ctx, _, _) => PopScope(
+           canPop: false,
+           child: PlainText(
+             child: ScreenFrameInsets(
+               child: ValueListenableBuilder<JobState>(
+                 valueListenable: state,
+                 builder: (ctx, s, _) => HoloDialog(
+                   title: title,
+                   body: _ProgressBody(
+                     label: label(s),
+                     value: s.total == 0 ? 0 : s.done / s.total,
+                   ),
+                   buttons: [
+                     if (onCancel != null)
+                       HoloButton('Cancel', onTap: onCancel),
+                   ],
+                 ),
+               ),
+             ),
+           ),
+         ),
+       );
+}
+
+class _ProgressBody extends StatelessWidget {
+  const _ProgressBody({required this.label, required this.value});
+
+  final String label;
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Spec.holoMessageInset,
+        Spec.holoMessagePaddingTop + 4,
+        Spec.holoMessageInset,
+        Spec.holoMessagePaddingBottom + 8,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            liveRegion: true,
+            child: AText(label, style: Spec.holoMessage),
+          ),
+          const SizedBox(height: 14),
+          // Holo Light's horizontal progress bar.
+          Container(
+            height: 4,
+            color: const Color(0xFFD5D5D5),
+            alignment: Alignment.centerLeft,
+            child: FractionallySizedBox(
+              widthFactor: value.clamp(0.0, 1.0),
+              child: Container(color: Spec.holoBlue),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carries out a job on many recordings behind a [ProgressDialogRoute]
+/// (only when there are more than [quietUpTo]; short jobs just run). The
+/// job reports its progress, and checks whether the user cancelled.
+Future<T> runWithProgress<T>(
+  BuildContext context, {
+  required String title,
+  required int total,
+  required String Function(JobState state) label,
+  required Future<T> Function(
+    void Function(int done, int total) onProgress,
+    bool Function() cancelled,
+  )
+  job,
+  bool cancellable = true,
+  int quietUpTo = 20,
+}) async {
+  var stop = false;
+  if (total <= quietUpTo) return job((_, _) {}, () => stop);
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final state = ValueNotifier<JobState>((done: 0, total: total));
+  final route = ProgressDialogRoute(
+    title: title,
+    state: state,
+    label: label,
+    onCancel: cancellable
+        ? () {
+            stop = true;
+            state.value = (done: state.value.done, total: state.value.total);
+          }
+        : null,
+  );
+  unawaited(navigator.push(route));
+  try {
+    return await job(
+      (done, total) => state.value = (done: done, total: total),
+      () => stop,
+    );
+  } finally {
+    if (route.isActive) navigator.removeRoute(route);
+    WidgetsBinding.instance.addPostFrameCallback((_) => state.dispose());
+  }
 }
 
 /// Centres a dialog in the area between the system bars (and above the
@@ -419,7 +567,12 @@ class _RenameDialogState extends State<_RenameDialog> {
     super.dispose();
   }
 
-  void _submit() => Navigator.of(context).pop(_text.text);
+  /// OK needs a name: one that is empty once cleaned up would be refused.
+  bool get _hasName => sanitizeFileName(_text.text).isNotEmpty;
+
+  void _submit() {
+    if (_hasName) Navigator.of(context).pop(_text.text);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -470,8 +623,11 @@ class _RenameDialogState extends State<_RenameDialog> {
                   textInputAction: TextInputAction.done,
                   inputFormatters: [
                     FilteringTextInputFormatter.deny(RegExp(r'[\\/:*?"<>|]')),
-                    // File names are limited (the folder cuts longer ones).
-                    LengthLimitingTextInputFormatter(maxNameLength),
+                    // File names are limited (the folder cuts longer ones);
+                    // a longer name made elsewhere isn't cut by editing it.
+                    LengthLimitingTextInputFormatter(
+                      math.max(maxNameLength, widget.initial.length),
+                    ),
                   ],
                   onSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(
@@ -506,7 +662,13 @@ class _RenameDialogState extends State<_RenameDialog> {
                     ),
                   ),
                   Container(width: 0.3, color: Spec.renameRule),
-                  Expanded(child: _IosButton('OK', onTap: _submit)),
+                  Expanded(
+                    child: ListenableBuilder(
+                      listenable: _text,
+                      builder: (context, _) =>
+                          _IosButton('OK', onTap: _hasName ? _submit : null),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -521,13 +683,20 @@ class _IosButton extends StatelessWidget {
   const _IosButton(this.label, {required this.onTap});
 
   final String label;
-  final VoidCallback onTap;
+
+  /// Null greys the button out.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => PressableArea(
     onTap: onTap,
     semanticLabel: label,
     highlight: const Color(0x14000000),
-    child: Center(child: AText(label, style: Spec.renameButton, maxLines: 1)),
+    child: Center(
+      child: Opacity(
+        opacity: onTap == null ? 0.35 : 1,
+        child: AText(label, style: Spec.renameButton, maxLines: 1),
+      ),
+    ),
   );
 }

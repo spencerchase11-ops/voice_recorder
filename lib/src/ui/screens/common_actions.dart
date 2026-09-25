@@ -12,6 +12,7 @@ import '../widgets/toast.dart';
 /// microphone first if needed) or stops the one running.
 Future<void> toggleRecording(BuildContext context) async {
   final app = AppScope.read(context);
+  final stopping = app.isRecording;
   var outcome = await app.toggleRecord();
   if (!context.mounted) return;
   if (outcome == RecordOutcome.needsFolder) {
@@ -25,7 +26,7 @@ Future<void> toggleRecording(BuildContext context) async {
       final open = await showSpecDialog<bool>(
         context,
         (ctx) => HoloDialog(
-          title: 'Recorder',
+          title: 'Microphone',
           message:
               'Voice Recorder needs access to the microphone. Allow it in '
               'Settings, then try again.',
@@ -41,19 +42,26 @@ Future<void> toggleRecording(BuildContext context) async {
       if (!app.store.isReady) {
         await showChooseFolderDialog(
           context,
-          reason: "The recording couldn't be saved to the folder.",
+          reason:
+              "The recording couldn't be saved to the folder. It's kept, and "
+              'saved as soon as you choose the folder.',
         );
       } else {
         showToast(
           context,
-          "The recording couldn't be saved. It will be saved the next time "
-          'the app starts.',
+          "The recording couldn't be saved to the folder yet. It will be "
+          'saved the next time the app starts.',
         );
       }
     case RecordOutcome.noSpace:
       showToast(context, 'Not enough storage left to record');
     case RecordOutcome.failed:
-      showToast(context, 'Recording failed');
+      showToast(
+        context,
+        stopping
+            ? "The recording couldn't be saved"
+            : "Couldn't start recording",
+      );
     case RecordOutcome.needsFolder:
     case RecordOutcome.started:
     case RecordOutcome.stopped:
@@ -84,9 +92,16 @@ Future<RecordingFile?> renameRecording(
     return null;
   }
   final renamed = await app.rename(file, name);
-  if (renamed == null && context.mounted) showToast(context, 'Rename failed');
+  if (renamed == null && context.mounted) {
+    showToast(context, _failed(app, "Couldn't rename the recording"));
+  }
   return renamed;
 }
+
+/// [message], or, when the folder itself can't be reached, how to fix that.
+String _failed(AppController app, String message) => app.store.isReady
+    ? message
+    : "The folder can't be reached. Choose it again in Settings > Folder.";
 
 /// Delete flow with the Holo confirmation. The files go to Recently deleted,
 /// and a toast offers to undo it. Returns true if anything was deleted.
@@ -102,33 +117,71 @@ Future<bool> deleteRecordings(
     count: files.length,
   );
   if (!confirmed || !context.mounted) return false;
-  if (files.length > 20) {
-    showToast(
-      context,
-      'Moving ${formatCount(files.length)} recordings to Recently deleted…',
-      long: true,
-    );
-  }
-  final deleted = await app.delete(files);
-  if (!context.mounted) return deleted.items.isNotEmpty;
+  // The Undo toast is shown even if the user has left the screen meanwhile.
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final deleted = await runWithProgress(
+    context,
+    title: 'Deleting',
+    total: files.length,
+    label: (s) =>
+        'Moving ${formatCount(s.done)} of ${formatCount(s.total)} recordings '
+        'to Recently deleted…',
+    job: (onProgress, cancelled) =>
+        app.delete(files, onProgress: onProgress, cancelled: cancelled),
+  );
+  if (!navigator.mounted) return deleted.items.isNotEmpty;
   if (deleted.items.isEmpty) {
-    showToast(context, 'Delete failed');
+    if (deleted.failed > 0) {
+      showToast(
+        navigator.context,
+        _failed(
+          app,
+          files.length == 1
+              ? "Couldn't delete the recording"
+              : "Couldn't delete the recordings",
+        ),
+      );
+    }
     return false;
   }
   final n = deleted.items.length;
   final message = deleted.failed > 0
-      ? "Deleted ${formatCount(n)}. ${formatCount(deleted.failed)} couldn't be "
-            'deleted.'
+      ? '${formatCount(n)} ${n == 1 ? 'recording' : 'recordings'} moved to '
+            "Recently deleted. ${formatCount(deleted.failed)} couldn't be "
+            'moved.'
       : n == 1
       ? 'Moved to Recently deleted'
       : '${formatCount(n)} recordings moved to Recently deleted';
   showActionToast(
-    context,
+    navigator.context,
     message,
     action: 'Undo',
-    onAction: () => app.undoDelete(deleted),
+    onAction: () => _undo(navigator, app, deleted),
   );
   return true;
+}
+
+/// Puts back what a delete moved to Recently deleted (with progress when
+/// it's many).
+Future<void> _undo(
+  NavigatorState navigator,
+  AppController app,
+  DeletedRecordings deleted,
+) async {
+  if (!navigator.mounted) {
+    await app.undoDelete(deleted);
+    return;
+  }
+  await runWithProgress(
+    navigator.context,
+    title: 'Restoring',
+    total: deleted.items.length,
+    label: (s) =>
+        'Restoring ${formatCount(s.done)} of ${formatCount(s.total)} '
+        'recordings…',
+    job: (onProgress, cancelled) =>
+        app.undoDelete(deleted, onProgress: onProgress, cancelled: cancelled),
+  );
 }
 
 Future<bool> deleteRecording(BuildContext context, RecordingFile file) =>
@@ -155,7 +208,12 @@ Future<void> shareRecordings(
       origin ??
       (box == null ? null : box.localToGlobal(Offset.zero) & box.size);
   if (!await app.shareAll(files, origin: rect) && context.mounted) {
-    showToast(context, "Couldn't open sharing");
+    showToast(
+      context,
+      files.length == 1
+          ? "Couldn't share the recording"
+          : "Couldn't share the recordings",
+    );
   }
 }
 
@@ -173,8 +231,9 @@ Future<bool> showChooseFolderDialog(
       message:
           '${reason == null ? '' : '$reason\n\n'}'
           'Choose the folder for your recordings.\n\n'
-          'To keep using your existing recordings, select ${app.store.folderDisplayPath} '
-          '(create a folder named "Recorders" if it does not exist yet) and tap "Use this folder".',
+          'To keep using your existing recordings, select '
+          '${app.store.folderDisplayPath} (create a folder named "Recorders" '
+          'if it does not exist yet), tap "Use this folder", then "Allow".',
       buttons: [
         HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
         HoloButton('OK', onTap: () => Navigator.of(ctx).pop(true)),
@@ -189,17 +248,58 @@ Future<bool> showChooseFolderDialog(
 String importMessage(ImportResult r) {
   String count(int n, String one, String more) =>
       n == 1 ? one : '${formatCount(n)} $more';
-  if (r.copied + r.skipped + r.failed == 0) {
-    return 'No recordings were found there (MP3, WAV, M4A, AAC or FLAC).';
+  final other = r.failed - r.full;
+  final ignored = r.ignored == 0
+      ? null
+      : '${count(r.ignored, '1 sound file', 'sound files')} in other formats '
+            '(like AMR or OGG) ${r.ignored == 1 ? 'was' : 'were'} left out.';
+  if (r.copied + r.skipped + r.failed == 0 && !r.cancelled) {
+    return [
+      'No recordings were found there (MP3, WAV, M4A, AAC or FLAC).',
+      ?ignored,
+    ].join(' ');
   }
   return [
     if (r.copied > 0)
       '${count(r.copied, '1 recording', 'recordings')} imported.'
-    else if (r.failed == 0)
+    else if (r.failed == 0 && !r.cancelled)
       'Nothing new to import.',
-    if (r.skipped > 0) '${count(r.skipped, '1 was', 'were')} already here.',
-    if (r.failed > 0)
-      "${formatCount(r.failed)} couldn't be copied. Is the iPhone full?",
+    if (r.skipped > 0)
+      '${count(r.skipped, '1 was', 'were')} already in the app.',
+    if (r.full > 0)
+      "${formatCount(r.full)} couldn't be copied because the iPhone is full.",
+    if (other > 0)
+      "${formatCount(other)} couldn't be copied. Import again to try them "
+          'once more (what is already in the app is skipped).',
+    ?ignored,
+    if (r.cancelled)
+      'The import was stopped. Import the same folder again to go on.',
+  ].join(' ');
+}
+
+/// The message after storing dates in recordings (Android), [of] how many
+/// were to be done.
+String storedDatesMessage(StoredDates r, {required int of}) {
+  String some(int n) => n == 1 ? '1 recording' : '${formatCount(n)} recordings';
+  String names(List<String> list) {
+    final shown = list.take(5).map((n) => '"$n"').join(', ');
+    return list.length > 5
+        ? '$shown and ${formatCount(list.length - 5)} more'
+        : shown;
+  }
+
+  final stopped = r.stoppedAt;
+  return [
+    if (r.stored > 0) 'The date is now stored in ${some(r.stored)}.',
+    if (r.refused.isNotEmpty)
+      "${some(r.refused.length)} couldn't take one: ${names(r.refused)}. To "
+          'keep their dates, start their names with the date, like '
+          '"2016_05_23_18_14_00 lunch".',
+    if (stopped != null)
+      '"$stopped" couldn\'t be written, so it stopped there. Is the storage '
+          'full? Its date is kept in the app.',
+    if (stopped == null && r.stored + r.refused.length < of)
+      'It was stopped. The others can be done later.',
   ].join(' ');
 }
 
@@ -209,10 +309,10 @@ void showPlayProblem(BuildContext context, PlayOutcome outcome) {
     case PlayOutcome.ok:
       return;
     case PlayOutcome.notPlayable:
-      showToast(context, "Can't play this file");
+      showToast(context, "Can't play this recording");
     case PlayOutcome.audioBusy:
       showToast(context, "Can't play while a call or another app uses audio");
     case PlayOutcome.recording:
-      showToast(context, 'Stop recording to play a file');
+      showToast(context, "Can't play while recording");
   }
 }

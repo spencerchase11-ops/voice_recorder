@@ -18,6 +18,7 @@ import android.os.StatFs
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.Settings
+import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -200,6 +201,15 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                     // e.g. no settings activity on an unusual device
                     result.error("settings", e.message, null)
                 }
+            }
+            "keepScreenOn" -> {
+                // A long job (thousands of recordings): the phone mustn't sleep
+                // and pause it.
+                val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                activity?.window?.let { w ->
+                    if (call.argument<Boolean>("on") == true) w.addFlags(flag) else w.clearFlags(flag)
+                }
+                result.success(null)
             }
             else -> result.notImplemented()
         }

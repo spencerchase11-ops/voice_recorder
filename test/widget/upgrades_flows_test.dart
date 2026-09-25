@@ -125,7 +125,7 @@ void main() {
 
       await tester.tap(labeled('Rename'));
       await tester.pump();
-      expect(find.text('Select one file to rename'), findsOneWidget);
+      expect(find.text('Select only one recording to rename'), findsOneWidget);
       await tester.pump(const Duration(seconds: 3));
 
       await tester.tap(labeled('Delete'));
@@ -265,7 +265,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(settings.lockScreenControls, isFalse);
       expect(
-        find.text('Playback stops when you leave the app or lock the phone'),
+        find.text('Playback pauses when you leave the app or lock the phone'),
         findsOneWidget,
       );
 

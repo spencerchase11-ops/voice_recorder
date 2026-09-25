@@ -183,8 +183,20 @@ void main() {
       store.files.removeWhere((x) => x.id == deleted.items[1].file.id);
       expect(await app.undoDelete(deleted), 2);
       await settle();
-      expect(notices.single, contains("couldn't be put back"));
+      // It isn't in Recently deleted either: not said to be.
+      expect(notices.single, "A recording couldn't be restored.");
       expect(app.files, hasLength(9));
+
+      // One that stays in Recently deleted is said to be there.
+      final again = await app.delete(app.files.sublist(0, 2));
+      store.failRenames = true;
+      expect(await app.undoDelete(again), 0);
+      await settle();
+      expect(
+        notices.last,
+        "2 recordings couldn't be restored. They're still in Settings > "
+        'Recently deleted.',
+      );
     });
 
     test('an undo of many is sorted like the list', () async {
@@ -361,7 +373,7 @@ void main() {
       addTearDown(app.dispose);
       await app.init();
 
-      final running = app.importRecordings();
+      final running = app.importRecordings(folder: true);
       await settle();
       expect(app.importProgress, isNull); // the picker is still open
       native.eventController.add(const ImportProgress(0, 0));
@@ -371,28 +383,79 @@ void main() {
       await settle();
       expect(app.importProgress, (done: 1200, total: 2464));
       expect(await app.importRecordings(), isNull); // one at a time
-      answer.complete({'copied': 2400, 'skipped': 60, 'failed': 4});
-      expect(await running, (copied: 2400, skipped: 60, failed: 4));
+      // Cancel reaches the platform while it runs.
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call.method);
+            return call.method == 'importRecordings' ? answer.future : null;
+          });
+      await app.cancelImport();
+      expect(calls, ['cancelImport']);
+      answer.complete({
+        'copied': 2400,
+        'skipped': 60,
+        'failed': 4,
+        'full': 3,
+        'ignored': 2,
+        'cancelled': 0,
+      });
+      expect(await running, (
+        copied: 2400,
+        skipped: 60,
+        failed: 4,
+        full: 3,
+        ignored: 2,
+        cancelled: false,
+      ));
       expect(app.importProgress, isNull);
     });
 
+    ImportResult result({
+      int copied = 0,
+      int skipped = 0,
+      int failed = 0,
+      int full = 0,
+      int ignored = 0,
+      bool cancelled = false,
+    }) => (
+      copied: copied,
+      skipped: skipped,
+      failed: failed,
+      full: full,
+      ignored: ignored,
+      cancelled: cancelled,
+    );
+
     test('the message says what happened', () {
       expect(
-        importMessage((copied: 2400, skipped: 60, failed: 4)),
-        "2,400 recordings imported. 60 were already here. 4 couldn't be "
-        'copied. Is the iPhone full?',
+        importMessage(result(copied: 2400, skipped: 60, failed: 4, full: 3)),
+        '2,400 recordings imported. 60 were already in the app. 3 '
+        "couldn't be copied because the iPhone is full. 1 couldn't be "
+        'copied. Import again to try them once more (what is already in '
+        'the app is skipped).',
       );
       expect(
-        importMessage((copied: 1, skipped: 1, failed: 0)),
-        '1 recording imported. 1 was already here.',
+        importMessage(result(copied: 1, skipped: 1)),
+        '1 recording imported. 1 was already in the app.',
       );
       expect(
-        importMessage((copied: 0, skipped: 12, failed: 0)),
-        'Nothing new to import. 12 were already here.',
+        importMessage(result(skipped: 12)),
+        'Nothing new to import. 12 were already in the app.',
       );
       expect(
-        importMessage((copied: 0, skipped: 0, failed: 0)),
+        importMessage(result()),
         'No recordings were found there (MP3, WAV, M4A, AAC or FLAC).',
+      );
+      expect(
+        importMessage(result(ignored: 3)),
+        'No recordings were found there (MP3, WAV, M4A, AAC or FLAC). 3 '
+        'sound files in other formats (like AMR or OGG) were left out.',
+      );
+      expect(
+        importMessage(result(copied: 1210, cancelled: true)),
+        '1,210 recordings imported. The import was stopped. Import the same '
+        'folder again to go on.',
       );
     });
   });

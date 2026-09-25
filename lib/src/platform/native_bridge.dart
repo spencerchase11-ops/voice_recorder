@@ -40,7 +40,20 @@ class ImportProgress extends NativeEvent {
 }
 
 /// What an import of recordings did.
-typedef ImportResult = ({int copied, int skipped, int failed});
+typedef ImportResult = ({
+  int copied,
+  int skipped,
+  int failed,
+
+  /// Of [failed], those that didn't fit (the iPhone is full).
+  int full,
+
+  /// Sound files in formats the app doesn't take (AMR, Ogg…), left out.
+  int ignored,
+
+  /// The user stopped it.
+  bool cancelled,
+});
 
 /// A button in the Android recording notification: pause, resume or stop.
 class RecordingButton extends NativeEvent {
@@ -286,10 +299,13 @@ class NativeBridge {
   /// on a USB drive) and copies the recordings among them (subfolders too)
   /// into [destination], reporting [ImportProgress] meanwhile. Null if
   /// cancelled.
-  Future<ImportResult?> importRecordings(String destination) async {
+  Future<ImportResult?> importRecordings(
+    String destination, {
+    required bool folder,
+  }) async {
     final m = await _channel.invokeMapMethod<String, Object?>(
       'importRecordings',
-      {'destination': destination},
+      {'destination': destination, 'folder': folder},
     );
     if (m == null) return null;
     int count(String key) => (m[key] as int?) ?? 0;
@@ -297,10 +313,20 @@ class NativeBridge {
       copied: count('copied'),
       skipped: count('skipped'),
       failed: count('failed'),
+      full: count('full'),
+      ignored: count('ignored'),
+      cancelled: count('cancelled') > 0,
     );
   }
 
   /// Opens this app's page in the system settings (to allow the microphone).
   Future<void> openAppSettings() =>
       _channel.invokeMethod<void>('openAppSettings');
+
+  /// Keeps the screen from going to sleep (during a long job), or lets it.
+  Future<void> keepScreenOn(bool on) =>
+      _channel.invokeMethod<void>('keepScreenOn', {'on': on});
+
+  /// iOS: stops a running import after the file being copied.
+  Future<void> cancelImport() => _channel.invokeMethod<void>('cancelImport');
 }

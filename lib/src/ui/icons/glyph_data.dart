@@ -200,6 +200,14 @@ abstract final class GlyphData {
     '4 379 214 320C214 261 261 214 320 214C379 214 427 261 427 320C427 379 379 427 320 427ZM331'
     ' 235H299V342L376 386L393 361L331 325V235Z',
   );
+
+  /// Material "event": a calendar page with a day marked.
+  static const event = Glyph(
+    18.0,
+    20.0,
+    'M14 11h-5v5h5v-5zM13 0v2H5V0H3v2H2c-1.11 0-1.99.9-1.99 2L0 18c0 1.1.89 2 2 2h1'
+    '4c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2h-1V0h-2zm3 18H2V7h14v11z',
+  );
   static const download = Glyph(
     298.0,
     363.0,

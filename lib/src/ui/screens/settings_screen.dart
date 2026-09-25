@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart'
-    show LicensePage, MaterialPageRoute, Theme, ThemeData;
+    show ColorScheme, LicensePage, MaterialPageRoute, Theme, ThemeData;
 import 'package:flutter/widgets.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -10,11 +11,13 @@ import '../../config.dart';
 import '../../core/format.dart';
 import '../../core/recording_format.dart';
 import '../../core/settings.dart';
+import '../../platform/native_bridge.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
+import '../widgets/holo_check_box.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
@@ -59,11 +62,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) await _countDeleted();
   }
 
+  /// iPhone: brings in recordings from the Files app, a whole folder (the
+  /// usual way, for many) or single ones.
   Future<void> _import() async {
     final app = AppScope.read(context);
-    final result = await app.importRecordings();
-    if (!mounted || result == null) return;
-    showToast(context, importMessage(result), long: true);
+    final choice = await showChoiceDialog(
+      context,
+      title: 'Import recordings',
+      items: const ['A folder, with all its recordings', 'Single recordings'],
+      selected: -1,
+    );
+    if (choice == null || !mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    // Progress shows once the copying starts (after the Files picker).
+    final state = ValueNotifier<JobState>((done: 0, total: 0));
+    ProgressDialogRoute? dialog;
+    void follow() {
+      final p = app.importProgress;
+      if (p == null) return;
+      state.value = p;
+      if (dialog == null && navigator.mounted) {
+        dialog = ProgressDialogRoute(
+          title: 'Importing',
+          state: state,
+          label: (s) => s.total == 0
+              ? 'Looking for recordings…'
+              : 'Copying ${formatCount(s.done)} of ${formatCount(s.total)} '
+                    "recordings… Keep the app open until it's done.",
+          onCancel: app.cancelImport,
+        );
+        unawaited(navigator.push(dialog!));
+      }
+    }
+
+    app.addListener(follow);
+    final ImportResult? result;
+    try {
+      result = await app.importRecordings(folder: choice == 0);
+    } finally {
+      app.removeListener(follow);
+      final d = dialog;
+      if (d != null && d.isActive) navigator.removeRoute(d);
+      WidgetsBinding.instance.addPostFrameCallback((_) => state.dispose());
+    }
+    if (result == null || !navigator.mounted) return;
+    await showMessageDialog(
+      navigator.context,
+      title: 'Import recordings',
+      message: importMessage(result),
+    );
+  }
+
+  /// Android: stores the date of each renamed recording inside it, so it is
+  /// kept when the recordings are moved to a new phone.
+  Future<void> _storeDates() async {
+    final app = AppScope.read(context);
+    final files = app.datesToStore;
+    if (files == null) {
+      showToast(
+        context,
+        'Still checking the recordings. Try again in a moment',
+      );
+      return;
+    }
+    if (files.isEmpty) {
+      showToast(context, 'Every recording already has its date inside');
+      return;
+    }
+    final n = files.length;
+    final ok = await showConfirmDialog(
+      context,
+      title: 'Store dates in recordings',
+      message:
+          '${n == 1 ? '1 renamed recording has' : '${formatCount(n)} renamed recordings have'} '
+          "no date inside them, only the file's own date, which is often lost "
+          'when recordings are copied to another phone. This stores each date '
+          'inside its recording, so it goes wherever the recording goes.\n\n'
+          "The sound isn't changed. Other apps (like My Files) will show "
+          'these recordings as modified today.',
+      ok: 'Store dates',
+    );
+    if (!ok || !mounted) return;
+    final result = await runWithProgress(
+      context,
+      title: 'Storing dates',
+      total: n,
+      quietUpTo: 0,
+      label: (s) =>
+          'Storing the date in ${formatCount(s.done)} of ${formatCount(s.total)} '
+          'recordings…',
+      job: (onProgress, cancelled) =>
+          app.storeDates(files, onProgress: onProgress, cancelled: cancelled),
+    );
+    if (!mounted) return;
+    await showMessageDialog(
+      context,
+      title: 'Store dates in recordings',
+      message: storedDatesMessage(result, of: n),
+    );
   }
 
   @override
@@ -146,8 +242,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       color: Color(0xFFFFFFFF),
                     ),
                     title: 'Noise reduction',
-                    summary: 'Filters out background noise (MP3 and WAV)',
-                    trailing: _HoloCheckBox(checked: settings.noiseReduction),
+                    summary: settings.type == RecordingType.m4a
+                        ? 'Not used for M4A recordings'
+                        : 'Filters out background noise',
+                    trailing: HoloCheckBox(checked: settings.noiseReduction),
                     checked: settings.noiseReduction,
                     onTap: () =>
                         settings.noiseReduction = !settings.noiseReduction,
@@ -159,17 +257,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       color: Color(0xFFFFFFFF),
                     ),
                     title: 'Folder',
-                    summary: app.store.folderDisplayPath,
-                    onTap: app.isRecording
-                        ? null
-                        : () async {
-                            if (Platform.isAndroid) {
-                              await showChooseFolderDialog(context);
-                            } else {
-                              await app.chooseFolder();
-                            }
-                          },
+                    summary: !app.store.folderChosen
+                        ? 'Not chosen yet. Tap to choose it'
+                        : app.store.isReady
+                        ? app.store.folderDisplayPath
+                        : "${app.store.folderDisplayPath} can't be reached. "
+                              'Tap to choose it again',
+                    onTap: () async {
+                      if (app.isRecording) {
+                        showToast(
+                          context,
+                          'Stop recording to change the folder',
+                        );
+                      } else if (Platform.isAndroid) {
+                        await showChooseFolderDialog(context);
+                      } else {
+                        await app.chooseFolder();
+                      }
+                    },
                   ),
+                  if (Platform.isAndroid)
+                    _Item(
+                      icon: const InkIcon(
+                        AppIcons.calendar,
+                        size: Size(20.0, 22.2),
+                        color: Color(0xFFFFFFFF),
+                      ),
+                      title: 'Store dates in recordings',
+                      summary: switch (app.datesToStore?.length) {
+                        null => 'Checking the recordings…',
+                        0 => 'Every recording has its date inside',
+                        1 =>
+                          'For moving to a new phone: 1 renamed recording '
+                              'needs it',
+                        final n =>
+                          'For moving to a new phone: ${formatCount(n)} '
+                              'renamed recordings need it',
+                      },
+                      onTap: _storeDates,
+                    ),
                   if (Platform.isIOS)
                     _Item(
                       icon: const InkIcon(
@@ -182,7 +308,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         null => 'From Files, iCloud Drive or a USB drive',
                         (done: _, total: 0) => 'Looking for recordings…',
                         (:final done, :final total) =>
-                          'Importing ${formatCount(done)} of '
+                          'Copying ${formatCount(done)} of '
                               '${formatCount(total)}… Keep the app open.',
                       },
                       onTap: app.importProgress == null ? _import : null,
@@ -214,8 +340,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     summary: settings.lockScreenControls
                         ? 'Keeps playing in the background, with controls on '
                               'the lock screen'
-                        : 'Playback stops when you leave the app or lock the phone',
-                    trailing: _HoloCheckBox(
+                        : 'Playback pauses when you leave the app or lock the '
+                              'phone',
+                    trailing: HoloCheckBox(
                       checked: settings.lockScreenControls,
                     ),
                     checked: settings.lockScreenControls,
@@ -244,15 +371,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     },
                   ),
                   const _Section('More app'),
-                  _Item(
-                    icon: const InkIcon(
-                      AppIcons.star,
-                      size: Size(24.3, 23.1),
-                      color: Color(0xFFFFFFFF),
+                  // On iPhone once the app is in the App Store (it needs its
+                  // id).
+                  if (!Platform.isIOS || AppConfig.appStoreId.isNotEmpty)
+                    _Item(
+                      icon: const InkIcon(
+                        AppIcons.star,
+                        size: Size(24.3, 23.1),
+                        color: Color(0xFFFFFFFF),
+                      ),
+                      title: 'Rate 5 stars',
+                      onTap: () => _rate(context),
                     ),
-                    title: 'Rate 5 stars',
-                    onTap: () => _rate(context),
-                  ),
                   _Item(
                     icon: const InkIcon(
                       AppIcons.about,
@@ -306,7 +436,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Voice Recorder\nVersion $version\n\n'
             'A faithful revival of the classic 2016 voice recorder.\n\n'
             'MP3 encoding by LAME (lame.sourceforge.io), used under the GNU '
-            'LGPL. Its source code is part of this app\'s source code.',
+            'LGPL. Its source code is available there, and is included with '
+            "this app's source code.",
         buttons: [
           HoloButton('Licenses', onTap: () => Navigator.of(ctx).pop(true)),
           HoloButton('OK', onTap: () => Navigator.of(ctx).pop(false)),
@@ -321,7 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           data: ThemeData(
             useMaterial3: true,
             fontFamily: Spec.font,
-            colorSchemeSeed: const Color(0xFF7D0505),
+            colorScheme: const ColorScheme.light(primary: Color(0xFF7D0505)),
           ),
           child: LicensePage(
             applicationName: 'Voice Recorder',
@@ -456,58 +587,4 @@ class _Item extends StatelessWidget {
       ],
     );
   }
-}
-
-/// A Holo (dark) check box: a light square, with a blue tick when on.
-class _HoloCheckBox extends StatelessWidget {
-  const _HoloCheckBox({required this.checked});
-
-  final bool checked;
-
-  @override
-  Widget build(BuildContext context) => SizedBox.square(
-    dimension: 24,
-    child: CustomPaint(painter: _CheckBoxPainter(checked)),
-  );
-}
-
-class _CheckBoxPainter extends CustomPainter {
-  _CheckBoxPainter(this.checked);
-
-  final bool checked;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final box = Rect.fromCenter(
-      center: size.center(Offset.zero),
-      width: 17,
-      height: 17,
-    );
-    canvas
-      ..drawRect(box, Paint()..color = const Color(0x33000000))
-      ..drawRect(
-        box,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.6
-          ..color = const Color(0xFFD8D8D8),
-      );
-    if (!checked) return;
-    final tick = Path()
-      ..moveTo(box.left + 3.2, box.center.dy + 0.2)
-      ..lineTo(box.left + 7.2, box.bottom - 3.6)
-      ..lineTo(box.right + 2.6, box.top - 3.2);
-    canvas.drawPath(
-      tick,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3.2
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..color = Spec.holoBlue,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_CheckBoxPainter old) => old.checked != checked;
 }

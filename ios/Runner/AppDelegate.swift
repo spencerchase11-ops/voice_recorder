@@ -109,7 +109,16 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
         result(FlutterError(code: "bad_args", message: "No destination", details: nil))
         return
       }
-      importer.pick(into: URL(fileURLWithPath: destination), result: result)
+      importer.pick(
+        into: URL(fileURLWithPath: destination),
+        folder: (args?["folder"] as? Bool) ?? true,
+        result: result)
+    case "cancelImport":
+      RecordingImporter.cancel()
+      result(nil)
+    case "keepScreenOn":
+      UIApplication.shared.isIdleTimerDisabled = (args?["on"] as? Bool) ?? false
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -202,8 +211,8 @@ final class NowPlaying {
   }
 }
 
-/// Copies recordings the user picks in the Files app (single files or whole
-/// folders with their subfolders, from On My iPhone, iCloud Drive or a USB
+/// Copies recordings the user picks in the Files app (a whole folder with
+/// its subfolders, or single files, from On My iPhone, iCloud Drive or a USB
 /// drive) into the recordings folder. It reports how far it has got
 /// ("importProgress") and answers with what was copied, what was there
 /// already and what couldn't be copied. Running it again carries on where
@@ -216,19 +225,52 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     "mp3", "wav", "m4a", "aac", "flac",
   ]
 
+  /// Other sound formats: counted, so the user hears they were left out.
+  private static let otherAudioExtensions: Set<String> = [
+    "amr", "awb", "3gp", "3ga", "ogg", "oga", "opus", "wma", "aif", "aiff",
+    "caf", "m4b", "mp2",
+  ]
+
   /// Name start of a file being copied in; renamed once complete.
   private static let partialPrefix = ".importing-"
 
   /// How deep into subfolders recordings are looked for.
   private static let maxDepth = 8
 
-  private enum Outcome { case copied, skipped, failed }
+  /// How many files still in iCloud are downloaded ahead of the copy.
+  private static let fetchAhead = 8
+
+  private enum Outcome { case copied, skipped, failed, full }
+
+  /// A file to import, with its size when it's known without reading it.
+  private struct Item {
+    let url: URL
+    let size: Int64?
+  }
 
   private var destination: URL?
   private var result: FlutterResult?
   private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
-  func pick(into destination: URL, result: @escaping FlutterResult) {
+  /// Set by Cancel; the copy stops after the file it is on.
+  private static let stopLock = NSLock()
+  private static var stopRequested = false
+
+  static func cancel() {
+    stopLock.lock()
+    stopRequested = true
+    stopLock.unlock()
+  }
+
+  private static var cancelled: Bool {
+    stopLock.lock()
+    defer { stopLock.unlock() }
+    return stopRequested
+  }
+
+  /// Shows the Files picker: for a folder (all the recordings in it), or
+  /// for single recordings.
+  func pick(into destination: URL, folder: Bool, result: @escaping FlutterResult) {
     guard self.result == nil else {
       result(FlutterError(code: "busy", message: "The picker is already open", details: nil))
       return
@@ -239,10 +281,13 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     }
     self.destination = destination
     self.result = result
+    Self.stopLock.lock()
+    Self.stopRequested = false
+    Self.stopLock.unlock()
     Self.removePartialCopies(in: destination)
     let picker = UIDocumentPickerViewController(
-      forOpeningContentTypes: [.audio, .folder], asCopy: false)
-    picker.allowsMultipleSelection = true
+      forOpeningContentTypes: folder ? [.folder] : [.audio], asCopy: false)
+    picker.allowsMultipleSelection = !folder
     picker.delegate = self
     // Swiping the sheet down doesn't always count as Cancel.
     picker.presentationController?.delegate = self
@@ -304,6 +349,11 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
       && audioExtensions.contains(url.pathExtension.lowercased())
   }
 
+  private static func isOtherAudio(_ url: URL) -> Bool {
+    !url.lastPathComponent.hasPrefix(".")
+      && otherAudioExtensions.contains(url.pathExtension.lowercased())
+  }
+
   /// Copies the audio files among `urls` and in picked folders, telling the
   /// Flutter side how far it got. Returns the counts for the answer.
   private static func copy(_ urls: [URL], into destination: URL) -> [String: Int] {
@@ -315,49 +365,93 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
       DispatchQueue.main.async { VoiceRecorderNative.send("importProgress", progress) }
     }
     report(0, 0)  // looking
-    var items: [URL] = []
+    var items: [Item] = []
+    var ignored = 0
     for url in urls {
-      items += isFolder(url) ? files(under: url) : (isAudio(url) ? [url] : [])
+      if isFolder(url) {
+        let found = files(under: url)
+        items += found.items
+        ignored += found.ignored
+      } else if isAudio(url) {
+        items.append(Item(url: url, size: fileSize(url)))
+      } else {
+        ignored += 1
+      }
     }
+    // What is here already is skipped before anything is read, so files in
+    // iCloud aren't downloaded again when an import is run a second time.
     let ours = destination.resolvingSymlinksInPath().path
-    var copied = 0
     var skipped = 0
-    var failed = 0
-    var lastReport = Date.distantPast
-    for (i, item) in items.enumerated() {
-      // The app's own folder (when a folder above it was picked).
-      if item.resolvingSymlinksInPath().path.hasPrefix(ours + "/") {
+    var todo: [Item] = []
+    for item in items {
+      if item.url.resolvingSymlinksInPath().path.hasPrefix(ours + "/") {
+        skipped += 1  // the app's own folder (a folder above it was picked)
+      } else if let size = item.size,
+        hasCopy(named: item.url.lastPathComponent, size: size, in: destination)
+      {
         skipped += 1
       } else {
-        switch copyOne(item, into: destination) {
+        todo.append(item)
+      }
+    }
+    var copied = 0
+    var failed = 0
+    var full = 0
+    var stopped = false
+    var lastReport = Date.distantPast
+    let alreadyHere = skipped
+    report(alreadyHere, items.count)
+    for (i, item) in todo.enumerated() {
+      if cancelled {
+        stopped = true
+        break
+      }
+      // Files still in iCloud download a few ahead, while this one copies.
+      for next in todo[i..<min(i + fetchAhead, todo.count)] {
+        try? FileManager.default.startDownloadingUbiquitousItem(at: next.url)
+      }
+      autoreleasepool {
+        switch copyOne(item.url, into: destination) {
         case .copied: copied += 1
         case .skipped: skipped += 1
         case .failed: failed += 1
+        case .full: full += 1
         }
       }
-      if Date().timeIntervalSince(lastReport) > 0.25 || i == items.count - 1 {
+      if Date().timeIntervalSince(lastReport) > 0.25 || i == todo.count - 1 {
         lastReport = Date()
-        report(i + 1, items.count)
+        report(alreadyHere + i + 1, items.count)
       }
     }
-    return ["copied": copied, "skipped": skipped, "failed": failed]
+    return [
+      "copied": copied, "skipped": skipped, "failed": failed + full, "full": full,
+      "ignored": ignored, "cancelled": stopped ? 1 : 0,
+    ]
   }
 
   private static func isFolder(_ url: URL) -> Bool {
     (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
   }
 
+  private static func fileSize(_ url: URL) -> Int64? {
+    guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else {
+      return nil
+    }
+    return Int64(size)
+  }
+
   /// The recordings in `folder` and its subfolders, including ones that are
-  /// only in iCloud so far: some iOS versions list those as ".name.icloud"
-  /// placeholders. Their download starts here; the coordinated read in
-  /// `copyOne` waits for it.
-  private static func files(under folder: URL) -> [URL] {
+  /// only in iCloud so far (some iOS versions list those as ".name.icloud"
+  /// placeholders, which know the file's size), and how many other sound
+  /// files there are.
+  private static func files(under folder: URL) -> (items: [Item], ignored: Int) {
     let fm = FileManager.default
     guard let walk = fm.enumerator(
-      at: folder, includingPropertiesForKeys: [.isDirectoryKey],
+      at: folder, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
       options: [.skipsPackageDescendants], errorHandler: { _, _ in true })
-    else { return [] }
-    var found: [URL] = []
+    else { return ([], 0) }
+    var found: [Item] = []
+    var ignored = 0
     for case let item as URL in walk {
       let name = item.lastPathComponent
       if isFolder(item) {
@@ -368,62 +462,99 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
         let real = item.deletingLastPathComponent().appendingPathComponent(
           String(name.dropFirst().dropLast(".icloud".count)))
         if isAudio(real) {
-          try? fm.startDownloadingUbiquitousItem(at: real)
-          found.append(real)
+          let size = (NSDictionary(contentsOf: item)?["NSURLFileSizeKey"] as? NSNumber)?.int64Value
+          found.append(Item(url: real, size: size))
+        } else if isOtherAudio(real) {
+          ignored += 1
         }
       } else if isAudio(item) {
-        found.append(item)
+        found.append(Item(url: item, size: fileSize(item)))
+      } else if isOtherAudio(item) {
+        ignored += 1
       }
     }
     // In name order: timestamp names then come in the order they were made.
-    return found.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    let sorted = found.sorted {
+      $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
+    }
+    return (sorted, ignored)
   }
 
-  /// Copies one file, unless the folder already has it (the same name, or
-  /// a numbered variant of it, with the same size).
+  /// Whether the folder has the file already: the same name, or a numbered
+  /// variant of it ("name (1).mp3"), with the same size.
+  private static func hasCopy(named name: String, size: Int64, in destination: URL) -> Bool {
+    existingCopy(named: name, size: size, in: destination).found
+  }
+
+  /// Looks for the file in the folder ([hasCopy]); if it isn't there, also
+  /// gives the first free name for it.
+  private static func existingCopy(named name: String, size: Int64?, in destination: URL)
+    -> (found: Bool, freeName: URL)
+  {
+    let fm = FileManager.default
+    let base = (name as NSString).deletingPathExtension
+    let ext = (name as NSString).pathExtension
+    var target = destination.appendingPathComponent(name)
+    var n = 1
+    while fm.fileExists(atPath: target.path) {
+      if let size = size,
+        let attributes = try? fm.attributesOfItem(atPath: target.path),
+        (attributes[.size] as? NSNumber)?.int64Value == size
+      {
+        return (true, target)
+      }
+      target = destination.appendingPathComponent(
+        ext.isEmpty ? "\(base) (\(n))" : "\(base) (\(n)).\(ext)")
+      n += 1
+    }
+    return (false, target)
+  }
+
+  /// Copies one file, unless the folder already has it.
   private static func copyOne(_ source: URL, into destination: URL) -> Outcome {
     var outcome = Outcome.failed
     var error: NSError?
     // Coordinated, so a file that lives only in iCloud is downloaded first.
     NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &error) { url in
       let fm = FileManager.default
-      func size(_ u: URL) -> Int64? {
-        guard let attributes = try? fm.attributesOfItem(atPath: u.path) else { return nil }
-        return (attributes[.size] as? NSNumber)?.int64Value
-      }
       let name = url.lastPathComponent
-      let base = (name as NSString).deletingPathExtension
       let ext = (name as NSString).pathExtension
-      let length = size(url)
-      var target = destination.appendingPathComponent(name)
-      var n = 1
-      while fm.fileExists(atPath: target.path) {
-        if size(target) == length {
-          outcome = .skipped  // imported before
-          return
-        }
-        target = destination.appendingPathComponent(
-          ext.isEmpty ? "\(base) (\(n))" : "\(base) (\(n)).\(ext)")
-        n += 1
+      let there = existingCopy(named: name, size: fileSize(url), in: destination)
+      if there.found {
+        outcome = .skipped  // imported before
+        return
       }
       // Under a hidden name until complete, so a copy cut short never shows
-      // up as a recording. On the same volume the copy is a clone: instant,
-      // and it takes no extra space.
+      // up as a recording. On the same volume the copy is usually a clone:
+      // instant, and it takes no extra space.
       let partial = destination.appendingPathComponent(
         "\(partialPrefix)\(UUID().uuidString).\(ext)")
       do {
         try fm.copyItem(at: url, to: partial)
-        try fm.moveItem(at: partial, to: target)
+        try fm.moveItem(at: partial, to: there.freeName)
         outcome = .copied
       } catch {
         try? fm.removeItem(at: partial)
+        if isOutOfSpace(error) { outcome = .full }
         NSLog("Voice Recorder: could not import %@: %@", name, "\(error)")
       }
     }
     if let error = error {
+      if isOutOfSpace(error) { outcome = .full }
       NSLog("Voice Recorder: could not read %@: %@", source.lastPathComponent, "\(error)")
     }
     return outcome
+  }
+
+  /// Whether `error` (or the one behind it) says the storage is full.
+  private static func isOutOfSpace(_ error: Error) -> Bool {
+    let e = error as NSError
+    if e.domain == NSCocoaErrorDomain && e.code == NSFileWriteOutOfSpaceError { return true }
+    if e.domain == NSPOSIXErrorDomain && e.code == Int(ENOSPC) { return true }
+    if let underlying = e.userInfo[NSUnderlyingErrorKey] as? Error {
+      return isOutOfSpace(underlying)
+    }
+    return false
   }
 
   private static func topViewController() -> UIViewController? {

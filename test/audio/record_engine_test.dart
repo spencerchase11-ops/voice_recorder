@@ -247,6 +247,10 @@ void main() {
       expect(interruptions, [true]);
       calls.add(AudioInterruptionEvent(false, AudioInterruptionType.pause));
       await Future<void>.delayed(Duration.zero);
+      // Resumed only once the plugin has resumed the recorder (it may fail).
+      expect(interruptions, [true]);
+      platform.emit(RecordState.record);
+      await Future<void>.delayed(Duration.zero);
       expect(interruptions, [true, false]);
 
       // Paused by the user during the next call: after it ends (and iOS

@@ -176,7 +176,7 @@ void main() {
       t.playback.broken.add('mem://$_kris');
       await tester.tap(labeled('Play'));
       await tester.pump();
-      expect(find.text("Can't play this file"), findsOneWidget);
+      expect(find.text("Can't play this recording"), findsOneWidget);
       expect(t.playback.fileId, isNull);
       await tester.pump(const Duration(seconds: 2));
 
@@ -189,7 +189,13 @@ void main() {
         find.text("Can't play while a call or another app uses audio"),
         findsOneWidget,
       );
-      await tester.pump(const Duration(seconds: 2));
+      // Up longer: a longer message takes longer to read.
+      await tester.pump(const Duration(seconds: 3));
+      expect(
+        find.text("Can't play while a call or another app uses audio"),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 1));
       t.playback.audioBusy = false;
 
       // Once it opens again it plays.
@@ -457,7 +463,7 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.tap(labeled('Play 2026_09_20_17_26_27.mp3'));
       await tester.pump();
-      expect(find.text('Stop recording to play a file'), findsOneWidget);
+      expect(find.text("Can't play while recording"), findsOneWidget);
       expect(t.playback.played, isEmpty);
       await tester.pump(const Duration(seconds: 2));
 
@@ -552,6 +558,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(await tester.runAsync(t.store.list), hasLength(9));
+      // The Undo toast is shown all the same, on the screen now showing.
+      expect(labeled('Undo'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 7));
     });
 
     testWidgets('back returns to the Recorder', (tester) async {
@@ -647,7 +656,8 @@ void main() {
       Navigator.of(tester.element(find.byType(LicensePage))).pop();
       await tester.pumpAndSettle();
 
-      // No store listing yet (see AppConfig.appStoreId): just a thank-you.
+      // No store listing yet (see AppConfig.appStoreId; on iPhone the row
+      // is hidden until then): just a thank-you.
       await tester.tap(labeled('Rate 5 stars'));
       await tester.pump();
       expect(find.text('Thank you!'), findsOneWidget);

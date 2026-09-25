@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math' as math;
 
@@ -15,6 +16,7 @@ import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
+import '../widgets/holo_check_box.dart';
 import '../widgets/recorder_widgets.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
@@ -49,6 +51,11 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   final _searchFocus = FocusNode();
   late AppController _app;
   bool _loaded = false;
+
+  /// The app was in the background (not just behind the notification
+  /// shade): other apps may have changed the folder meanwhile.
+  bool _wasAway = false;
+  final _scroll = ScrollController();
 
   /// A delete, rename or share is being carried out: more taps wait.
   bool _busy = false;
@@ -86,12 +93,19 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Files may have been added or removed by other apps meanwhile.
-    if (state == AppLifecycleState.resumed) _app.refreshFiles();
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      _wasAway = true;
+    } else if (state == AppLifecycleState.resumed && _wasAway) {
+      _wasAway = false;
+      _app.refreshFiles();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scroll.dispose();
     _search.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -214,7 +228,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     final files = _targets(visible);
     if (files == null) return;
     if (files.length > 1) {
-      showToast(context, 'Select one file to rename');
+      showToast(context, 'Select only one recording to rename');
       return;
     }
     final renamed = await renameRecording(context, files.single);
@@ -271,54 +285,55 @@ class _RecordingListScreenState extends State<RecordingListScreen>
               child: BrushedMetal(
                 child: visible.isEmpty && (_query ?? '').trim().isNotEmpty
                     ? const _Empty('No recordings match')
-                    : app.files.isEmpty && app.filesLoaded && app.store.isReady
-                    ? _Empty(
-                        Platform.isIOS
-                            ? 'No recordings yet.\n\nTo add the recordings '
-                                  'you have in the Files app, use Import '
-                                  'recordings in Settings.'
-                            : 'No recordings in this folder yet:\n'
-                                  '${app.store.folderDisplayPath}\n\nTo use '
-                                  'another folder, choose it under Folder in '
-                                  'Settings.',
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(top: Spec.listTopGap),
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        itemCount: visible.length,
-                        itemBuilder: (context, i) {
-                          final f = visible[i];
-                          if (ticked != null) {
+                    : app.files.isEmpty
+                    ? _emptyList(app)
+                    : RawScrollbar(
+                        controller: _scroll,
+                        // Drag the thumb to go through thousands quickly.
+                        interactive: true,
+                        thickness: 6,
+                        minThumbLength: 48,
+                        radius: const Radius.circular(3),
+                        thumbColor: const Color(0x80FFFFFF),
+                        child: ListView.builder(
+                          controller: _scroll,
+                          padding: const EdgeInsets.only(top: Spec.listTopGap),
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          itemCount: visible.length,
+                          itemBuilder: (context, i) {
+                            final f = visible[i];
+                            if (ticked != null) {
+                              return _RecordingRow(
+                                key: ValueKey(f.id),
+                                file: f,
+                                selected: ticked.contains(f.id),
+                                ticking: true,
+                                onSelect: () => _toggleTick(f),
+                                onPlay: () => _toggleTick(f),
+                              );
+                            }
                             return _RecordingRow(
                               key: ValueKey(f.id),
                               file: f,
-                              selected: ticked.contains(f.id),
-                              ticking: true,
-                              onSelect: () => _toggleTick(f),
-                              onPlay: () => _toggleTick(f),
+                              selected: f.id == _selected,
+                              open: f.id == _selected,
+                              onSelect: () => _open(f),
+                              onLongPress: () => _startSelecting(f),
+                              onPlay: () {
+                                _open(f);
+                                if (app.isRecording) {
+                                  showToast(
+                                    context,
+                                    "Can't play while recording",
+                                  );
+                                  return;
+                                }
+                                _play(f);
+                              },
                             );
-                          }
-                          return _RecordingRow(
-                            key: ValueKey(f.id),
-                            file: f,
-                            selected: f.id == _selected,
-                            open: f.id == _selected,
-                            onSelect: () => _open(f),
-                            onLongPress: () => _startSelecting(f),
-                            onPlay: () {
-                              _open(f);
-                              if (app.isRecording) {
-                                showToast(
-                                  context,
-                                  'Stop recording to play a file',
-                                );
-                                return;
-                              }
-                              _play(f);
-                            },
-                          );
-                        },
+                          },
+                        ),
                       ),
               ),
             ),
@@ -393,11 +408,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                 ticked.addAll(visible.map((f) => f.id));
               }
             }),
-            child: const InkIcon(
-              AppIcons.selectAll,
-              size: Size(27.7, 16.0),
-              color: _white,
-            ),
+            child: HoloCheckBox(checked: all),
           ),
         ],
       );
@@ -421,16 +432,16 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                 textInputAction: TextInputAction.search,
                 style: const TextStyle(
                   fontFamily: Spec.font,
-                  fontSize: 17,
+                  fontSize: 18,
                   color: _white,
                 ),
                 decoration: const InputDecoration(
                   isDense: true,
                   border: InputBorder.none,
-                  hintText: 'Search recordings',
+                  hintText: 'Search by name or date',
                   hintStyle: TextStyle(
                     fontFamily: Spec.font,
-                    fontSize: 17,
+                    fontSize: 18,
                     color: Color(0xB3FFFFFF),
                   ),
                 ),
@@ -484,6 +495,39 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     );
   }
 
+  /// What an empty list shows: why it's empty, and what to do.
+  Widget _emptyList(AppController app) {
+    final store = app.store;
+    if (!app.filesLoaded) {
+      return const _Empty('Loading recordings…', delay: true);
+    }
+    if (!store.isReady) {
+      return _Empty(
+        store.folderChosen
+            ? "The recordings folder can't be reached.\n\nTap here to choose "
+                  'it again.'
+            : 'Choose the folder for your recordings.\n\nTap here to choose '
+                  'it.',
+        onTap: () => showChooseFolderDialog(context),
+      );
+    }
+    if (app.filesError) {
+      return _Empty(
+        "Can't open the recordings folder.\n\nTap here to try again, or "
+        'check it in Settings > Folder.',
+        onTap: app.refreshFiles,
+      );
+    }
+    return _Empty(
+      Platform.isIOS
+          ? 'No recordings yet.\n\nTo add the recordings you have in the '
+                'Files app, use Settings > Import recordings.'
+          : 'No recordings in this folder yet:\n'
+                '${store.folderDisplayPath}\n\nTo use another folder, choose '
+                'it in Settings > Folder.',
+    );
+  }
+
   Widget _backButton(VoidCallback onTap) => BarButton(
     center: const Offset(18.26, 23.14),
     semanticLabel: 'Back',
@@ -493,19 +537,62 @@ class _RecordingListScreenState extends State<RecordingListScreen>
 }
 
 /// A line of text in the middle of an empty list.
-class _Empty extends StatelessWidget {
-  const _Empty(this.text);
+class _Empty extends StatefulWidget {
+  const _Empty(this.text, {this.onTap, this.delay = false});
 
   final String text;
 
+  /// Does what the text says to tap for.
+  final VoidCallback? onTap;
+
+  /// Shows the text only after a moment (a short wait shows nothing).
+  final bool delay;
+
+  @override
+  State<_Empty> createState() => _EmptyState();
+}
+
+class _EmptyState extends State<_Empty> {
+  Timer? _wait;
+  late bool _shown = !widget.delay;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!_shown) {
+      _wait = Timer(const Duration(milliseconds: 500), () {
+        if (mounted) setState(() => _shown = true);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _wait?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 0),
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: AText(text, style: Spec.listDetail, textAlign: TextAlign.center),
+    if (!_shown) return const SizedBox.expand();
+    final text = Padding(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+      child: AText(
+        widget.text,
+        style: Spec.listDetail,
+        textAlign: TextAlign.center,
       ),
+    );
+    return Align(
+      alignment: Alignment.topCenter,
+      child: widget.onTap == null
+          ? text
+          : PressableArea(
+              onTap: widget.onTap,
+              semanticLabel: widget.text,
+              highlight: const Color(0x14FFFFFF),
+              child: text,
+            ),
     );
   }
 }
@@ -587,13 +674,9 @@ class _RecordingRow extends StatelessWidget {
         children: [
           if (ticking)
             Positioned(
-              left: Spec.listPlayIconLeft + 5,
-              top: (topPart - 22) / 2,
-              child: InkIcon(
-                selected ? AppIcons.checkBox : AppIcons.checkBoxBlank,
-                size: const Size(22, 22),
-                color: _white,
-              ),
+              left: Spec.listPlayIconLeft + 4,
+              top: (topPart - 24) / 2,
+              child: HoloCheckBox(checked: selected),
             )
           else
             Positioned(
@@ -700,14 +783,14 @@ class _SeekSectionState extends State<_SeekSection> {
   /// The controls react to a tap, not to a recording in progress.
   bool _blocked(AppController app) {
     if (!app.isRecording) return false;
-    showToast(context, 'Stop recording to play a file');
+    showToast(context, "Can't play while recording");
     return true;
   }
 
   Future<void> _skip(AppController app, Duration delta) async {
     if (_blocked(app)) return;
     if (!await app.skip(delta, file: widget.file) && mounted) {
-      showToast(context, "Can't play this file");
+      showToast(context, "Can't play this recording");
     }
   }
 
@@ -744,12 +827,13 @@ class _SeekSectionState extends State<_SeekSection> {
           height: Spec.seekHeight,
           child: HoloSeekBar(
             progress: progress,
+            duration: duration,
             onChanged: (p) => setState(() => _drag = p),
             onChangeEnd: (p) async {
               setState(() => _drag = null);
               if (_blocked(app)) return;
               if (!await app.seek(widget.file, p) && context.mounted) {
-                showToast(context, "Can't play this file");
+                showToast(context, "Can't play this recording");
               }
             },
           ),
@@ -864,9 +948,14 @@ class HoloSeekBar extends StatefulWidget {
     required this.progress,
     required this.onChanged,
     required this.onChangeEnd,
+    this.duration = Duration.zero,
   });
 
   final double progress;
+
+  /// The recording's length, so screen readers say the position as a time
+  /// ("12:30 of 33:57"); zero when unknown.
+  final Duration duration;
 
   /// The thumb moved (while dragging).
   final ValueChanged<double> onChanged;
@@ -898,12 +987,16 @@ class _HoloSeekBarState extends State<HoloSeekBar> {
         double at(Offset p) =>
             ((p.dx - start) / math.max(1, end - start)).clamp(0.0, 1.0);
         final p = widget.progress;
+        final length = widget.duration;
+        String say(double at) => length > Duration.zero
+            ? '${formatTimer(length * at)} of ${formatTimer(length)}'
+            : '${(at * 100).round()}%';
         return Semantics(
           slider: true,
           label: 'Position',
-          value: '${(p * 100).round()}%',
-          increasedValue: '${(math.min(1.0, p + 0.05) * 100).round()}%',
-          decreasedValue: '${(math.max(0.0, p - 0.05) * 100).round()}%',
+          value: say(p),
+          increasedValue: say(math.min(1.0, p + 0.05)),
+          decreasedValue: say(math.max(0.0, p - 0.05)),
           onIncrease: () => widget.onChangeEnd(math.min(1.0, p + 0.05)),
           onDecrease: () => widget.onChangeEnd(math.max(0.0, p - 0.05)),
           child: GestureDetector(

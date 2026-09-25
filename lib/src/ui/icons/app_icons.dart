@@ -113,6 +113,7 @@ abstract final class AppIcons {
   static const emptyTrash = GlyphShape(GlyphData.deleteSweep);
   static const recentlyDeleted = GlyphShape(GlyphData.autoDelete);
   static const import = GlyphShape(GlyphData.download);
+  static const calendar = GlyphShape(GlyphData.event);
   static const lock = GlyphShape(GlyphData.lock);
   static const speed = GlyphShape(GlyphData.speed);
   static const noise = GlyphShape(GlyphData.noiseAware);

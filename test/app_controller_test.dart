@@ -359,19 +359,22 @@ void main() {
       },
     );
 
-    test('capture that ends on its own is stopped, saved and reported', () async {
-      await (await build()).init();
-      final notices = <String>[];
-      app.notices.listen(notices.add);
-      await app.toggleRecord();
-      engine.endedController.add(CaptureEnd.stopped);
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(app.isRecording, isFalse);
-      expect(store.saved, ['2026_09_23_19_14_05.mp3']);
-      expect(notices, [
-        'The recording stopped unexpectedly. What was recorded has been saved.',
-      ]);
-    });
+    test(
+      'capture that ends on its own is stopped, saved and reported',
+      () async {
+        await (await build()).init();
+        final notices = <String>[];
+        app.notices.listen(notices.add);
+        await app.toggleRecord();
+        engine.endedController.add(CaptureEnd.stopped);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(app.isRecording, isFalse);
+        expect(store.saved, ['2026_09_23_19_14_05.mp3']);
+        expect(notices, [
+          'The recording stopped unexpectedly. It has been saved.',
+        ]);
+      },
+    );
 
     test('running out of storage stops and saves the recording', () async {
       await (await build()).init();
@@ -383,7 +386,10 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(app.isRecording, isFalse);
       expect(store.saved, hasLength(1));
-      expect(notices.single, startsWith('Storage is almost full'));
+      expect(
+        notices.single,
+        'The recording stopped: storage is almost full. It has been saved.',
+      );
     });
 
     test('no recording starts without room for it', () async {

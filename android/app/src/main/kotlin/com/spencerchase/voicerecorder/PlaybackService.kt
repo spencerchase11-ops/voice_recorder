@@ -227,8 +227,12 @@ class PlaybackService : Service() {
         override fun onPlay() = send("play")
         override fun onPause() = send("pause")
 
-        // Also the media player's Dismiss button (Android 14 and later).
-        override fun onStop() = dismiss()
+        // Also the media player's Dismiss button (Android 14 and later). Not
+        // before the service is in the foreground: stopping it earlier would
+        // crash the app.
+        override fun onStop() {
+            if (inForeground) dismiss()
+        }
         override fun onSeekTo(pos: Long) = send("seek", pos)
         override fun onFastForward() = send("forward")
         override fun onRewind() = send("rewind")

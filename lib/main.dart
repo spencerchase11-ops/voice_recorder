@@ -36,13 +36,17 @@ Future<void> main() async {
     native: native,
     workDir: getApplicationSupportDirectory,
     isAndroid: Platform.isAndroid,
-    // Out of backups: on Android through backup_rules.xml, on iOS by living
-    // in Caches (which iOS may empty; the files are then read again).
+    // Out of backups: on Android through backup_rules.xml, on iOS by its
+    // folder being excluded. (Not in Caches, which iOS may empty: for a
+    // renamed AAC or FLAC recording it is the only place its date is kept.)
     info: RecordingInfoCache(
       file: () async {
-        final dir = Platform.isIOS
-            ? await getApplicationCacheDirectory()
-            : await getApplicationSupportDirectory();
+        final support = await getApplicationSupportDirectory();
+        if (!Platform.isIOS) return File('${support.path}/recording_info.json');
+        final dir = await Directory('${support.path}/Info').create();
+        try {
+          await native.excludeFromBackup(dir.path);
+        } catch (_) {}
         return File('${dir.path}/recording_info.json');
       },
     ),

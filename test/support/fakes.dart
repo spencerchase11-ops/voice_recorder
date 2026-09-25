@@ -47,6 +47,13 @@ class FakeStore extends RecordingStore {
   /// Makes [renameTo] (rename, trash, restore) fail.
   bool failRenames = false;
 
+  /// Makes [list] fail, like a folder that can't be read for a moment.
+  bool failLists = false;
+
+  /// How many bytes a file opened for writing may still grow by, by id (a
+  /// nearly full storage).
+  final roomFor = <String, int>{};
+
   /// What the folder makes of a name it is given (some providers change
   /// names, e.g. drop a leading dot).
   String Function(String name)? alterName;
@@ -57,6 +64,12 @@ class FakeStore extends RecordingStore {
 
   @override
   bool get isReady => ready;
+
+  /// False like on iPhone, where a file's time is when it was copied there.
+  bool timesAreDates = true;
+
+  @override
+  bool get fileTimesAreDates => timesAreDates;
 
   @override
   Future<void> init() async {}
@@ -71,11 +84,14 @@ class FakeStore extends RecordingStore {
 
   /// Like the Android store: nothing to list without the folder.
   @override
-  Future<List<RecordingFile>> list() async => [
-    if (ready)
-      for (final f in files)
-        if (isAudioFileName(f.name)) f,
-  ];
+  Future<List<RecordingFile>> list() async {
+    if (failLists) throw const FileSystemException('busy');
+    return [
+      if (ready)
+        for (final f in files)
+          if (isAudioFileName(f.name)) f,
+    ];
+  }
 
   @override
   Future<List<TrashedRecording>> listTrash() async => [
@@ -124,7 +140,10 @@ class FakeStore extends RecordingStore {
         (write && !files.any((f) => f.id == file.id))) {
       throw const FileSystemException('gone');
     }
-    return MemoryBytes(contents.putIfAbsent(file.id, () => <int>[]));
+    return MemoryBytes(
+      contents.putIfAbsent(file.id, () => <int>[]),
+      room: write ? roomFor[file.id] : null,
+    );
   }
 
   @override
@@ -319,8 +338,13 @@ class FakePlayback extends Playback {
     notifyListeners();
   }
 
+  /// Holds [pause] until completed: like just_audio, the player says it
+  /// has paused only a moment later.
+  Completer<void>? pauseGate;
+
   @override
   Future<void> pause() async {
+    await pauseGate?.future;
     _playing = false;
     notifyListeners();
   }

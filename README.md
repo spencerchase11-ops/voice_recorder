@@ -16,9 +16,9 @@ tests render every screen within a few pixels of the original. See
 | Screen | What it does |
 | --- | --- |
 | **Recorder** | Record and stop. While recording, the play button's place holds pause/resume; a paused recording's timer blinks. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. Before the first recording, the header shows "Voice Recorder" without those buttons, the timer reads 00:00 and the play button is grey, like the original. |
-| **Recording list** | All recordings with date, length and size, newest first or in another order (the sort button). The search button finds recordings by name or date ("2026-09"). Tap a row to open it: it turns orange and shows a seek bar, back/forward 10 seconds and the playback speed (1x, 1.25x, 1.5x, 2x). The row's play button plays or pauses it. The bottom bar deletes, renames or shares the open row. A long press starts selecting several rows, to delete or share them together. |
-| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). Noise reduction. The recordings folder. Recently deleted. Lock screen controls and the playback speed. On iPhone, an import of recordings from the Files app. "Rate 5 stars" and About, which has the licenses. |
-| **Recently deleted** | Deleted recordings stay here for 30 days. Restore one, delete one for good, or empty it. Right after a delete, a toast also offers Undo. |
+| **Recording list** | All recordings with date, length and size, newest first or in another order (the sort button). The search button finds recordings by name or date ("2026-09"). Tap a row to open it: it turns orange and shows a seek bar, back/forward 10 seconds and the playback speed (1x, 1.25x, 1.5x, 2x). The row's play button plays or pauses it. The bottom bar deletes, renames or shares the open row. A long press starts selecting several rows, to delete or share them together. Deleting or restoring many at once shows how far it has got, and can be cancelled. A scrollbar thumb can be dragged to move through thousands of recordings quickly. |
+| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). Noise reduction. The recordings folder. On Android, storing the dates of renamed recordings inside them (before moving them to another phone). Recently deleted. Lock screen controls and the playback speed. On iPhone, an import of recordings from the Files app. "Rate 5 stars" and About, which has the licenses. |
+| **Recently deleted** | Deleted recordings stay here for 30 days. With one selected, restore it or delete it for good; with none selected, the same buttons restore all or delete all. Right after a delete, a toast also offers Undo. |
 
 Recording formats (all mono):
 
@@ -47,20 +47,23 @@ with [LAME](https://lame.sourceforge.io), which lives in the local plugin
   under *On My iPhone → Voice Recorder → Recorders*, and in Finder when the
   phone is connected. **Settings → Folder** opens it in Files, and
   **Settings → Import recordings** copies MP3, WAV, M4A, AAC and FLAC files
-  (or whole folders of them, subfolders included) from Files, iCloud Drive or
-  a USB drive into it.
+  from Files, iCloud Drive or a USB drive into it: all of those in a folder
+  (subfolders included), or single recordings.
 
   Importing a whole library (say 2,500 recordings moved over from an Android
-  phone): pick the folder that holds them. Settings shows how far it has got
-  and keeps the screen on; at the end it says how many were imported, how
-  many were already there and how many couldn't be copied. From *On My
-  iPhone* the copies are clones: instant, and they take no extra space. From
-  iCloud Drive each recording is downloaded first. If the import is
-  interrupted (the app closed, the phone out of space), run it again: what is
-  already there is skipped. The originals stay where they were; delete them
-  in Files once you're happy with the import. Renamed recordings keep their
-  date only if it was stored in them (see below) or their file date survived
-  the move.
+  phone): choose *A folder*, open the folder that holds them and tap *Open*.
+  A dialog shows how far it has got (with Cancel), and the screen stays on;
+  at the end it says how many were imported, how many were already in the
+  app, how many couldn't be copied and why, and how many sound files in
+  formats the app doesn't take (like AMR or OGG) were left out. From *On My
+  iPhone* the copies are usually clones: instant, and they take no extra
+  space. From iCloud Drive each recording is downloaded first, a few ahead
+  of the one being copied. If the import is interrupted (cancelled, the app
+  closed, the phone out of space), import the same folder again: what is
+  already in the app is skipped before anything is downloaded. The originals
+  stay where they were; delete them in Files once you're happy with the
+  import. Renamed recordings keep their date only if it is stored in them
+  (see *Moving to a new phone* below) or their file date survived the move.
 
 A recording is written to the app's private storage while it runs. It is
 moved into the folder when you stop. If the app is killed while recording,
@@ -74,7 +77,9 @@ again.
 A deleted recording gets a hidden name in the same folder
 (`.vr-deleted-<time>-<name>`), so it is out of the list, file managers and music
 apps, and it can come back. After 30 days the app deletes it for good (it
-checks when it starts and every few hours while it runs). Recently deleted
+checks when it starts, when you come back to it after a few hours, and when
+Settings or Recently deleted opens). A recording deleted while the phone's
+clock was wrong gets its 30 days from when the app next sees it. Recently deleted
 belongs to the folder: after switching to another folder, what was deleted in
 the old one stays there, hidden, and comes back into Recently deleted when you
 switch back. The app can't clean up when it is uninstalled, so empty Recently
@@ -108,13 +113,38 @@ hold a date (AAC, AMR, OGG, Opus, FLAC, or a damaged file) keep it in the
 app's memory of dates and lengths only.
 
 The list takes each recording's date from, in this order: the date stored in
-the file, the time in its name, its modification time. One exception: the
+the file, the time in its name, its modification time (on Android; on
+iPhone a file's modification time is usually when it was copied there, so
+the app never writes that into a file). One exception: the
 original app's M4A files store the time a recording *ended*, so when a
 timestamp name is up to the recording's length earlier, the name wins. Dates
-and lengths are read from the files when they are first shown, and
+and lengths are read from the files when they are first shown (the dates of
+renamed recordings in the background, so the whole list is in order), and
 remembered between launches (`recording_info.json` in the app's private
 storage, left out of backups), so a folder of thousands of recordings opens
 quickly.
+
+### Moving to a new phone
+
+A recording's date travels with it when it is stored inside the file or in
+its name. Renamed recordings made by the original app have neither: their
+only date is the file's modification time, which most ways of copying files
+to another phone replace with the day of the copy. So, on the old Android
+phone, before copying:
+
+1. Open **Settings → Store dates in recordings**. Its summary says how many
+   renamed recordings need it (it reads them all first, which takes a moment
+   with thousands). Tap it and confirm. For each of them, the date the list
+   shows is stored inside the file (see above; the sound isn't touched). A
+   dialog shows the progress and can cancel it; running it again carries on
+   with the rest. Other apps will show these files as modified that day.
+   Recordings that can't hold a date (AAC, FLAC, AMR, OGG, damaged files)
+   are listed at the end; putting the date at the start of their names
+   (`2016_05_23_18_14_00 lunch.mp3`) keeps it.
+2. Copy the folder to the new phone, any way you like.
+3. On an iPhone, import it (see above). If you copied the recordings to the
+   iPhone before step 1, copy them again (replacing the old copies in Files)
+   before importing, so the imported ones carry their dates.
 
 "Remaining time" is how long you can record and still save the file. On
 Android a recording is copied into the folder when it stops, so on internal
@@ -165,9 +195,10 @@ playing when you leave the app or lock the phone:
   seek bar) and the same controls on the lock screen and, from Android 13, in
   the media player in Quick Settings. Headset and Bluetooth buttons work
   (next/previous skip 10 seconds). After 10 minutes paused (sleep time
-  counts), or when you dismiss the player (Android 14 and later), the
-  controls go away; the recording stays paused where it was in the app, and
-  playing it again brings them back.
+  counts), or when you dismiss the player (Android 14 and later) or swipe the
+  paused notification away (Android 13 and earlier), the controls go away;
+  the recording stays paused where it was in the app, and playing it again
+  brings them back.
 - **iOS:** the lock screen and Control Center show the recording ("Now
   Playing") with the same controls.
 
@@ -184,9 +215,10 @@ decided:
 - The original's "no ads" badge on the Recorder screen and its **Remove ads**
   setting sold an ad-free premium version. This version is free and has no
   ads, so both are left out.
-- **Rate 5 stars** opens the Play Store listing on Android. On iOS it opens
-  the App Store review page once `AppConfig.appStoreId` is set; until then it
-  shows a toast.
+- **Rate 5 stars** opens the Play Store listing on Android (until the app is
+  published there, the Play Store says the item isn't found). On iOS the row
+  appears once `AppConfig.appStoreId` is set, and opens the App Store review
+  page.
 - Recordings always use the phone's own microphone, also with Bluetooth
   headphones connected; the headphones keep full quality for playback.
 - On iOS the app is iPhone-only, like the original phone app. iPads run it in
@@ -233,7 +265,7 @@ flutter build ipa                # iOS archive for App Store Connect (needs sign
 3. **iOS signing.** Open `ios/Runner.xcworkspace` in Xcode and choose your team
    under *Signing & Capabilities*.
 4. **App Store id.** Set `AppConfig.appStoreId` in `lib/src/config.dart` once
-   the app exists in App Store Connect. This makes "Rate 5 stars" work on iOS.
+   the app exists in App Store Connect. This shows "Rate 5 stars" on iOS.
 5. **Store forms.**
    - *Google Play:* the app uses two foreground services, so declare both under
      *App content → Foreground service permissions*: `microphone`, "records
@@ -246,8 +278,8 @@ flutter build ipa                # iOS archive for App Store Connect (needs sign
      host it somewhere public.
    - *App Store:* the privacy "nutrition label" is "Data Not Collected".
      `ios/Runner/PrivacyInfo.xcprivacy` already declares the free-disk-space
-     reads (for "Remaining time"), file-date reads (for the list) and the
-     settings storage (UserDefaults). `Info.plist` says the app uses no
+     reads (for "Remaining time"), file-date reads (for the list, and for
+     files picked for an import) and the settings storage (UserDefaults). `Info.plist` says the app uses no
      encryption beyond the system's, so uploads skip that question.
 6. **LGPL.** LAME is LGPL-licensed. The app shows its license under
    *Settings → About → Licenses* and says where its source is. See

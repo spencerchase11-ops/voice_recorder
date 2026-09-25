@@ -5,12 +5,12 @@ import 'package:flutter/widgets.dart';
 
 import '../../core/format.dart';
 import '../app_scope.dart';
+import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
 import '../widgets/recorder_widgets.dart';
 import '../widgets/red_bars.dart';
-import '../widgets/toast.dart';
 import 'common_actions.dart';
 import 'recording_list_screen.dart';
 import 'settings_screen.dart';
@@ -33,15 +33,36 @@ class _RecorderScreenState extends State<RecorderScreen> {
     // The Recorder is the root screen, so it is always there to show what
     // the app did on its own (e.g. a recording stopped because storage ran
     // out), whichever screen is on top.
-    _notices ??= app.notices.listen((message) {
-      if (mounted) showToast(context, message, long: true);
-    });
+    _notices ??= app.notices.listen(_showNotice);
     // The home-screen "Record" shortcut.
     _launches ??= app.launchActions.listen((action) {
       if (!mounted || action != 'record') return;
       Navigator.of(context).popUntil((route) => route.isFirst);
       if (!app.isRecording && !app.isBusy) toggleRecording(context);
     });
+  }
+
+  /// Notices waiting for the one on screen to be closed.
+  final _waiting = <String>[];
+  bool _showingNotice = false;
+
+  /// Shows what the app did on its own in a dialog (a toast could vanish
+  /// unseen), one after another.
+  Future<void> _showNotice(String message) async {
+    _waiting.add(message);
+    if (_showingNotice) return;
+    _showingNotice = true;
+    try {
+      while (_waiting.isNotEmpty && mounted) {
+        await showMessageDialog(
+          context,
+          title: 'Voice Recorder',
+          message: _waiting.removeAt(0),
+        );
+      }
+    } finally {
+      _showingNotice = false;
+    }
   }
 
   @override

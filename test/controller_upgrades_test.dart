@@ -228,7 +228,7 @@ void main() {
       await app.togglePlay(file);
       await settle();
       expect(lastUpdate(), {
-        'title': file.name,
+        'title': file.baseName,
         'durationMs': 180000,
         'positionMs': 0,
         'playing': true,

@@ -21,6 +21,15 @@ abstract class RecordingStore extends ChangeNotifier {
   /// Whether new recordings can be saved right now.
   bool get isReady;
 
+  /// Whether the user has chosen a folder (Android asks for one; when it
+  /// can't be reached any more, it is still chosen but not [isReady]).
+  bool get folderChosen => true;
+
+  /// Whether a file's time can stand for its recording date when nothing
+  /// else gives one. Not on iPhone: recordings from elsewhere arrive there
+  /// by copying, which dates them.
+  bool get fileTimesAreDates => true;
+
   Future<void> init();
 
   /// Lets the user pick the recordings folder. Returns false if cancelled.
@@ -62,6 +71,19 @@ abstract class RecordingStore extends ChangeNotifier {
   /// Puts a deleted recording back under its old name (a free variant of it
   /// if that name is taken meanwhile).
   Future<RecordingFile?> restore(TrashedRecording t);
+
+  /// Gives a recording in Recently deleted [now] as its deletion time (it
+  /// was deleted while the phone's clock was wrong). Null if the folder
+  /// refused.
+  Future<TrashedRecording?> retime(TrashedRecording t, DateTime now) async {
+    final hidden = TrashedRecording.hiddenName(t.originalName, now);
+    final moved = await renameTo(t.file, hidden);
+    if (moved == null) return null;
+    final back = TrashedRecording.parse(moved);
+    // The folder changed the name on the way: put the old one back.
+    if (back == null) await renameTo(moved, t.file.name);
+    return back;
+  }
 
   /// Gives [file] exactly the name [fileName] (extension included).
   @protected
@@ -120,6 +142,9 @@ class AndroidRecordingStore extends RecordingStore {
 
   @override
   bool get isReady => _ready;
+
+  @override
+  bool get folderChosen => _settings.folder != null;
 
   @override
   Future<void> init() async {
@@ -274,6 +299,9 @@ class IosRecordingStore extends RecordingStore {
   bool get isReady => true;
 
   @override
+  bool get fileTimesAreDates => false;
+
+  @override
   Future<void> init() async {
     final docs = await _documents();
     _dir = Directory('${docs.path}/Recorders');
@@ -333,8 +361,8 @@ class IosRecordingStore extends RecordingStore {
 
   /// Copies recordings picked in the Files app into the folder (null if the
   /// picker was cancelled).
-  Future<ImportResult?> importRecordings() =>
-      _native.importRecordings(_dir.path);
+  Future<ImportResult?> importRecordings({bool folder = true}) =>
+      _native.importRecordings(_dir.path, folder: folder);
 
   @override
   Future<RecordingFile?> find(String id) async {

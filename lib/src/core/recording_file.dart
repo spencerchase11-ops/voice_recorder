@@ -179,6 +179,12 @@ class TrashedRecording {
   }
 
   bool expired(DateTime now) => !deletedAt.add(trashRetention).isAfter(now);
+
+  /// Whether the deletion time can be right: not before this app existed,
+  /// nor in the future (the phone's clock was wrong when it was deleted).
+  bool plausible(DateTime now) =>
+      !deletedAt.isBefore(_earliest) &&
+      !deletedAt.isAfter(now.add(const Duration(days: 1)));
 }
 
 /// Extensions the recording list shows (files the original app could create

@@ -77,67 +77,119 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
     return null;
   }
 
+  /// [message], or, when the folder itself can't be reached, how to fix that.
+  String _problem(String message) => AppScope.read(context).store.isReady
+      ? message
+      : "The folder can't be reached. Choose it again in Settings > Folder.";
+
+  /// Restores the selected recording, or all of them when none is selected.
   Future<void> _restore() => _run(() async {
-    final t = _selectedItem;
-    if (t == null) {
-      showToast(context, 'Please select a file');
-      return;
-    }
-    final restored = await AppScope.read(context).restoreDeleted(t);
-    if (!mounted) return;
-    showToast(
-      context,
-      restored == null ? 'Restore failed' : 'Restored ${restored.name}',
-    );
-    await _load();
-  });
-
-  Future<void> _deleteForever() => _run(() async {
-    final t = _selectedItem;
-    if (t == null) {
-      showToast(context, 'Please select a file');
-      return;
-    }
-    final app = AppScope.read(context);
-    final ok = await showConfirmDialog(
-      context,
-      title: 'Delete forever',
-      message: '${t.originalName} will be deleted for good.',
-      ok: 'Delete',
-    );
-    if (!ok || !mounted) return;
-    final n = await app.deleteForever([t]);
-    if (!mounted) return;
-    if (n == 0) showToast(context, 'Delete failed');
-    await _load();
-  });
-
-  Future<void> _empty() => _run(() async {
     final items = _items ?? const <TrashedRecording>[];
     if (items.isEmpty) return;
     final app = AppScope.read(context);
+    final t = _selectedItem;
+    if (t != null) {
+      final restored = await app.restoreDeleted(t);
+      if (!mounted) return;
+      showToast(
+        context,
+        restored == null
+            ? _problem("Couldn't restore the recording")
+            : 'Restored ${restored.name}',
+      );
+      return;
+    }
     final ok = await showConfirmDialog(
       context,
-      title: 'Delete forever',
+      title: 'Restore all',
       message: items.length == 1
-          ? 'The recording in Recently deleted will be deleted for good.'
-          : 'All ${formatCount(items.length)} recordings in Recently deleted will be '
-                'deleted for good.',
-      ok: 'Delete',
+          ? 'The recording in Recently deleted will go back to the list.'
+          : 'All ${formatCount(items.length)} recordings in Recently deleted '
+                'will go back to the list.',
+      ok: 'Restore all',
     );
     if (!ok || !mounted) return;
-    final n = await app.deleteForever(items);
+    final n = await runWithProgress(
+      context,
+      title: 'Restoring',
+      total: items.length,
+      label: (s) =>
+          'Restoring ${formatCount(s.done)} of ${formatCount(s.total)} '
+          'recordings…',
+      job: (onProgress, cancelled) =>
+          app.restoreAll(items, onProgress: onProgress, cancelled: cancelled),
+    );
     if (!mounted) return;
-    if (n < items.length) {
-      showToast(context, "${items.length - n} couldn't be deleted");
+    showToast(
+      context,
+      n == 0
+          ? _problem("Couldn't restore the recordings")
+          : n == 1
+          ? 'Restored 1 recording'
+          : 'Restored ${formatCount(n)} recordings',
+    );
+  });
+
+  /// Deletes the selected recording for good, or all of them when none is
+  /// selected.
+  Future<void> _deleteForever() => _run(() async {
+    final items = _items ?? const <TrashedRecording>[];
+    if (items.isEmpty) return;
+    final app = AppScope.read(context);
+    final t = _selectedItem;
+    final targets = t == null ? items : [t];
+    final ok = await showConfirmDialog(
+      context,
+      title: t == null ? 'Empty Recently deleted' : 'Delete forever',
+      message: t != null
+          ? '"${t.originalName}" will be deleted forever. This can\'t be '
+                'undone.'
+          : items.length == 1
+          ? 'The recording in Recently deleted will be deleted forever. This '
+                'can\'t be undone.'
+          : 'All ${formatCount(items.length)} recordings in Recently deleted '
+                'will be deleted forever. This can\'t be undone.',
+      ok: t == null ? 'Delete all' : 'Delete',
+    );
+    if (!ok || !mounted) return;
+    final n = await runWithProgress(
+      context,
+      title: 'Deleting',
+      total: targets.length,
+      label: (s) =>
+          'Deleting ${formatCount(s.done)} of ${formatCount(s.total)} '
+          'recordings…',
+      job: (onProgress, cancelled) => app.deleteForever(
+        targets,
+        onProgress: onProgress,
+        cancelled: cancelled,
+      ),
+    );
+    if (!mounted) return;
+    if (n == 0) {
+      showToast(
+        context,
+        _problem(
+          targets.length == 1
+              ? "Couldn't delete the recording"
+              : "Couldn't delete the recordings",
+        ),
+      );
+    } else if (n < targets.length) {
+      final left = targets.length - n;
+      showToast(
+        context,
+        left == 1
+            ? "1 recording couldn't be deleted"
+            : "${formatCount(left)} recordings couldn't be deleted",
+      );
     }
-    await _load();
   });
 
   @override
   Widget build(BuildContext context) {
     final items = _items;
-    final width = MediaQuery.sizeOf(context).width;
+    final hasItems = items != null && items.isNotEmpty;
     final now = DateTime.now();
 
     return ScreenFrame(
@@ -156,17 +208,6 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
                   color: _white,
                 ),
               ),
-              if (items != null && items.isNotEmpty)
-                BarButton(
-                  center: Offset(width - 26.0, 24.0),
-                  semanticLabel: 'Delete all forever',
-                  onTap: _empty,
-                  child: const InkIcon(
-                    AppIcons.emptyTrash,
-                    size: Size(26.0, 20.9),
-                    color: _white,
-                  ),
-                ),
             ],
           ),
           Expanded(
@@ -175,15 +216,14 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
                   ? const SizedBox.expand()
                   : _failed
                   ? const _Message(
-                      "Recently deleted can't be read right now. Check that "
-                      'the recordings folder is still there (Settings > '
-                      'Folder).',
+                      "Can't open the recordings folder. Check it in "
+                      'Settings > Folder.',
                     )
                   : items.isEmpty
                   ? const _Message(
                       'No recently deleted recordings.\n\n'
                       'Deleted recordings stay here for 30 days, so you can '
-                      'put them back.',
+                      'restore them.',
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.only(top: Spec.listTopGap),
@@ -195,7 +235,13 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
                           item: t,
                           now: now,
                           selected: t.file.id == _selected,
-                          onTap: () => setState(() => _selected = t.file.id),
+                          // Tapping the selected one again selects none
+                          // (the buttons then act on all).
+                          onTap: () => setState(
+                            () => _selected = _selected == t.file.id
+                                ? null
+                                : t.file.id,
+                          ),
                         );
                       },
                     ),
@@ -207,14 +253,18 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
               _FooterButton(
                 icon: AppIcons.restore,
                 size: const Size(23.3, 30.0),
-                label: 'Restore',
-                onTap: _restore,
+                label: _selected == null ? 'Restore all' : 'Restore',
+                onTap: hasItems ? _restore : null,
               ),
               _FooterButton(
-                icon: AppIcons.deleteForever,
-                size: const Size(23.3, 30.0),
-                label: 'Delete forever',
-                onTap: _deleteForever,
+                icon: _selected == null
+                    ? AppIcons.emptyTrash
+                    : AppIcons.deleteForever,
+                size: _selected == null
+                    ? const Size(28.0, 22.5)
+                    : const Size(23.3, 30.0),
+                label: _selected == null ? 'Delete all' : 'Delete forever',
+                onTap: hasItems ? _deleteForever : null,
               ),
             ],
           ),
@@ -317,6 +367,8 @@ class _DeletedRow extends StatelessWidget {
   }
 }
 
+/// An icon with its label under it (these actions have no icon everyone
+/// knows).
 class _FooterButton extends StatelessWidget {
   const _FooterButton({
     required this.icon,
@@ -328,7 +380,9 @@ class _FooterButton extends StatelessWidget {
   final IconShape icon;
   final Size size;
   final String label;
-  final VoidCallback onTap;
+
+  /// Null greys the button out (nothing to act on).
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -336,15 +390,34 @@ class _FooterButton extends StatelessWidget {
       onTap: onTap,
       semanticLabel: label,
       highlight: const Color(0x26FFFFFF),
-      child: LayoutBuilder(
-        builder: (context, c) => Stack(
-          children: [
-            Positioned(
-              left: (c.maxWidth - size.width) / 2,
-              top: Spec.actionIconCenterY - size.height / 2,
-              child: InkIcon(icon, size: size, color: _white),
-            ),
-          ],
+      child: Opacity(
+        opacity: onTap == null ? 0.4 : 1,
+        child: LayoutBuilder(
+          builder: (context, c) => Stack(
+            children: [
+              Positioned(
+                left: (c.maxWidth - size.width) / 2,
+                top: Spec.actionIconCenterY - 4 - size.height / 2,
+                child: InkIcon(icon, size: size, color: _white),
+              ),
+              Positioned(
+                left: 4,
+                right: 4,
+                top: Spec.actionIconCenterY + 17,
+                child: AText(
+                  label,
+                  style: const TextStyle(
+                    fontFamily: Spec.font,
+                    fontSize: 12,
+                    color: _white,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

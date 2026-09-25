@@ -77,10 +77,6 @@ String timestampName(DateTime t) =>
   return (fileName.substring(0, dot), fileName.substring(dot + 1));
 }
 
-/// Makes a user-typed name safe for every file system we write to.
-///
-/// Mirrors the characters Android's external storage provider rejects on FAT
-/// volumes, and trims whitespace and leading/trailing dots.
 /// Most characters a typed name may have (file systems allow 255 bytes).
 const maxNameLength = 120;
 
@@ -95,6 +91,10 @@ String fitFileName(String base, String ext) {
   return b;
 }
 
+/// Makes a user-typed name safe for every file system we write to.
+///
+/// Mirrors the characters Android's external storage provider rejects on FAT
+/// volumes, and trims whitespace and leading/trailing dots.
 String sanitizeFileName(String input) {
   var s = input.replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F\x7F]'), '_').trim();
   // A leading dot would hide the file (in the list and in file managers).

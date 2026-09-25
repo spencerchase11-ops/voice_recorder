@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
@@ -28,13 +29,28 @@ void _announce(BuildContext context, String message) {
   );
 }
 
+/// The app's top overlay, also from the root navigator's own context (a
+/// toast after the screen that asked for it has closed).
+OverlayState? _overlay(BuildContext context) =>
+    Overlay.maybeOf(context, rootOverlay: true) ??
+    Navigator.maybeOf(context, rootNavigator: true)?.overlay;
+
 OverlayEntry? _toast;
 Timer? _toastTimer;
+
+/// How long a toast stays: Android's short or long toast, and longer for a
+/// long message (time to read it).
+Duration toastDuration(String message, {bool long = false}) {
+  final reading = 1000 + 50 * message.length;
+  return Duration(
+    milliseconds: math.max(long ? 3500 : 2000, math.min(reading, 7000)),
+  );
+}
 
 /// An Android-style toast; [long] keeps it up longer, for longer messages.
 /// A newer one replaces it.
 void showToast(BuildContext context, String message, {bool long = false}) {
-  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  final overlay = _overlay(context);
   if (overlay == null) return;
   _removeToast();
   final entry = OverlayEntry(
@@ -75,7 +91,7 @@ void showToast(BuildContext context, String message, {bool long = false}) {
   );
   overlay.insert(entry);
   _toast = entry;
-  _toastTimer = Timer(Duration(milliseconds: long ? 3500 : 2000), _removeToast);
+  _toastTimer = Timer(toastDuration(message, long: long), _removeToast);
   _announce(context, message);
 }
 
@@ -101,7 +117,7 @@ void showActionToast(
   required VoidCallback onAction,
   Duration duration = const Duration(seconds: 6),
 }) {
-  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  final overlay = _overlay(context);
   if (overlay == null) return;
   hideActionToast();
   late OverlayEntry entry;
@@ -143,12 +159,15 @@ void showActionToast(
                 Flexible(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Text(
-                      message,
-                      style: const TextStyle(
-                        fontFamily: Spec.font,
-                        fontSize: 14,
-                        color: Color(0xFFFFFFFF),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        message,
+                        style: const TextStyle(
+                          fontFamily: Spec.font,
+                          fontSize: 14,
+                          color: Color(0xFFFFFFFF),
+                        ),
                       ),
                     ),
                   ),
