@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lame_mp3/src/native_library.dart';
 import 'package:record/record.dart';
+import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/recorder_engine.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
 
@@ -15,6 +16,9 @@ class _FakeRecordPlatform extends RecordPlatform {
   final _states = StreamController<RecordState>.broadcast();
   StreamController<Uint8List>? bytes;
   void Function(RecordConfig)? onConfig;
+  RecordConfig? config;
+  var pauses = 0;
+  var resumes = 0;
 
   void emit(RecordState s) => _states.add(s);
 
@@ -31,6 +35,7 @@ class _FakeRecordPlatform extends RecordPlatform {
     String recorderId,
     RecordConfig config,
   ) async {
+    this.config = config;
     bytes = StreamController<Uint8List>.broadcast();
     return bytes!.stream;
   }
@@ -42,9 +47,17 @@ class _FakeRecordPlatform extends RecordPlatform {
   }
 
   @override
-  Future<void> pause(String recorderId) async {}
+  Future<void> pause(String recorderId) async {
+    pauses++;
+    emit(RecordState.pause);
+  }
+
   @override
-  Future<void> resume(String recorderId) async {}
+  Future<void> resume(String recorderId) async {
+    resumes++;
+    emit(RecordState.record);
+  }
+
   @override
   Future<bool> isRecording(String recorderId) async => true;
   @override
@@ -171,5 +184,71 @@ void main() {
     await engine.stop();
     expect(await File(path).length(), 44 + 8820);
     expect(ends, isEmpty);
+  });
+
+  test('a paused recording writes nothing until resumed', () async {
+    final interruptions = <bool>[];
+    engine.interrupted.listen(interruptions.add);
+    final path = '${dir.path}/p.wav';
+    await engine.start(wavBest, path);
+    await feed(_tone(4410), 2);
+    await engine.pause();
+    await feed(_tone(4410), 3); // arrives anyway: dropped
+    await engine.resume();
+    await feed(_tone(4410), 2);
+    await engine.stop();
+    expect(await File(path).length(), 44 + 4 * 8820);
+    // The user's pause is not an interruption.
+    expect(interruptions, isNot(contains(true)));
+    expect((platform.pauses, platform.resumes), (1, 1));
+  });
+
+  test(
+    'iOS: a paused recording stays paused when the system resumes it',
+    () async {
+      engine = RecordPluginEngine(isAndroid: false);
+      final path = '${dir.path}/i.wav';
+      await engine.start(wavBest, path);
+      await feed(_tone(4410));
+      await engine.pause();
+      // A call ends: iOS resumes the capture by itself.
+      platform.emit(RecordState.record);
+      await Future<void>.delayed(Duration.zero);
+      expect(platform.pauses, 2); // paused again
+      await feed(_tone(4410), 2); // in between: dropped
+      await engine.stop();
+      expect(await File(path).length(), 44 + 8820);
+    },
+  );
+
+  test('noise reduction reaches the platform', () async {
+    await engine.start(wavBest, '${dir.path}/n.wav', noiseReduction: true);
+    expect(platform.config!.noiseSuppress, isTrue); // Android
+    expect(platform.config!.echoCancel, isFalse);
+    await engine.stop();
+
+    engine = RecordPluginEngine(isAndroid: false);
+    await engine.start(wavBest, '${dir.path}/n2.wav', noiseReduction: true);
+    expect(platform.config!.echoCancel, isTrue); // iOS voice processing
+    expect(platform.config!.autoGain, isFalse);
+    await engine.stop();
+
+    await engine.start(wavBest, '${dir.path}/n3.wav');
+    expect(platform.config!.echoCancel, isFalse);
+    expect(platform.config!.noiseSuppress, isFalse);
+    await engine.stop();
+  });
+
+  test('the recording date is stored in the file', () async {
+    final recorded = DateTime(2026, 9, 25, 3, 30);
+    final path = '${dir.path}/d.wav';
+    await engine.start(wavBest, path, recorded: recorded);
+    await feed(_tone(4410), 10);
+    await engine.stop();
+    final a = await FileByteAccess.open(File(path));
+    final info = await readAudioInfo(a, path);
+    await a.close();
+    expect(info.recorded, recorded);
+    expect(info.duration, const Duration(seconds: 1));
   });
 }

@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lame_mp3/src/native_library.dart';
+import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/mp3_writer.dart';
 
 void main() {
@@ -49,5 +50,30 @@ void main() {
     expect((out[2] >> 2) & 3, 0);
     // ~2 s at 160 kbps = ~40 kB (plus encoder delay/padding)
     expect(out.length, inInclusiveRange(40000, 42500));
+  }, skip: skip);
+
+  test('starts with the recording date, and still plays for 1 s', () async {
+    final dir = await Directory.systemTemp.createTemp('mp3_test');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/dated.mp3';
+    final recorded = DateTime(2026, 9, 25, 3, 30, 5);
+    final w = await Mp3Writer.open(
+      path,
+      sampleRate: 44100,
+      bitRateKbps: 160,
+      recorded: recorded,
+    );
+    await w.add(Uint8List(88200)); // 1 s of silence
+    await w.close();
+
+    final out = await File(path).readAsBytes();
+    expect(out.length, w.bytesWritten);
+    expect(String.fromCharCodes(out.sublist(0, 3)), 'ID3');
+    final a = await FileByteAccess.open(File(path));
+    final info = await readAudioInfo(a, path);
+    await a.close();
+    expect(info.recorded, recorded);
+    // LAME adds its encoder delay and padding.
+    expect(info.duration!.inMilliseconds, inInclusiveRange(1000, 1100));
   }, skip: skip);
 }

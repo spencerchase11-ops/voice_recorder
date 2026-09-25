@@ -47,15 +47,28 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PAUSE -> NativePlugin.emit("recordingAction", mapOf("action" to "pause"))
-            ACTION_RESUME -> NativePlugin.emit("recordingAction", mapOf("action" to "resume"))
-            ACTION_STOP -> NativePlugin.emit("recordingAction", mapOf("action" to "stop"))
+            ACTION_PAUSE, ACTION_RESUME, ACTION_STOP -> {
+                val action = when (intent.action) {
+                    ACTION_PAUSE -> "pause"
+                    ACTION_RESUME -> "resume"
+                    else -> "stop"
+                }
+                NativePlugin.emit("recordingAction", mapOf("action" to action))
+                // A button of a notification left over from an earlier run.
+                if (!inForeground) stopSelf()
+            }
             else -> {
                 text = intent?.getStringExtra(EXTRA_TEXT) ?: getString(R.string.recording)
                 title = intent?.getStringExtra(EXTRA_TITLE) ?: getString(R.string.app_name)
                 paused = false
                 startedAt = System.currentTimeMillis()
                 if (!goForeground()) return START_NOT_STICKY
+                if (stopRequested) {
+                    // The recording ended before the service was up.
+                    stopRequested = false
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 holdWakeLock()
                 requestAudioFocus()
             }
@@ -238,7 +251,15 @@ class RecordingService : Service() {
 
         private var instance: RecordingService? = null
 
+        /**
+         * A stop that came before the service reached the foreground. Android
+         * crashes an app whose service started with startForegroundService()
+         * is stopped before calling startForeground(), so it waits for that.
+         */
+        private var stopRequested = false
+
         fun start(context: Context, title: String, text: String) {
+            stopRequested = false
             val intent = Intent(context, RecordingService::class.java)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_TEXT, text)
@@ -255,7 +276,13 @@ class RecordingService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, RecordingService::class.java))
+            val running = instance
+            if (running != null && running.inForeground) {
+                context.stopService(Intent(context, RecordingService::class.java))
+            } else {
+                // Not up yet: it stops itself once it is (see onStartCommand).
+                stopRequested = true
+            }
         }
     }
 }

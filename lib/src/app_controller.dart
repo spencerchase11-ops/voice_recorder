@@ -215,7 +215,7 @@ class AppController extends ChangeNotifier {
   bool get isRecording => _recording;
 
   /// The user paused the recording.
-  bool get isPaused => _paused;
+  bool get isPaused => _recording && _paused;
 
   /// The system paused the recording (iOS: a call or Siri).
   bool get isInterrupted => _interrupted;
@@ -701,14 +701,16 @@ class AppController extends ChangeNotifier {
     _pausing = true;
     notifyListeners();
     try {
-      if (_paused) {
+      final resume = _paused;
+      if (resume) {
         await engine.resume();
-        _paused = false;
       } else {
         await engine.pause();
-        _paused = true;
-        _level = 0;
       }
+      // Stopped meanwhile (the stop button, or it stopped on its own).
+      if (!_recording) return false;
+      _paused = !resume;
+      if (_paused) _level = 0;
       _updateStopwatch();
       if (isAndroid) unawaited(_safe(_showRecordingState));
       return true;

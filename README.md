@@ -15,9 +15,10 @@ tests render every screen within a few pixels of the original. See
 
 | Screen | What it does |
 | --- | --- |
-| **Recorder** | Record and stop. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. Before the first recording, the header shows "Voice Recorder" without those buttons, the timer reads 00:00 and the play button is grey, like the original. |
-| **Recording list** | All recordings, newest first, with date and size. Tap a row to select it: it turns orange and shows a seek bar. The row's play button plays or pauses it. The bottom bar deletes, renames or shares the selected file. |
-| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). The recordings folder. "Rate 5 stars" and About, which has the licenses. |
+| **Recorder** | Record and stop. While recording, the play button's place holds pause/resume; a paused recording's timer blinks. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. Before the first recording, the header shows "Voice Recorder" without those buttons, the timer reads 00:00 and the play button is grey, like the original. |
+| **Recording list** | All recordings with date, length and size, newest first or in another order (the sort button). The search button finds recordings by name or date ("2026-09"). Tap a row to open it: it turns orange and shows a seek bar, back/forward 10 seconds and the playback speed (1x, 1.25x, 1.5x, 2x). The row's play button plays or pauses it. The bottom bar deletes, renames or shares the open row. A long press starts selecting several rows, to delete or share them together. |
+| **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). Noise reduction. The recordings folder. Recently deleted. Lock screen controls and the playback speed. On iPhone, an import of recordings from the Files app. "Rate 5 stars" and About, which has the licenses. |
+| **Recently deleted** | Deleted recordings stay here for 30 days. Restore one, delete one for good, or empty it. Right after a delete, a toast also offers Undo. |
 
 Recording formats (all mono):
 
@@ -55,9 +56,34 @@ file. If the folder can't be written to when you stop (for example, Android
 lost access to it), the recording is kept and the app asks for the folder
 again.
 
-The list shows recordings newest first. For names like
-`2026_09_16_16_37_26.mp3` the date comes from the name, so the order stays
-right even if copying the files to a new phone reset their dates.
+A deleted recording gets a hidden name in the same folder
+(`.trashed-<time>-<name>`), so it is out of the list, file managers and music
+apps, and it can come back. After 30 days the app deletes it for good.
+
+### Recording dates
+
+New recordings are named after the time they started
+(`2026_09_16_16_37_26.mp3`), and that time is also stored inside the file:
+
+| Format | Where the date is stored |
+| --- | --- |
+| MP3 | an ID3v2.4 tag at the start of the file, frame `TDRC` (recording time) |
+| WAV | a `LIST`/`INFO` chunk after the audio, field `ICRD` (creation date) |
+| M4A | the movie header's creation time (`moov`/`mvhd`) |
+
+So a recording keeps its place in the list whatever it is renamed to, and
+other apps (music players, file managers, computers) can show the date too.
+When a recording without a stored date is renamed (for example one made by
+the original app), the app adds it first: from the name if it is a timestamp,
+else from the file's modification time. MP3 files get a small ID3v2.4 tag at
+the end (before an ID3v1 tag, if there is one), WAV files a `LIST` chunk, and
+M4A files have their creation time set; the audio itself isn't touched.
+
+The list takes each recording's date from, in this order: the date stored in
+the file, the time in its name, its modification time. Dates and lengths are
+read from the files when they are first shown, and remembered between
+launches (`recording_info.json` in the app's private storage), so a folder of
+thousands of recordings opens quickly.
 
 "Remaining time" is how long you can record and still save the file. On
 Android a recording is copied into the folder when it stops, so on internal
@@ -83,6 +109,34 @@ are left, a recording stops and is saved, and a new one won't start.
   That happens after a system error, when audio stops arriving for 5 seconds,
   when the storage can't be written any more, or when a WAV recording reaches
   the format's limit of about 13 hours.
+- **Pause.** A paused recording stays one file; nothing is recorded until it
+  is resumed. On iPhone, a recording you paused stays paused after a call.
+  On Android, the recording notification has Pause/Resume and Stop buttons.
+- **Other apps' audio.** Music from other apps pauses while you record and
+  continues afterwards (Android asks for exclusive audio focus for the
+  length of the recording; iOS does this by itself).
+- **Noise reduction** (Settings) uses the system's noise suppressor on
+  Android and voice processing on iPhone. It applies to MP3 and WAV
+  recordings.
+- **Shortcut.** Long-press the app icon and choose Record (Android) or
+  Record (iPhone quick action) to open the app and start recording.
+
+### Playback in the background
+
+With **Settings → Lock screen controls** on (the default), a recording keeps
+playing when you leave the app or lock the phone:
+
+- **Android:** a foreground service of type `mediaPlayback` with a media
+  session shows a notification (back 10 s, play/pause, forward 10 s and a
+  seek bar) and the same controls on the lock screen and, from Android 13, in
+  the media player in Quick Settings. Headset and Bluetooth buttons work
+  (next/previous skip 10 seconds). After 10 minutes paused, or when the
+  notification is swiped away, the controls go away.
+- **iOS:** the lock screen and Control Center show the recording ("Now
+  Playing") with the same controls.
+
+With it off, there are no such controls and playback pauses when you leave
+the app.
 
 ## Differences from the original
 
@@ -145,9 +199,11 @@ flutter build ipa                # iOS archive for App Store Connect (needs sign
 4. **App Store id.** Set `AppConfig.appStoreId` in `lib/src/config.dart` once
    the app exists in App Store Connect. This makes "Rate 5 stars" work on iOS.
 5. **Store forms.**
-   - *Google Play:* the app uses a `microphone` foreground service, so declare
-     it under *App content → Foreground service permissions*: "records audio
-     that the user started, until the user stops it". The app collects no
+   - *Google Play:* the app uses two foreground services, so declare both under
+     *App content → Foreground service permissions*: `microphone`, "records
+     audio that the user started, until the user stops it", and
+     `mediaPlayback`, "keeps playing a recording the user started when the
+     app is in the background, with playback controls". The app collects no
      data, so the Data safety answer is "no data collected or shared". Play
      requires a privacy policy for apps that use the microphone:
      [PRIVACY.md](PRIVACY.md) describes what this code does. Review it and
@@ -174,15 +230,22 @@ flutter test                              # unit, widget, controller and golden 
 - `python3 tool/compare_goldens.py <dir-with-original-screenshots> [out]`
   (needs Pillow and NumPy) puts each golden next to the original screenshot,
   with a difference image, and prints the mean pixel difference. The current
-  values are 3.1 to 4.2 (out of 255) for the dialogs, list and settings, and
-  6.5 to 7.1 for the Recorder, where the microphone grille's hole pattern
-  differs.
+  values are 3.1 to 3.2 (out of 255) for the dialogs and 6.5 to 7.1 for the
+  Recorder, where the microphone grille's hole pattern differs. The list
+  (14.6) and Settings (11.6) have grown since the upgrades: the list header's
+  sort and search buttons, the open row's playback buttons (which make it
+  10 dp taller, moving the rows below it) and the new settings rows.
   The left-out ads badge and "Remove ads" row count toward these numbers.
   `tool/align_check.py` measures how far a single element is off, in pixels.
-- `test/widget/flows_test.dart` taps through the app like a user would:
-  record and stop, the first-run folder prompt, missing microphone access,
-  a recording that can't be saved or stops on its own, play, seek, delete,
-  rename, list selection, a list of 2,500 recordings, and settings.
+- `test/widget/flows_test.dart` and `test/widget/upgrades_flows_test.dart`
+  tap through the app like a user would: record, pause and stop, the
+  first-run folder prompt, missing microphone access, a recording that can't
+  be saved or stops on its own, play, seek, skip and speed, delete and undo,
+  rename, search, sort, selecting several recordings, Recently deleted, a
+  list of 2,500 recordings, the Record shortcut and settings.
+- `test/audio/audio_info_test.dart` reads and writes recording dates in MP3
+  (ID3v2.2 to 2.4, appended tags, ID3v1), WAV (`LIST`, `bext`) and M4A
+  files, including damaged ones.
 
 CI (`.github/workflows/ci.yml`) runs formatting, analysis and all tests. It
 also builds a release APK and uploads it as an artifact. The APK is signed
@@ -199,16 +262,18 @@ iOS build (no code signing) runs on `main` and on manual runs.
 ```
 lib/
   main.dart                  wiring: settings, storage, audio session, controller
-  src/app_controller.dart    app state: recording, playback, files, remaining time
-  src/audio/                 recorder engine (record plugin), MP3/WAV writers, playback (just_audio)
-  src/storage/               Android (Storage Access Framework) and iOS (Documents) storage
+  src/app_controller.dart    app state: recording, playback, files, remaining time, lock-screen controls
+  src/audio/                 recorder engine (record plugin), MP3/WAV writers, playback (just_audio),
+                             recording dates and lengths in the files (audio_info.dart)
+  src/storage/               Android (Storage Access Framework) and iOS (Documents) storage,
+                             Recently deleted, the cache of dates and lengths
   src/core/                  formats, settings, text formats (timer, sizes, dates)
   src/ui/spec.dart           every measured size, colour and font
-  src/ui/screens/            Recorder, Recording list, Settings
+  src/ui/screens/            Recorder, Recording list, Settings, Recently deleted
   src/ui/dialogs/            Holo dialogs (delete, choices, messages) and the iOS-style rename dialog
   src/ui/widgets/            text with Android metrics, bars, timer box, level meter, glossy buttons
-android/app/src/main/kotlin/ folder picker and file access, foreground service
-ios/Runner/AppDelegate.swift free space and device name
+android/app/src/main/kotlin/ folder picker and file access, recording and playback services, shortcut
+ios/Runner/AppDelegate.swift free space, device name, Now Playing controls, import from Files
 packages/lame_mp3/           LAME MP3 encoder as a Flutter FFI plugin
 tool/                        artwork generators and screenshot comparison tools
 ```

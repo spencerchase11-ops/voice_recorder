@@ -366,7 +366,10 @@ class PlaybackService : Service() {
         /** Removes the controls. */
         fun clear() {
             pending = null
-            instance?.shutDown()
+            // A service that isn't in the foreground yet must get there before
+            // it may stop (Android crashes the app otherwise); onStartCommand
+            // then sees nothing pending and stops it.
+            instance?.takeIf { it.inForeground }?.shutDown()
         }
     }
 }

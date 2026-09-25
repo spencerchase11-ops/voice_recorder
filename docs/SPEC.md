@@ -59,12 +59,14 @@ excluded), on a 0 to 255 scale:
 | Recorder, no recording | 6.5 |
 | Delete dialog | 3.2 |
 | Rename dialog | 3.1 |
-| Recording list | 4.2 |
-| Settings | 4.0 |
+| Recording list | 14.6 (4.2 before the upgrades) |
+| Settings | 11.6 (4.0 before the upgrades) |
 
 The original's "no ads" badge (top left of the Recorder) and its "Remove ads"
 settings row advertised a paid version. They are left out on purpose, and they
-count toward the differences above.
+count toward the differences above. So do the upgrades added since: the sort
+and search buttons in the list's header, the playback buttons of the open row
+(10 dp taller, which moves the rows below it), and the new settings rows.
 
 ## Key measurements
 

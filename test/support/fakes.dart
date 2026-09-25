@@ -215,9 +215,13 @@ class FakeEngine implements RecorderEngine {
   var pauses = 0;
   Object? pauseError;
 
+  /// Makes pause() take a while.
+  Completer<void>? pauseGate;
+
   @override
   Future<void> pause() async {
     pauses++;
+    await pauseGate?.future;
     if (pauseError != null) throw pauseError!;
   }
 
@@ -271,7 +275,9 @@ class FakePlayback extends Playback {
       _id = null;
       throw Exception('cannot open $fileId');
     }
+    // Like just_audio: loading another file stops the one playing.
     _id = fileId;
+    _playing = false;
     _position = Duration.zero;
     _duration = const Duration(minutes: 3);
     notifyListeners();

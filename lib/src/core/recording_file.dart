@@ -137,10 +137,12 @@ class TrashedRecording {
     );
   }
 
-  /// Whole days until it is deleted for good (0 on the last day).
+  /// Days until it is deleted for good, counting a started day: 30 right
+  /// after deleting, 1 on the last day, 0 once it is due.
   int daysLeft(DateTime now) {
     final left = deletedAt.add(trashRetention).difference(now);
-    return left.isNegative ? 0 : left.inDays;
+    if (left <= Duration.zero) return 0;
+    return (left.inSeconds / Duration.secondsPerDay).ceil();
   }
 
   bool expired(DateTime now) => !deletedAt.add(trashRetention).isAfter(now);
