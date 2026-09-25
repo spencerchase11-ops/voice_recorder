@@ -57,7 +57,7 @@ lost access to it), the recording is kept and the app asks for the folder
 again.
 
 A deleted recording gets a hidden name in the same folder
-(`.trashed-<time>-<name>`), so it is out of the list, file managers and music
+(`.vr-deleted-<time>-<name>`), so it is out of the list, file managers and music
 apps, and it can come back. After 30 days the app deletes it for good.
 
 ### Recording dates

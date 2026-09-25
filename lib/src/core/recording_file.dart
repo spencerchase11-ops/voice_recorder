@@ -87,8 +87,11 @@ class RecordingFile {
 const trashRetention = Duration(days: 30);
 
 /// A recording in Recently deleted: the file under a hidden name
-/// (`.trashed-<ms>-<original name>`) in the recordings folder, so it is out of
-/// the list (and out of file managers and music apps) but can come back.
+/// (`.vr-deleted-<ms>-<original name>`) in the recordings folder, so it is out
+/// of the list (and out of file managers and music apps) but can come back.
+///
+/// Not `.trashed-`: Android's own trash (MediaStore) uses that prefix, with
+/// an expiry time, for files other apps put in their trash.
 class TrashedRecording {
   const TrashedRecording({
     required this.file,
@@ -96,7 +99,7 @@ class TrashedRecording {
     required this.deletedAt,
   });
 
-  static const prefix = '.trashed-';
+  static const prefix = '.vr-deleted-';
 
   /// The file under its hidden name.
   final RecordingFile file;
@@ -122,19 +125,26 @@ class TrashedRecording {
     return head + fitted;
   }
 
-  static final _pattern = RegExp(r'^\.trashed-(\d{1,16})-(.+)$');
+  static final _pattern = RegExp(r'^\.vr-deleted-(\d{13})-(.+)$');
+
+  /// Test builds before the release used Android's trash prefix, with the
+  /// time in milliseconds (13 digits; Android's own entries have 10-digit
+  /// seconds, and are never taken for ours).
+  static final _early = RegExp(r'^\.trashed-(\d{13})-(.+)$');
+
+  /// The earliest deletion time taken as real (older values are someone
+  /// else's naming, not a deletion by this app).
+  static final _earliest = DateTime(2025);
 
   /// The deleted recording [file] stands for, or null for other files.
   static TrashedRecording? parse(RecordingFile file) {
-    final m = _pattern.firstMatch(file.name);
+    final m = _pattern.firstMatch(file.name) ?? _early.firstMatch(file.name);
     if (m == null) return null;
     final original = m.group(2)!;
     if (!isAudioFileName(original)) return null;
-    return TrashedRecording(
-      file: file,
-      originalName: original,
-      deletedAt: DateTime.fromMillisecondsSinceEpoch(int.parse(m.group(1)!)),
-    );
+    final at = DateTime.fromMillisecondsSinceEpoch(int.parse(m.group(1)!));
+    if (at.isBefore(_earliest)) return null;
+    return TrashedRecording(file: file, originalName: original, deletedAt: at);
   }
 
   /// Days until it is deleted for good, counting a started day: 30 right

@@ -333,4 +333,15 @@ void main() {
       }
     }
   });
+
+  test('opening a missing file for writing does not create it', () async {
+    final dir = await Directory.systemTemp.createTemp('info_missing');
+    addTearDown(() => dir.delete(recursive: true));
+    final f = File('${dir.path}/gone.mp3');
+    await expectLater(
+      FileByteAccess.open(f, write: true),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(f.existsSync(), isFalse);
+  });
 }

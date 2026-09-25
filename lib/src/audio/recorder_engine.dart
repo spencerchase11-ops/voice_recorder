@@ -356,9 +356,17 @@ class RecordPluginEngine implements RecorderEngine {
     if (!_running || _stopping) return;
     // Set first: the watchdog must not count the pause as a stall, and no
     // chunk may be written from here on.
+    final wasPaused = _paused;
     _userPaused = true;
     _paused = true;
-    await _recorder.pause();
+    try {
+      await _recorder.pause();
+    } catch (e) {
+      // Still recording: keep writing (and watching) it.
+      _userPaused = false;
+      _paused = wasPaused;
+      rethrow;
+    }
   }
 
   @override

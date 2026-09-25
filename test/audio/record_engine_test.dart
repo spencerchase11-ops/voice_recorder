@@ -46,9 +46,12 @@ class _FakeRecordPlatform extends RecordPlatform {
     return null;
   }
 
+  Object? pauseError;
+
   @override
   Future<void> pause(String recorderId) async {
     pauses++;
+    if (pauseError != null) throw pauseError!;
     emit(RecordState.pause);
   }
 
@@ -250,5 +253,15 @@ void main() {
     await a.close();
     expect(info.recorded, recorded);
     expect(info.duration, const Duration(seconds: 1));
+  });
+
+  test('a pause the platform refuses leaves the recording running', () async {
+    final path = '${dir.path}/r.wav';
+    await engine.start(wavBest, path);
+    platform.pauseError = Exception('refused');
+    await expectLater(engine.pause(), throwsException);
+    await feed(_tone(4410), 3); // still written
+    await engine.stop();
+    expect(await File(path).length(), 44 + 3 * 8820);
   });
 }

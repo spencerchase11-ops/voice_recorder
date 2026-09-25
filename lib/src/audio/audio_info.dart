@@ -32,11 +32,17 @@ abstract class ByteAccess {
 class FileByteAccess implements ByteAccess {
   FileByteAccess._(this._raf);
 
-  static Future<FileByteAccess> open(File file, {bool write = false}) async =>
-      FileByteAccess._(
-        // Dart's append mode reads and writes anywhere (it doesn't truncate).
-        await file.open(mode: write ? FileMode.append : FileMode.read),
-      );
+  static Future<FileByteAccess> open(File file, {bool write = false}) async {
+    // Append mode would create a missing file (e.g. one deleted in the
+    // Files app meanwhile); it must stay missing.
+    if (write && !await file.exists()) {
+      throw FileSystemException('The file no longer exists', file.path);
+    }
+    return FileByteAccess._(
+      // Dart's append mode reads and writes anywhere (it doesn't truncate).
+      await file.open(mode: write ? FileMode.append : FileMode.read),
+    );
+  }
 
   final RandomAccessFile _raf;
 

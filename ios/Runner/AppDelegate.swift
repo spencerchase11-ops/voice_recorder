@@ -244,14 +244,8 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
     for url in urls {
       let scoped = url.startAccessingSecurityScopedResource()
       defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-      var isFolder: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) else {
-        continue
-      }
-      if isFolder.boolValue {
-        let items = (try? FileManager.default.contentsOfDirectory(
-          at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-        for item in items where isAudio(item) {
+      if isFolder(url) {
+        for item in files(in: url) where isAudio(item) {
           if copyOne(item, into: destination) { count += 1 }
         }
       } else if isAudio(url) {
@@ -259,6 +253,31 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate {
       }
     }
     return count
+  }
+
+  private static func isFolder(_ url: URL) -> Bool {
+    (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+  }
+
+  /// The files directly in `folder`, including ones that are only in iCloud
+  /// so far: some iOS versions list those as ".name.icloud" placeholders.
+  /// Their download starts here; the coordinated read in `copyOne` waits
+  /// for it.
+  private static func files(in folder: URL) -> [URL] {
+    let fm = FileManager.default
+    let items = (try? fm.contentsOfDirectory(
+      at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [])) ?? []
+    return items.compactMap { item in
+      let name = item.lastPathComponent
+      if name.hasPrefix("."), name.hasSuffix(".icloud") {
+        let real = folder.appendingPathComponent(
+          String(name.dropFirst().dropLast(".icloud".count)))
+        try? fm.startDownloadingUbiquitousItem(at: real)
+        return real
+      }
+      if name.hasPrefix(".") || isFolder(item) { return nil }
+      return item
+    }
   }
 
   /// Copies one file, unless the folder already has it (same name and size).

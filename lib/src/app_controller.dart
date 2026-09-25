@@ -399,8 +399,11 @@ class AppController extends ChangeNotifier {
         try {
           info = await _readInfo(file);
         } catch (e) {
-          // Unreadable right now (deleted, storage gone): not again this run.
-          _unreadable.add(RecordingInfoCache.keyOf(file));
+          // Unreadable right now (storage gone): not again this run. A file
+          // deleted meanwhile doesn't count (it may be restored).
+          if (_files.any((f) => f.id == file.id)) {
+            _unreadable.add(RecordingInfoCache.keyOf(file));
+          }
           continue;
         }
         _info.put(file, info);
@@ -1012,9 +1015,13 @@ class AppController extends ChangeNotifier {
       case 'rewind':
         await skip(-skipInterval);
       case 'dismiss':
-        if (playback.playing) await _safe(playback.pause);
+        // The controls were swiped away, or went away after a long pause.
+        // Unload the recording: a pause from a call would otherwise resume
+        // by itself after it, without controls (and, on Android, without
+        // the service that keeps it playing).
         _media = null;
         await _safe(native.clearMediaSession);
+        await _safe(_stopPlayback);
     }
   }
 
@@ -1084,6 +1091,7 @@ class AppController extends ChangeNotifier {
       }
       moved.add(t);
       gone.add(f.id);
+      _probeQueue.remove(f.id);
       if (_current?.id == f.id) {
         current = (name: f.name, duration: settings.lastDuration);
         _current = null;
@@ -1118,6 +1126,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _addFile(RecordingFile f) {
+    _unreadable.remove(RecordingInfoCache.keyOf(f));
     _files = _sorted([
       for (final x in _files)
         if (x.id != f.id) x,

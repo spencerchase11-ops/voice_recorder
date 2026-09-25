@@ -291,6 +291,8 @@ void main() {
       native.eventController.add(const MediaButton('dismiss'));
       await settle();
       expect(named('clearMediaSession'), hasLength(1));
+      // Unloaded: a pause from a call can't resume without controls.
+      expect(playback.fileId, isNull);
       // Dismissed controls come back with the next play.
       await app.togglePlay(file);
       await settle();
@@ -576,6 +578,63 @@ void main() {
       expect(deleted.items, isEmpty);
       expect(deleted.failed, 1);
       expect(app.files, hasLength(10));
+    });
+
+    test("other apps' trash is never taken for Recently deleted", () {
+      RecordingFile named(String n) =>
+          RecordingFile(id: 'x', name: n, size: 1, modified: _now);
+      // Android's own trash: expiry in seconds (10 digits).
+      expect(
+        TrashedRecording.parse(named('.trashed-1790000000-a.mp3')),
+        isNull,
+      );
+      // Not audio, or not a plausible time.
+      expect(
+        TrashedRecording.parse(named('.vr-deleted-1790000000000-a.txt')),
+        isNull,
+      );
+      expect(
+        TrashedRecording.parse(named('.vr-deleted-0000000000123-a.mp3')),
+        isNull,
+      );
+      // Ours, also from early test builds (milliseconds, 13 digits).
+      final hidden = TrashedRecording.hiddenName('a.mp3', _now);
+      expect(hidden, startsWith('.vr-deleted-'));
+      expect(TrashedRecording.parse(named(hidden))!.deletedAt, _now);
+      final early = TrashedRecording.parse(
+        named('.trashed-${_now.millisecondsSinceEpoch}-a.mp3'),
+      );
+      expect(early!.originalName, 'a.mp3');
+    });
+
+    test("Android's trash files in the folder are left alone", () async {
+      final theirs = RecordingFile(
+        id: 'mem://.trashed-1700000000-kept.mp3',
+        name: '.trashed-1700000000-kept.mp3',
+        size: 1,
+        modified: _now,
+      );
+      await build(files: [...referenceRecordings(), theirs]);
+      await settle();
+      expect(store.deletedForGood, isEmpty);
+      expect(await app.deletedRecordings(), isEmpty);
+    });
+
+    test('a restored recording gets its length read again', () async {
+      await build();
+      await app.refreshFiles();
+      final f = app.files.firstWhere(
+        (f) => parseTimestampName(f.baseName) != null,
+      );
+      store.contents[f.id] = _mp3Frames();
+      app.requestInfo(f); // queued...
+      final deleted = await app.delete([f]); // ...and gone before it's read
+      await settle();
+      await app.undoDelete(deleted);
+      final back = app.files.firstWhere((x) => x.name == f.name);
+      app.requestInfo(back);
+      await settle();
+      expect(app.files.firstWhere((x) => x.name == f.name).duration, isNotNull);
     });
 
     test('hidden names stay within the file system limit', () {
