@@ -64,9 +64,11 @@ String timestampName(DateTime t) =>
 /// Makes a user-typed name safe for every file system we write to.
 ///
 /// Mirrors the characters Android's external storage provider rejects on FAT
-/// volumes, and trims whitespace and trailing dots.
+/// volumes, and trims whitespace and leading/trailing dots.
 String sanitizeFileName(String input) {
   var s = input.replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F\x7F]'), '_').trim();
+  // A leading dot would hide the file (in the list and in file managers).
+  s = s.replaceFirst(RegExp(r'^[.\s]+'), '');
   while (s.endsWith('.')) {
     s = s.substring(0, s.length - 1).trimRight();
   }

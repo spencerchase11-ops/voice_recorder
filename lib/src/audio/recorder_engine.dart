@@ -29,13 +29,28 @@ abstract class RecorderEngine {
   /// True while capture is paused by the system (e.g. a phone call).
   Stream<bool> get interrupted;
 
-  /// Fires once when capture stopped on its own: a platform error, the system
-  /// ending the audio session, or audio no longer arriving. The file holds
-  /// what was captured until then; call [stop] to finalize it.
-  Stream<void> get ended;
+  /// Fires once when a recording can't go on: see [CaptureEnd]. The file
+  /// holds what was captured until then; call [stop] to finalize it.
+  Stream<CaptureEnd> get ended;
 
   Future<void> dispose();
 }
+
+/// Why a recording ended without the user stopping it.
+enum CaptureEnd {
+  /// A platform error, the system ending the audio session, or audio no
+  /// longer arriving.
+  stopped,
+
+  /// The file couldn't be written any more (e.g. storage full).
+  writeFailed,
+
+  /// A WAV file reached the format's 4 GB limit (about 13.5 hours).
+  sizeLimit,
+}
+
+/// Largest WAV data size: the RIFF size fields are 32-bit.
+const maxWavDataBytes = 0xFFFFFFFF - 36 - 1024 * 1024;
 
 /// Maps a dBFS value onto the 0..1 range shown by the level meter.
 double levelFromDb(double db) => ((db + 50) / 50).clamp(0.0, 1.0);
@@ -77,7 +92,7 @@ class RecordPluginEngine implements RecorderEngine {
   final bool _isAndroid;
   final _levels = StreamController<double>.broadcast();
   final _interrupted = StreamController<bool>.broadcast();
-  final _ended = StreamController<void>.broadcast();
+  final _ended = StreamController<CaptureEnd>.broadcast();
 
   StreamSubscription<Uint8List>? _pcmSub;
   StreamSubscription<Amplitude>? _ampSub;
@@ -88,7 +103,9 @@ class RecordPluginEngine implements RecorderEngine {
   WavWriter? _wav;
   Object? _writeError;
   Timer? _watchdog;
-  DateTime _lastChunk = DateTime.now();
+
+  /// Time since the last audio chunk (monotonic: clock changes don't count).
+  final _sinceChunk = Stopwatch();
 
   /// Between a successful start and the end of [stop].
   bool _running = false;
@@ -111,7 +128,7 @@ class RecordPluginEngine implements RecorderEngine {
   Stream<bool> get interrupted => _interrupted.stream;
 
   @override
-  Stream<void> get ended => _ended.stream;
+  Stream<CaptureEnd> get ended => _ended.stream;
 
   static const _androidConfig = AndroidRecordConfig(
     // Keep the microphone's natural gain, like a plain MediaRecorder.
@@ -202,16 +219,19 @@ class RecordPluginEngine implements RecorderEngine {
         // Nothing can be written (e.g. storage full): end the recording now
         // rather than let it look like it's recording.
         _writeError ??= e;
-        _endedOnItsOwn();
+        _endedOnItsOwn(CaptureEnd.writeFailed);
       }
     }();
 
     final done = _streamDone = Completer<void>();
     var lastLevel = DateTime.fromMillisecondsSinceEpoch(0);
-    _lastChunk = DateTime.now();
+    _sinceChunk
+      ..reset()
+      ..start();
     _pcmSub = stream.listen(
       (chunk) {
-        final now = _lastChunk = DateTime.now();
+        _sinceChunk.reset();
+        final now = DateTime.now();
         final pcm = _channels == 2 ? downmixToMono(chunk) : chunk;
         if (now.difference(lastLevel).inMilliseconds >= 90) {
           lastLevel = now;
@@ -219,16 +239,24 @@ class RecordPluginEngine implements RecorderEngine {
         }
         // Keep chunks in order: each write waits for the previous one.
         _writes = _writes.then((_) async {
+          if (_writeError != null) return; // already failed: stop writing
+          final wav = _wav;
+          if (wav != null && wav.dataBytes + pcm.length > maxWavDataBytes) {
+            _endedOnItsOwn(CaptureEnd.sizeLimit);
+            return;
+          }
           try {
-            await (_mp3?.add(pcm) ?? _wav?.add(pcm));
+            await (_mp3?.add(pcm) ?? wav?.add(pcm));
           } catch (e) {
+            // e.g. storage full: the rest would be lost, so end it here.
             _writeError ??= e;
+            _endedOnItsOwn(CaptureEnd.writeFailed);
           }
         });
       },
       onDone: () {
         if (!done.isCompleted) done.complete();
-        _endedOnItsOwn();
+        _endedOnItsOwn(CaptureEnd.stopped);
       },
       onError: _onPlatformError,
       cancelOnError: false,
@@ -236,8 +264,8 @@ class RecordPluginEngine implements RecorderEngine {
     // Capture can also die silently (e.g. the audio route changed under an
     // iOS audio engine); no chunks for a while means it did.
     _watchdog = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_paused && DateTime.now().difference(_lastChunk) > _stallLimit) {
-        _endedOnItsOwn();
+      if (!_paused && _sinceChunk.elapsed > _stallLimit) {
+        _endedOnItsOwn(CaptureEnd.stopped);
       }
     });
   }
@@ -249,24 +277,24 @@ class RecordPluginEngine implements RecorderEngine {
         _interrupted.add(true);
       case RecordState.record:
         _paused = false;
-        _lastChunk = DateTime.now();
+        _sinceChunk.reset();
         _interrupted.add(false);
       case RecordState.stop:
-        _endedOnItsOwn();
+        _endedOnItsOwn(CaptureEnd.stopped);
     }
   }
 
   void _onPlatformError(Object e) {
     if (!_running) return;
     _writeError ??= e;
-    _endedOnItsOwn();
+    _endedOnItsOwn(CaptureEnd.stopped);
   }
 
-  void _endedOnItsOwn() {
+  void _endedOnItsOwn(CaptureEnd why) {
     if (!_running || _stopping || _endedSent) return;
     _endedSent = true;
     _watchdog?.cancel();
-    _ended.add(null);
+    _ended.add(why);
   }
 
   @override

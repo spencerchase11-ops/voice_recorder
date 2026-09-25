@@ -78,8 +78,11 @@ are left, a recording stops and is saved, and a new one won't start.
   phone call Android gives the app silence. On iPhone, calls and Siri pause
   the recording and the timer, and recording resumes when they end (or when
   you return to the app, if iOS didn't resume it).
-- If recording stops on its own (a system error, or audio no longer arriving
-  for 5 seconds), what was recorded is saved and the app says so.
+- If recording stops on its own, what was recorded is saved and the app
+  says so (when you're back in the app, if it happened in the background).
+  That happens after a system error, when audio stops arriving for 5 seconds,
+  when the storage can't be written any more, or when a WAV recording reaches
+  the format's limit of about 13 hours.
 
 ## Differences from the original
 

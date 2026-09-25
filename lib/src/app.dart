@@ -31,6 +31,7 @@ class _VoiceRecorderAppState extends State<VoiceRecorderApp> {
     super.initState();
     _lifecycle = AppLifecycleListener(
       onDetach: () => _detached = true,
+      onHide: () => widget.controller.setForeground(false),
       onResume: _onResume,
     );
   }
@@ -46,9 +47,11 @@ class _VoiceRecorderAppState extends State<VoiceRecorderApp> {
         _navigator.currentState?.canPop() ?? false,
       );
     }
-    // Files can change while the app is in the background (Files app, another
-    // recorder, a file manager), and so can the free space.
-    widget.controller.onResume();
+    // Messages held while the app was away can be shown now. Files can
+    // change in the background (Files app, a file manager), free space too.
+    widget.controller
+      ..setForeground(true)
+      ..onResume();
   }
 
   @override

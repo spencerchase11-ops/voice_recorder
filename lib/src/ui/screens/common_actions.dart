@@ -78,5 +78,7 @@ void showPlayProblem(BuildContext context, PlayOutcome outcome) {
       showToast(context, "Can't play this file");
     case PlayOutcome.audioBusy:
       showToast(context, "Can't play while a call or another app uses audio");
+    case PlayOutcome.recording:
+      showToast(context, 'Stop recording to play a file');
   }
 }

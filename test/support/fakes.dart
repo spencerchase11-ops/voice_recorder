@@ -20,6 +20,9 @@ class FakeStore extends RecordingStore {
 
   /// Makes [save] fail, like a folder whose access was revoked.
   bool failSaves = false;
+
+  /// Holds [rename] and [delete] until completed (slow storage).
+  Completer<void>? slow;
   final saved = <String>[];
 
   /// Contents of each saved file.
@@ -82,6 +85,7 @@ class FakeStore extends RecordingStore {
 
   @override
   Future<RecordingFile?> rename(RecordingFile file, String newBaseName) async {
+    await slow?.future;
     final i = files.indexWhere((f) => f.id == file.id);
     if (i < 0) return null;
     final name = file.extension.isEmpty
@@ -94,6 +98,7 @@ class FakeStore extends RecordingStore {
 
   @override
   Future<bool> delete(RecordingFile file) async {
+    await slow?.future;
     final before = files.length;
     files.removeWhere((f) => f.id == file.id);
     return files.length < before;
@@ -116,12 +121,16 @@ class FakeEngine implements RecorderEngine {
   String? path;
   RecordingProfile? profile;
 
-  /// What start() writes, and what stop() throws (if anything).
+  /// What start() writes, and what stop() and resume() throw (if anything).
   List<int> content = List.filled(1000, 1);
   Object? stopError;
+  Object? resumeError;
+
+  /// Makes start() take a while, like a slow audio system.
+  Completer<void>? startGate;
   final levelController = StreamController<double>.broadcast();
   final interruptController = StreamController<bool>.broadcast();
-  final endedController = StreamController<void>.broadcast();
+  final endedController = StreamController<CaptureEnd>.broadcast();
   var resumes = 0;
 
   @override
@@ -131,6 +140,7 @@ class FakeEngine implements RecorderEngine {
   Future<void> start(RecordingProfile profile, String path) async {
     this.profile = profile;
     this.path = path;
+    await startGate?.future;
     await File(path).writeAsBytes(content);
   }
 
@@ -146,10 +156,13 @@ class FakeEngine implements RecorderEngine {
   Stream<bool> get interrupted => interruptController.stream;
 
   @override
-  Stream<void> get ended => endedController.stream;
+  Stream<CaptureEnd> get ended => endedController.stream;
 
   @override
-  Future<void> resume() async => resumes++;
+  Future<void> resume() async {
+    resumes++;
+    if (resumeError != null) throw resumeError!;
+  }
 
   @override
   Future<void> dispose() async {}

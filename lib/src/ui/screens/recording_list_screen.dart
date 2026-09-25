@@ -150,7 +150,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                 size: const Size(28.6, 34.3),
                 semanticLabel: 'Delete',
                 onTap: () => _withSelection((f) async {
-                  if (await deleteRecording(context, f)) {
+                  if (await deleteRecording(context, f) && mounted) {
                     setState(() => _selected = null);
                   }
                 }),
@@ -161,7 +161,9 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                 semanticLabel: 'Rename',
                 onTap: () => _withSelection((f) async {
                   final renamed = await renameRecording(context, f);
-                  if (renamed != null) setState(() => _selected = renamed.id);
+                  if (renamed != null && mounted) {
+                    setState(() => _selected = renamed.id);
+                  }
                 }),
               ),
               _FooterIcon(

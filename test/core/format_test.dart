@@ -72,5 +72,8 @@ void main() {
     expect(sanitizeFileName('name...'), 'name');
     expect(sanitizeFileName('kris n evan'), 'kris n evan');
     expect(sanitizeFileName('   '), '');
+    // A leading dot would hide the file.
+    expect(sanitizeFileName('.meeting'), 'meeting');
+    expect(sanitizeFileName(' . .notes'), 'notes');
   });
 }

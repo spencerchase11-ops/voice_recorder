@@ -4,12 +4,14 @@ import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 
+import 'audio/duration.dart';
 import 'audio/m4a.dart';
 import 'audio/playback.dart';
 import 'audio/recorder_engine.dart';
 import 'audio/wav_writer.dart';
 import 'core/format.dart';
 import 'core/recording_file.dart';
+import 'core/recording_format.dart';
 import 'core/settings.dart';
 import 'platform/native_bridge.dart';
 import 'storage/recording_store.dart';
@@ -42,6 +44,9 @@ enum PlayOutcome {
 
   /// The system refused audio playback right now (e.g. during a call).
   audioBusy,
+
+  /// A recording is running or starting.
+  recording,
 }
 
 /// Recordings stop automatically when less than this much time is left, so
@@ -91,28 +96,47 @@ class AppController extends ChangeNotifier {
   List<RecordingFile> _files = const [];
   StreamSubscription<double>? _levelSub;
   StreamSubscription<bool>? _interruptSub;
-  StreamSubscription<void>? _endedSub;
+  StreamSubscription<CaptureEnd>? _endedSub;
+
+  /// The format of the recording in progress (Settings may change meanwhile).
+  RecordingProfile? _activeProfile;
+
+  /// A recording that couldn't be saved into the folder yet; it becomes the
+  /// Recorder screen's recording once recovery saves it.
+  ({String name, Duration duration})? _unsaved;
+
+  /// Completes when [init] has finished.
+  Future<void>? _initDone;
+  // Messages wait until the screen listens (they can come during init) and
+  // the app is in the foreground (an automatic stop usually happens with the
+  // screen off; a toast then would vanish unseen).
   late final StreamController<String> _notices = StreamController.broadcast(
-    onListen: () {
-      // Messages from before the screen was listening (e.g. during init).
-      for (final m in _unheard) {
-        _notices.add(m);
-      }
-      _unheard.clear();
-    },
+    onListen: _flushNotices,
   );
   final _unheard = <String>[];
+  bool _inForeground = true;
+
+  /// Called by the app as it goes to the background and comes back.
+  void setForeground(bool value) {
+    _inForeground = value;
+    _flushNotices();
+  }
+
+  void _flushNotices() {
+    if (!_inForeground || !_notices.hasListener) return;
+    for (final m in _unheard) {
+      _notices.add(m);
+    }
+    _unheard.clear();
+  }
 
   /// Short messages for the user about things that happened on their own
   /// (a recording stopped automatically, a recording couldn't be recovered).
   Stream<String> get notices => _notices.stream;
 
   void _notify(String message) {
-    if (_notices.hasListener) {
-      _notices.add(message);
-    } else {
-      _unheard.add(message);
-    }
+    _unheard.add(message);
+    _flushNotices();
   }
 
   bool get isRecording => _recording;
@@ -158,7 +182,13 @@ class AppController extends ChangeNotifier {
   List<RecordingFile> get files => _files;
 
   // ------------------------------------------------------------- setup
-  Future<void> init() async {
+  /// Loads the folder, the last recording and recovers cut-off recordings.
+  /// Record, list and folder actions wait for it.
+  Future<void> init() => _initDone ??= _init();
+
+  Future<void> _ready() async => _initDone;
+
+  Future<void> _init() async {
     await _safe(store.init);
     final last = settings.lastFile;
     if (last != null) {
@@ -188,26 +218,40 @@ class AppController extends ChangeNotifier {
   Future<void> refreshRemaining() async {
     final pending = _recording ? await _safe(_pendingFile!.length) ?? 0 : 0;
     final usable = await _safe(() => store.usableBytes(pendingBytes: pending));
-    _remaining = usable == null ? null : settings.profile.remainingFor(usable);
+    final profile = (_recording ? _activeProfile : null) ?? settings.profile;
+    _remaining = usable == null ? null : profile.remainingFor(usable);
     notifyListeners();
   }
 
   Future<void> refreshFiles() async {
+    await _ready();
     final list = await _safe(store.list) ?? const <RecordingFile>[];
-    _files = [...list]
-      ..sort((a, b) {
+    _files = _sorted(list);
+    notifyListeners();
+  }
+
+  /// Newest first.
+  static List<RecordingFile> _sorted(Iterable<RecordingFile> files) =>
+      [...files]..sort((a, b) {
         final byDate = b.date.compareTo(a.date);
         return byDate != 0 ? byDate : a.name.compareTo(b.name);
       });
-    notifyListeners();
-  }
 
   /// Re-checks what may have changed while the app was in the background:
   /// the last recording may have been deleted or changed, free space too.
   Future<void> onResume() async {
     // iOS: an interruption that ended without "should resume" (e.g. another
     // app took the audio session) leaves the recording paused until now.
-    if (_recording && _interrupted) await _safe(engine.resume);
+    if (_recording && _interrupted) {
+      try {
+        await engine.resume();
+      } catch (e) {
+        debugPrint('Could not resume recording: $e');
+        await _stopOnItsOwn(
+          "The recording couldn't continue after the interruption.",
+        );
+      }
+    }
     await _recheckCurrent();
     await refreshRemaining();
   }
@@ -243,7 +287,13 @@ class AppController extends ChangeNotifier {
       if (e is! File) continue;
       final name = e.uri.pathSegments.last;
       final lower = name.toLowerCase();
-      if (!isAudioFileName(name)) continue; // e.g. an unrecoverable .m4a
+      if (lower.endsWith('.incomplete')) {
+        // Unplayable M4A files kept aside; drop them after a week.
+        final age = DateTime.now().difference(await e.lastModified());
+        if (age > const Duration(days: 7)) await _safe(e.delete);
+        continue;
+      }
+      if (!isAudioFileName(name)) continue;
       try {
         final length = await e.length();
         // Nothing was recorded (a WAV header alone is 44 bytes).
@@ -264,12 +314,20 @@ class AppController extends ChangeNotifier {
           );
           continue;
         }
+        final unsaved = _unsaved?.name == name ? _unsaved : null;
+        final playTime = unsaved?.duration ?? await audioDuration(e);
         final saved = await store.save(
           e,
           name,
           RecordingStore.mimeTypeFor(name),
         );
-        _current ??= saved;
+        // The newest recording belongs on the Recorder screen.
+        final cur = _current;
+        if (unsaved != null || cur == null || saved.date.isAfter(cur.date)) {
+          _current = saved;
+          settings.setLast(saved.id, playTime ?? Duration.zero);
+        }
+        if (unsaved != null) _unsaved = null;
       } catch (err) {
         debugPrint('Could not recover $name: $err');
       }
@@ -290,6 +348,7 @@ class AppController extends ChangeNotifier {
   // --------------------------------------------------------- recording
   /// Starts or stops a recording.
   Future<RecordOutcome> toggleRecord() async {
+    await _ready();
     if (_busy) return RecordOutcome.busy;
     return _recording ? _stop() : _start();
   }
@@ -320,6 +379,8 @@ class AppController extends ChangeNotifier {
         );
       }
       try {
+        // Playback may have been started while this was starting up.
+        if (playback.fileId != null) await playback.stop();
         await engine.start(profile, file.path);
       } catch (e) {
         if (isAndroid) await _safe(native.stopRecordingService);
@@ -328,6 +389,7 @@ class AppController extends ChangeNotifier {
 
       _pendingName = name;
       _pendingFile = file;
+      _activeProfile = profile;
       _recording = true;
       _interrupted = false;
       _level = 0;
@@ -345,7 +407,15 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       });
       _endedSub = engine.ended.listen(
-        (_) => _stopOnItsOwn('The recording stopped unexpectedly.'),
+        (why) => _stopOnItsOwn(switch (why) {
+          CaptureEnd.stopped => 'The recording stopped unexpectedly.',
+          CaptureEnd.writeFailed =>
+            "The recording stopped because it couldn't be written (is the "
+                'storage full?).',
+          CaptureEnd.sizeLimit =>
+            'A WAV recording can be about 13 hours long at most, so it '
+                'stopped.',
+        }),
       );
       _ticker = Timer.periodic(
         const Duration(milliseconds: 200),
@@ -397,6 +467,12 @@ class AppController extends ChangeNotifier {
     _interrupted = false;
     _level = 0;
     try {
+      if (!await file.exists()) return RecordOutcome.failed;
+      if (name.toLowerCase().endsWith('.m4a') && !await hasMp4Index(file)) {
+        // The recorder failed to finish it, so it can't be played.
+        await file.rename('${file.path}.incomplete');
+        return RecordOutcome.failed;
+      }
       final saved = await store.save(
         file,
         name,
@@ -410,6 +486,7 @@ class AppController extends ChangeNotifier {
       // when a folder is chosen again. Folder access may have been lost
       // (Android), so re-check it; the UI then asks for the folder.
       debugPrint('Could not save recording: $e');
+      _unsaved = (name: name, duration: duration);
       await _safe(store.init);
       return RecordOutcome.notSaved;
     } finally {
@@ -418,6 +495,7 @@ class AppController extends ChangeNotifier {
       if (isAndroid) await _safe(native.stopRecordingService);
       _pendingFile = null;
       _pendingName = null;
+      _activeProfile = null;
       _busy = false;
       unawaited(refreshRemaining());
       unawaited(refreshFiles());
@@ -458,7 +536,7 @@ class AppController extends ChangeNotifier {
 
   /// Plays or pauses [file].
   Future<PlayOutcome> togglePlay(RecordingFile file) async {
-    if (_recording) return PlayOutcome.notPlayable;
+    if (_recording || _busy) return PlayOutcome.recording;
     try {
       if (playback.isPlaying(file.id)) {
         await playback.pause();
@@ -477,7 +555,7 @@ class AppController extends ChangeNotifier {
   /// Moves [file]'s playback to [fraction] of its length. If it isn't loaded
   /// yet it is loaded paused. Returns false if it couldn't be opened.
   Future<bool> seek(RecordingFile file, double fraction) async {
-    if (_recording) return false;
+    if (_recording || _busy) return false;
     try {
       await playback.load(file.id, store.playbackUri(file));
       await playback.seek(playback.duration * fraction.clamp(0.0, 1.0));
@@ -501,7 +579,7 @@ class AppController extends ChangeNotifier {
       _current = renamed;
       settings.setLast(renamed.id, settings.lastDuration);
     }
-    _files = [for (final f in _files) f.id == file.id ? renamed : f];
+    _files = _sorted([for (final f in _files) f.id == file.id ? renamed : f]);
     notifyListeners();
     return renamed;
   }
@@ -533,6 +611,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<bool> chooseFolder() async {
+    await _ready();
     final ok = await _safe(store.chooseFolder) ?? false;
     if (ok) {
       await _recheckCurrent();
@@ -552,8 +631,17 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  bool _disposed = false;
+
+  /// Background work (a refresh, a save) may finish after [dispose].
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     _ticker?.cancel();
     _spaceTimer?.cancel();
     _levelSub?.cancel();

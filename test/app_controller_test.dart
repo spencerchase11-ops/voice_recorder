@@ -4,7 +4,11 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'dart:async';
+
 import 'package:voice_recorder/src/app_controller.dart';
+import 'package:voice_recorder/src/audio/recorder_engine.dart';
 import 'package:voice_recorder/src/audio/wav_writer.dart';
 import 'package:voice_recorder/src/core/format.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
@@ -15,6 +19,8 @@ import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'support/fakes.dart';
 
 const _last = 'mem://kris n evan got back then zach.mp3';
+
+final wavBest = RecordingProfile.of(RecordingType.wav, RecordingQuality.best);
 
 void main() {
   late Directory work;
@@ -165,6 +171,47 @@ void main() {
     });
 
     test(
+      'a recording saved later becomes the Recorder screen recording',
+      () async {
+        await (await build()).init();
+        await app.toggleRecord();
+        await Future<void>.delayed(const Duration(milliseconds: 1100));
+        store.failSaves = true;
+        expect(await app.toggleRecord(), RecordOutcome.notSaved);
+        expect(app.currentFile?.id, _last);
+        store.failSaves = false;
+        await app.chooseFolder();
+        expect(app.currentFile?.name, '2026_09_23_19_14_05.mp3');
+        expect(settings.lastFile, 'mem://2026_09_23_19_14_05.mp3');
+        expect(formatTimer(app.timerValue), '00:01');
+      },
+    );
+
+    test('a recovered recording is remembered, with its length', () async {
+      final pending = Directory('${work.path}/pending')..createSync();
+      File('${pending.path}/2026_09_24_07_00_00.wav').writeAsBytesSync([
+        ...WavWriter.header(sampleRate: 16000, channels: 1, dataBytes: 0),
+        ...Uint8List(32000 * 3), // 3 s
+      ]);
+      await (await build()).init();
+      expect(app.currentFile?.name, '2026_09_24_07_00_00.wav');
+      expect(settings.lastFile, 'mem://2026_09_24_07_00_00.wav');
+      expect(formatTimer(app.timerValue), '00:03');
+    });
+
+    test('unplayable leftovers are cleaned up after a week', () async {
+      final pending = Directory('${work.path}/pending')..createSync();
+      final old = File('${pending.path}/a.m4a.incomplete')
+        ..writeAsBytesSync([1])
+        ..setLastModifiedSync(DateTime.now().subtract(const Duration(days: 8)));
+      final recent = File('${pending.path}/b.m4a.incomplete')
+        ..writeAsBytesSync([1]);
+      await (await build()).init();
+      expect(old.existsSync(), isFalse);
+      expect(recent.existsSync(), isTrue);
+    });
+
+    test(
       'choosing another folder forgets a last recording not in it',
       () async {
         await (await build()).init();
@@ -296,7 +343,7 @@ void main() {
       final notices = <String>[];
       app.notices.listen(notices.add);
       await app.toggleRecord();
-      engine.endedController.add(null);
+      engine.endedController.add(CaptureEnd.stopped);
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(app.isRecording, isFalse);
       expect(store.saved, ['2026_09_23_19_14_05.mp3']);
@@ -362,6 +409,111 @@ void main() {
         await app.toggleRecord();
       },
     );
+
+    test(
+      'storage failing mid-recording stops it with an explanation',
+      () async {
+        await (await build()).init();
+        final notices = <String>[];
+        app.notices.listen(notices.add);
+        await app.toggleRecord();
+        engine.endedController.add(CaptureEnd.writeFailed);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(app.isRecording, isFalse);
+        expect(notices.single, contains("couldn't be written"));
+      },
+    );
+
+    test(
+      'remaining time follows the running recording, not Settings',
+      () async {
+        await (await build()).init();
+        settings.quality = RecordingQuality.low; // MP3 32 kbit/s
+        await app.toggleRecord();
+        settings
+          ..type = RecordingType.wav
+          ..quality = RecordingQuality.best; // for the next recording
+        await app.refreshRemaining();
+        final low = RecordingProfile.of(
+          RecordingType.mp3,
+          RecordingQuality.low,
+        );
+        expect(app.remaining, low.remainingFor(referenceFreeBytes));
+        await app.toggleRecord();
+        await app.refreshRemaining();
+        expect(app.remaining, wavBest.remainingFor(referenceFreeBytes));
+      },
+    );
+
+    test(
+      'play is refused while a recording starts, and stopped before it',
+      () async {
+        await (await build()).init();
+        engine.startGate = Completer<void>();
+        final starting = app.toggleRecord();
+        await Future<void>.delayed(Duration.zero);
+        expect(await app.togglePlayCurrent(), PlayOutcome.recording);
+        engine.startGate!.complete();
+        expect(await starting, RecordOutcome.started);
+        expect(playback.playing, isFalse);
+        await app.toggleRecord();
+      },
+    );
+
+    test('messages wait while the app is in the background', () async {
+      await (await build()).init();
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      await app.toggleRecord();
+      app.setForeground(false);
+      engine.endedController.add(CaptureEnd.stopped);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(app.isRecording, isFalse);
+      expect(notices, isEmpty);
+      app.setForeground(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(notices, hasLength(1));
+    });
+
+    test(
+      'a recording that could not continue after an interruption is saved',
+      () async {
+        await (await build()).init();
+        final notices = <String>[];
+        app.notices.listen(notices.add);
+        await app.toggleRecord();
+        engine.interruptController.add(true);
+        await Future<void>.delayed(Duration.zero);
+        engine.resumeError = StateError('microphone still in use');
+        await app.onResume();
+        await Future<void>.delayed(Duration.zero);
+        expect(app.isRecording, isFalse);
+        expect(store.saved, hasLength(1));
+        expect(notices.single, contains("couldn't continue"));
+      },
+    );
+
+    test('an M4A the recorder failed to finish is not saved', () async {
+      await (await build()).init();
+      settings.type = RecordingType.m4a;
+      engine.content = List.filled(500, 0); // no MP4 index
+      await app.toggleRecord();
+      expect(await app.toggleRecord(), RecordOutcome.failed);
+      expect(store.saved, isEmpty);
+      expect(
+        File('${work.path}/pending/2026_09_23_19_14_05.m4a.incomplete')
+            .existsSync(),
+        isTrue,
+      );
+    });
+
+    test('recording waits for the app to finish starting up', () async {
+      await build();
+      final pending = app.toggleRecord(); // before init()
+      await app.init();
+      expect(await pending, RecordOutcome.started);
+      await app.toggleRecord();
+    });
 
     test('reports a missing microphone permission', () async {
       await (await build()).init();
@@ -588,25 +740,37 @@ void main() {
     );
 
     test('on resume, an unreachable folder keeps the last recording', () async {
-      await (await build()).init();
+      await build();
+      AppController open(FakeStore s) {
+        final c = AppController(
+          settings: settings,
+          store: s,
+          engine: engine,
+          playback: playback,
+          native: const NativeBridge(),
+          workDir: () async => work,
+        );
+        addTearDown(c.dispose);
+        return c;
+      }
+
+      // Storage unreachable at start: the last recording isn't forgotten.
       final throwing = _ThrowingFind(store);
-      final app2 = AppController(
-        settings: settings,
-        store: throwing,
-        engine: engine,
-        playback: playback,
-        native: const NativeBridge(),
-        workDir: () async => work,
-      );
-      addTearDown(app2.dispose);
-      await app2.init(); // find() throws: no current file yet
-      expect(app2.currentFile, isNull);
+      final first = open(throwing);
+      await first.init();
+      expect(first.currentFile, isNull);
+      expect(settings.lastFile, _last);
+
+      // Next start with storage back: it is shown again.
       throwing.fail = false;
-      await app2.init();
-      expect(app2.currentFile?.id, _last);
+      final second = open(throwing);
+      await second.init();
+      expect(second.currentFile?.id, _last);
+
+      // Unreachable again on resume: still shown.
       throwing.fail = true;
-      await app2.onResume();
-      expect(app2.currentFile?.id, _last);
+      await second.onResume();
+      expect(second.currentFile?.id, _last);
     });
 
     test('share goes to the store', () async {

@@ -1,4 +1,5 @@
 // Drives the screens the way a user would, on the reference phone.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart' show LicensePage;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:voice_recorder/src/audio/recorder_engine.dart';
 import 'package:voice_recorder/src/core/format.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
@@ -192,7 +194,7 @@ void main() {
       await tester.tap(labeled('Record'));
       await pumpUntil(tester, () => app.isRecording && !app.isBusy);
 
-      t.engine.endedController.add(null);
+      t.engine.endedController.add(CaptureEnd.stopped);
       await pumpUntil(tester, () => !app.isRecording && !app.isBusy);
       await tester.pump();
       expect(
@@ -552,6 +554,26 @@ void main() {
       );
       expect(find.text(oldest), findsOneWidget);
       expect(find.text('2016-03-01'), findsOneWidget);
+    });
+
+    testWidgets('leaving the list while a slow delete finishes is safe', (
+      tester,
+    ) async {
+      final t = await openList(tester);
+      await tester.tap(find.text('2026_09_18_21_23_04.mp3'));
+      await tester.pumpAndSettle();
+      t.store.slow = Completer<void>();
+      await tester.tap(labeled('Delete'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pump();
+      // Back while the storage is still busy.
+      Navigator.of(tester.element(labeled('Back'))).pop();
+      await tester.pumpAndSettle();
+      t.store.slow!.complete();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(t.store.files, hasLength(9));
     });
 
     testWidgets('back returns to the Recorder', (tester) async {
