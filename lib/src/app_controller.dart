@@ -32,6 +32,18 @@ enum RecordOutcome {
   busy,
 }
 
+/// What happened when the user pressed play.
+enum PlayOutcome {
+  /// Playing (or paused, if it was playing).
+  ok,
+
+  /// The file couldn't be opened (deleted, unreadable) or a recording runs.
+  notPlayable,
+
+  /// The system refused audio playback right now (e.g. during a call).
+  audioBusy,
+}
+
 /// Recordings stop automatically when less than this much time is left, so
 /// the file can still be saved.
 const minRecordingSpace = Duration(seconds: 30);
@@ -346,6 +358,9 @@ class AppController extends ChangeNotifier {
       return RecordOutcome.started;
     } catch (e) {
       debugPrint('Could not start recording: $e');
+      // iOS: the recorder may already have set its sample rate on the audio
+      // session, which would make later playback sound muffled.
+      if (!isAndroid) await _safe(native.resetAudioSampleRate);
       return RecordOutcome.failed;
     } finally {
       _busy = false;
@@ -373,7 +388,7 @@ class AppController extends ChangeNotifier {
         );
       }
     }
-    if (!isAndroid) unawaited(_safe(native.resetAudioSampleRate));
+    if (!isAndroid) await _safe(native.resetAudioSampleRate);
     await _levelSub?.cancel();
     await _interruptSub?.cancel();
     await _endedSub?.cancel();
@@ -434,28 +449,28 @@ class AppController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------- playback
-  /// Plays or pauses the recording shown on the Recorder screen. Returns
-  /// false if it couldn't be played.
-  Future<bool> togglePlayCurrent() async {
+  /// Plays or pauses the recording shown on the Recorder screen.
+  Future<PlayOutcome> togglePlayCurrent() async {
     final cur = _current;
-    if (cur == null) return false;
+    if (cur == null) return PlayOutcome.notPlayable;
     return togglePlay(cur);
   }
 
-  /// Plays or pauses [file]. Returns false if it couldn't be played (or a
-  /// recording is running).
-  Future<bool> togglePlay(RecordingFile file) async {
-    if (_recording) return false;
+  /// Plays or pauses [file].
+  Future<PlayOutcome> togglePlay(RecordingFile file) async {
+    if (_recording) return PlayOutcome.notPlayable;
     try {
       if (playback.isPlaying(file.id)) {
         await playback.pause();
       } else {
         await playback.play(file.id, store.playbackUri(file));
       }
-      return true;
+      return PlayOutcome.ok;
+    } on AudioBusyException {
+      return PlayOutcome.audioBusy;
     } catch (e) {
       debugPrint('Could not play ${file.name}: $e');
-      return false;
+      return PlayOutcome.notPlayable;
     }
   }
 

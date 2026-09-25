@@ -1,7 +1,17 @@
 import 'dart:async';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+
+/// Thrown by [Playback.play] when the system won't let the app play audio
+/// right now (e.g. during a phone call).
+class AudioBusyException implements Exception {
+  const AudioBusyException();
+
+  @override
+  String toString() => 'Audio is in use by another app or a call';
+}
 
 /// Plays one recording at a time; shared by the Recorder and list screens.
 abstract class Playback extends ChangeNotifier {
@@ -104,6 +114,13 @@ class JustAudioPlayback extends Playback {
   Future<void> play(String fileId, Uri uri) async {
     await load(fileId, uri);
     if (_fileId != fileId) return; // superseded by another file
+    // Ask for the audio session ourselves: just_audio would silently not
+    // play if refused, and audio_session would keep the refused request.
+    final session = await AudioSession.instance;
+    if (!await session.setActive(true)) {
+      await session.setActive(false);
+      throw const AudioBusyException();
+    }
     // play() completes when playback stops; errors surface as player events.
     unawaited(
       _player.play().catchError((Object e) {

@@ -215,6 +215,18 @@ void main() {
       expect(t.playback.fileId, isNull);
       await tester.pump(const Duration(seconds: 2));
 
+      // During a call the reason is different.
+      t.playback.broken.clear();
+      t.playback.audioBusy = true;
+      await tester.tap(labeled('Play'));
+      await tester.pump();
+      expect(
+        find.text("Can't play while a call or another app uses audio"),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 2));
+      t.playback.audioBusy = false;
+
       // Once it opens again it plays.
       t.playback.broken.clear();
       await tester.tap(labeled('Play'));

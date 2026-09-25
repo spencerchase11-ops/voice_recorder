@@ -89,9 +89,8 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   }
 
   Future<void> _play(RecordingFile f) async {
-    if (!await _app.togglePlay(f) && mounted) {
-      showToast(context, "Can't play this file");
-    }
+    final outcome = await _app.togglePlay(f);
+    if (mounted) showPlayProblem(context, outcome);
   }
 
   @override

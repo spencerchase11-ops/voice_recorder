@@ -540,12 +540,25 @@ void main() {
     test('a file that fails to open can be retried', () async {
       await (await build()).init();
       playback.broken.add(_last);
-      expect(await app.togglePlayCurrent(), isFalse);
+      expect(await app.togglePlayCurrent(), PlayOutcome.notPlayable);
       expect(playback.fileId, isNull);
       playback.broken.clear();
-      expect(await app.togglePlayCurrent(), isTrue);
+      expect(await app.togglePlayCurrent(), PlayOutcome.ok);
       expect(app.isPlayingCurrent, isTrue);
     });
+
+    test(
+      'playback refused by the system (a call) is reported as such',
+      () async {
+        await (await build()).init();
+        playback.audioBusy = true;
+        expect(await app.togglePlayCurrent(), PlayOutcome.audioBusy);
+        expect(app.isPlayingCurrent, isFalse);
+        playback.audioBusy = false;
+        expect(await app.togglePlayCurrent(), PlayOutcome.ok);
+        expect(app.isPlayingCurrent, isTrue);
+      },
+    );
 
     test('seek loads a file paused and moves to the fraction', () async {
       await (await build()).init();

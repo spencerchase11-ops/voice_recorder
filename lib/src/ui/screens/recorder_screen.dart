@@ -253,9 +253,8 @@ class _RecorderBody extends StatelessWidget {
                 onTap: app.currentFile == null || app.isRecording
                     ? null
                     : () async {
-                        if (!await app.togglePlayCurrent() && context.mounted) {
-                          showToast(context, "Can't play this file");
-                        }
+                        final outcome = await app.togglePlayCurrent();
+                        if (context.mounted) showPlayProblem(context, outcome);
                       },
               ),
             ),

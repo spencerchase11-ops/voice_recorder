@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../../app_controller.dart';
 import '../../core/recording_file.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
@@ -66,4 +67,16 @@ Future<bool> showChooseFolderDialog(
   );
   if (go != true || !context.mounted) return false;
   return app.chooseFolder();
+}
+
+/// Tells the user why pressing play didn't play anything.
+void showPlayProblem(BuildContext context, PlayOutcome outcome) {
+  switch (outcome) {
+    case PlayOutcome.ok:
+      return;
+    case PlayOutcome.notPlayable:
+      showToast(context, "Can't play this file");
+    case PlayOutcome.audioBusy:
+      showToast(context, "Can't play while a call or another app uses audio");
+  }
 }

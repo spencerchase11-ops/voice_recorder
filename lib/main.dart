@@ -58,6 +58,9 @@ Future<void> _configureAudioSession() async {
         usage: AndroidAudioUsage.media,
       ),
       androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+      // Recordings are speech: pause for a navigation prompt or similar
+      // (and resume after it) instead of playing over it.
+      androidWillPauseWhenDucked: true,
     ),
   );
 }

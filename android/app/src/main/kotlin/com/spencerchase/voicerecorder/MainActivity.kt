@@ -1,6 +1,8 @@
 package com.spencerchase.voicerecorder
 
 import android.content.Context
+import android.media.AudioManager
+import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -14,6 +16,12 @@ import io.flutter.embedding.engine.FlutterEngineCache
  * foreground while a recording runs.
  */
 class MainActivity : FlutterActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Volume keys adjust playback volume here, not the ringer.
+        volumeControlStream = AudioManager.STREAM_MUSIC
+    }
 
     override fun provideFlutterEngine(context: Context): FlutterEngine {
         FlutterEngineCache.getInstance().get(ENGINE_ID)?.let { return it }

@@ -187,9 +187,13 @@ class FakePlayback extends Playback {
     notifyListeners();
   }
 
+  /// Makes play() fail like during a phone call.
+  bool audioBusy = false;
+
   @override
   Future<void> play(String fileId, Uri uri) async {
     await load(fileId, uri);
+    if (audioBusy) throw const AudioBusyException();
     _playing = true;
     played.add(fileId);
     notifyListeners();
