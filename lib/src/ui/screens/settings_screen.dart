@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../config.dart';
 import '../../core/recording_format.dart';
+import '../../core/settings.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
@@ -16,17 +17,61 @@ import '../widgets/frame.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
+import 'recently_deleted_screen.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   static Route<void> route() =>
       MaterialPageRoute<void>(builder: (_) => const SettingsScreen());
 
   @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  /// How many recordings are in Recently deleted (null until known).
+  int? _deleted;
+  bool _loaded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_loaded) {
+      _loaded = true;
+      _countDeleted();
+    }
+  }
+
+  Future<void> _countDeleted() async {
+    final n = (await AppScope.read(context).deletedRecordings()).length;
+    if (mounted) setState(() => _deleted = n);
+  }
+
+  Future<void> _openRecentlyDeleted() async {
+    await Navigator.of(context).push(RecentlyDeletedScreen.route());
+    if (mounted) await _countDeleted();
+  }
+
+  Future<void> _import() async {
+    final app = AppScope.read(context);
+    final n = await app.importRecordings();
+    if (!mounted || n == null) return;
+    showToast(
+      context,
+      n == 0
+          ? 'No new recordings were found there'
+          : n == 1
+          ? '1 recording imported'
+          : '$n recordings imported',
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final settings = app.settings;
+    final deleted = _deleted;
 
     return ScreenFrame(
       child: Column(
@@ -97,13 +142,25 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   _Item(
                     icon: const InkIcon(
+                      AppIcons.noise,
+                      size: Size(23.6, 23.7),
+                      color: Color(0xFFFFFFFF),
+                    ),
+                    title: 'Noise reduction',
+                    summary: 'Filters out background noise (MP3 and WAV)',
+                    trailing: _HoloCheckBox(checked: settings.noiseReduction),
+                    checked: settings.noiseReduction,
+                    onTap: () =>
+                        settings.noiseReduction = !settings.noiseReduction,
+                  ),
+                  _Item(
+                    icon: const InkIcon(
                       AppIcons.folderOpen,
                       size: Size(24.6, 19.7),
                       color: Color(0xFFFFFFFF),
                     ),
                     title: 'Folder',
                     summary: app.store.folderDisplayPath,
-                    divider: false,
                     onTap: app.isRecording
                         ? null
                         : () async {
@@ -113,6 +170,72 @@ class SettingsScreen extends StatelessWidget {
                               await app.chooseFolder();
                             }
                           },
+                  ),
+                  if (Platform.isIOS)
+                    _Item(
+                      icon: const InkIcon(
+                        AppIcons.import,
+                        size: Size(19.0, 23.2),
+                        color: Color(0xFFFFFFFF),
+                      ),
+                      title: 'Import recordings',
+                      summary: 'From Files, iCloud Drive or a USB drive',
+                      onTap: _import,
+                    ),
+                  _Item(
+                    icon: const InkIcon(
+                      AppIcons.recentlyDeleted,
+                      size: Size(24.0, 24.0),
+                      color: Color(0xFFFFFFFF),
+                    ),
+                    title: 'Recently deleted',
+                    summary: switch (deleted) {
+                      null || 0 => 'Deleted recordings are kept for 30 days',
+                      1 => '1 recording, kept for 30 days',
+                      _ => '$deleted recordings, kept for 30 days',
+                    },
+                    divider: false,
+                    onTap: _openRecentlyDeleted,
+                  ),
+                  const _Section('Playback'),
+                  _Item(
+                    icon: const InkIcon(
+                      AppIcons.lock,
+                      size: Size(17.9, 23.4),
+                      color: Color(0xFFFFFFFF),
+                    ),
+                    title: 'Lock screen controls',
+                    summary: settings.lockScreenControls
+                        ? 'Keeps playing in the background, with controls on '
+                              'the lock screen'
+                        : 'Playback stops when you leave the app',
+                    trailing: _HoloCheckBox(
+                      checked: settings.lockScreenControls,
+                    ),
+                    checked: settings.lockScreenControls,
+                    onTap: () => settings.lockScreenControls =
+                        !settings.lockScreenControls,
+                  ),
+                  _Item(
+                    icon: const InkIcon(
+                      AppIcons.speed,
+                      size: Size(26.6, 21.3),
+                      color: Color(0xFFFFFFFF),
+                    ),
+                    title: 'Playback speed',
+                    summary: formatSpeed(settings.playbackSpeed),
+                    divider: false,
+                    onTap: () async {
+                      final i = await showChoiceDialog(
+                        context,
+                        title: 'Playback speed',
+                        items: [for (final v in playbackSpeeds) formatSpeed(v)],
+                        selected: playbackSpeeds.indexOf(
+                          settings.playbackSpeed,
+                        ),
+                      );
+                      if (i != null) settings.playbackSpeed = playbackSpeeds[i];
+                    },
                   ),
                   const _Section('More app'),
                   _Item(
@@ -239,6 +362,8 @@ class _Item extends StatelessWidget {
     this.summary,
     this.onTap,
     this.divider = true,
+    this.trailing,
+    this.checked,
   });
 
   final Widget icon;
@@ -246,6 +371,12 @@ class _Item extends StatelessWidget {
   final String? summary;
   final VoidCallback? onTap;
   final bool divider;
+
+  /// A check box at the right end of the row.
+  final Widget? trailing;
+
+  /// For accessibility: the state of a check-box row.
+  final bool? checked;
 
   @override
   Widget build(BuildContext context) {
@@ -256,6 +387,7 @@ class _Item extends StatelessWidget {
       children: [
         PressableArea(
           onTap: onTap,
+          selected: checked,
           semanticLabel: summary == null ? title : '$title, $summary',
           child: ConstrainedBox(
             constraints: const BoxConstraints(
@@ -270,10 +402,17 @@ class _Item extends StatelessWidget {
                   bottom: 0,
                   child: Center(child: icon),
                 ),
+                if (trailing != null)
+                  Positioned(
+                    right: 16,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(child: trailing),
+                  ),
                 Padding(
-                  padding: const EdgeInsets.only(
+                  padding: EdgeInsets.only(
                     left: Spec.settingsTextLeft,
-                    right: 12,
+                    right: trailing == null ? 12 : 56,
                   ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(
@@ -311,4 +450,58 @@ class _Item extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A Holo (dark) check box: a light square, with a blue tick when on.
+class _HoloCheckBox extends StatelessWidget {
+  const _HoloCheckBox({required this.checked});
+
+  final bool checked;
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: 24,
+    child: CustomPaint(painter: _CheckBoxPainter(checked)),
+  );
+}
+
+class _CheckBoxPainter extends CustomPainter {
+  _CheckBoxPainter(this.checked);
+
+  final bool checked;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final box = Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: 17,
+      height: 17,
+    );
+    canvas
+      ..drawRect(box, Paint()..color = const Color(0x33000000))
+      ..drawRect(
+        box,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..color = const Color(0xFFD8D8D8),
+      );
+    if (!checked) return;
+    final tick = Path()
+      ..moveTo(box.left + 3.2, box.center.dy + 0.2)
+      ..lineTo(box.left + 7.2, box.bottom - 3.6)
+      ..lineTo(box.right + 2.6, box.top - 3.2);
+    canvas.drawPath(
+      tick,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = Spec.holoBlue,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CheckBoxPainter old) => old.checked != checked;
 }

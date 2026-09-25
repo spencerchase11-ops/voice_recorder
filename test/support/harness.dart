@@ -41,6 +41,7 @@ const imageAssets = [
   'assets/images/microphone.png',
   'assets/images/record.png',
   'assets/images/record_stop.png',
+  'assets/images/record_pause.png',
   'assets/images/play.png',
   'assets/images/play_disabled.png',
   'assets/images/pause.png',
@@ -104,7 +105,7 @@ Future<TestApp> pumpReferenceApp(
     store: store,
     engine: engine,
     playback: playback,
-    native: const NativeBridge(),
+    native: NativeBridge(),
     workDir: () async => work!,
   );
   await tester.runAsync(controller.init);

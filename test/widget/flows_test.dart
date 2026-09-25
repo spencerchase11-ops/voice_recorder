@@ -28,11 +28,18 @@ List<String> mockNativeChannel() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(channel, (call) async {
-    calls.add(call.method);
+    // Asked on every start and return to the app (home-screen shortcut).
+    if (call.method != 'takeLaunchAction') calls.add(call.method);
     return null;
   });
   addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
   return calls;
+}
+
+/// Lets the undo toast of a delete run out.
+Future<void> waitOutUndo(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 7));
+  await tester.pumpAndSettle();
 }
 
 const _kris = 'kris n evan got back then zach.mp3';
@@ -80,9 +87,12 @@ void main() {
       final name = app.currentPath!.split('/').last;
       expect(name, matches(RegExp(r'^\d{4}_\d\d_\d\d_\d\d_\d\d_\d\d\.mp3$')));
       expect(find.text('$_folder/$name'), findsOneWidget);
-      for (final l in ['Share', 'Rename', 'Delete', 'Play']) {
+      for (final l in ['Share', 'Rename', 'Delete']) {
         expect(enabled(tester, l), isFalse, reason: l);
       }
+      // The play button's place holds pause while recording.
+      expect(labeled('Play'), findsNothing);
+      expect(enabled(tester, 'Pause recording'), isTrue);
 
       t.engine.levelController.add(1.0);
       await tester.pump();
@@ -268,11 +278,22 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
-      expect(t.store.files.map((f) => f.name), isNot(contains(_kris)));
+      expect(
+        (await tester.runAsync(t.store.list))!.map((f) => f.name),
+        isNot(contains(_kris)),
+      );
       expect(find.text('$_folder/$_kris'), findsNothing);
       expect(find.text('00:00'), findsOneWidget);
       expect(labeled('Delete'), findsNothing);
       expect(find.text('Voice Recorder'), findsOneWidget);
+      expect(find.text('Moved to Recently deleted'), findsOneWidget);
+
+      // Undo puts it back where it was.
+      await tester.tap(labeled('Undo'));
+      await tester.pumpAndSettle();
+      expect(find.text('$_folder/$_kris'), findsOneWidget);
+      expect(find.text('33:57'), findsOneWidget);
+      expect(find.text('Moved to Recently deleted'), findsNothing);
     });
 
     testWidgets('rename keeps the extension and drops illegal characters', (
@@ -428,7 +449,9 @@ void main() {
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
       expect(find.text('late night idea.mp3'), findsNothing);
-      expect(t.store.files, hasLength(9));
+      expect(await tester.runAsync(t.store.list), hasLength(9));
+      expect(await tester.runAsync(t.store.listTrash), hasLength(1));
+      await waitOutUndo(tester);
     });
 
     testWidgets('play buttons play and pause rows', (tester) async {
@@ -573,7 +596,7 @@ void main() {
       t.store.slow!.complete();
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(t.store.files, hasLength(9));
+      expect(await tester.runAsync(t.store.list), hasLength(9));
     });
 
     testWidgets('back returns to the Recorder', (tester) async {

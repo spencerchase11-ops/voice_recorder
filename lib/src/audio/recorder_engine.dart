@@ -14,19 +14,31 @@ abstract class RecorderEngine {
   /// Asks for (and returns) microphone permission.
   Future<bool> requestPermission();
 
-  /// Starts capturing into [path] using [profile].
-  Future<void> start(RecordingProfile profile, String path);
+  /// Starts capturing into [path] using [profile]. [recorded] is stored in
+  /// MP3 and WAV files as their recording date; [noiseReduction] turns on
+  /// the platform's noise suppression (MP3 and WAV).
+  Future<void> start(
+    RecordingProfile profile,
+    String path, {
+    DateTime? recorded,
+    bool noiseReduction = false,
+  });
 
   /// Stops and finalizes the file.
   Future<void> stop();
 
-  /// Resumes a capture the system paused (see [interrupted]).
+  /// Pauses capture at the user's request, until [resume].
+  Future<void> pause();
+
+  /// Resumes a capture paused by [pause] or by the system (see
+  /// [interrupted]).
   Future<void> resume();
 
   /// Input level between 0 (silence) and 1 (full scale), about 10 per second.
   Stream<double> get levels;
 
-  /// True while capture is paused by the system (e.g. a phone call).
+  /// True while capture is paused by the system (e.g. a phone call), not
+  /// by [pause].
   Stream<bool> get interrupted;
 
   /// Fires once when a recording can't go on: see [CaptureEnd]. The file
@@ -110,7 +122,13 @@ class RecordPluginEngine implements RecorderEngine {
   /// Between a successful start and the end of [stop].
   bool _running = false;
   bool _stopping = false;
+
+  /// Capture is paused, by the user or by the system.
   bool _paused = false;
+
+  /// The user paused: nothing is recorded until they resume, even if the
+  /// system resumes capture on its own (iOS does after a call).
+  bool _userPaused = false;
   bool _endedSent = false;
 
   /// The format the platform actually delivers (it may differ from the
@@ -145,30 +163,44 @@ class RecordPluginEngine implements RecorderEngine {
     ],
   );
 
-  RecordConfig _config(RecordingProfile profile, AudioEncoder encoder) =>
-      RecordConfig(
-        encoder: encoder,
-        sampleRate: profile.sampleRate,
-        bitRate: (profile.bitRateKbps ?? 128) * 1000,
-        numChannels: 1,
-        androidConfig: _androidConfig,
-        iosConfig: _iosConfig,
-        // Android: audio focus must never pause a recording (after a
-        // permanent focus loss, e.g. another app starting music, it would
-        // never resume). A phone call records as silence instead.
-        // iOS: calls and Siri pause the recording; it resumes afterwards.
-        audioInterruption: _isAndroid
-            ? AudioInterruptionMode.none
-            : AudioInterruptionMode.pauseResume,
-      );
+  RecordConfig _config(
+    RecordingProfile profile,
+    AudioEncoder encoder, {
+    bool noiseReduction = false,
+  }) => RecordConfig(
+    encoder: encoder,
+    sampleRate: profile.sampleRate,
+    bitRate: (profile.bitRateKbps ?? 128) * 1000,
+    numChannels: 1,
+    androidConfig: _androidConfig,
+    iosConfig: _iosConfig,
+    // Android: the system's noise suppressor on the microphone input.
+    // iOS: voice processing (noise and echo reduction), without automatic
+    // gain.
+    noiseSuppress: noiseReduction && _isAndroid,
+    echoCancel: noiseReduction && !_isAndroid,
+    // Android: audio focus must never pause a recording (after a
+    // permanent focus loss, e.g. another app starting music, it would
+    // never resume). A phone call records as silence instead.
+    // iOS: calls and Siri pause the recording; it resumes afterwards.
+    audioInterruption: _isAndroid
+        ? AudioInterruptionMode.none
+        : AudioInterruptionMode.pauseResume,
+  );
 
   @override
   Future<bool> requestPermission() => _recorder.hasPermission();
 
   @override
-  Future<void> start(RecordingProfile profile, String path) async {
+  Future<void> start(
+    RecordingProfile profile,
+    String path, {
+    DateTime? recorded,
+    bool noiseReduction = false,
+  }) async {
     _writeError = null;
     _paused = false;
+    _userPaused = false;
     _endedSent = false;
     _channels = 1;
     _sampleRate = profile.sampleRate;
@@ -194,7 +226,7 @@ class RecordPluginEngine implements RecorderEngine {
     }
 
     final stream = await _recorder.startStream(
-      _config(profile, AudioEncoder.pcm16bits),
+      _config(profile, AudioEncoder.pcm16bits, noiseReduction: noiseReduction),
     );
     _running = true;
 
@@ -211,9 +243,14 @@ class RecordPluginEngine implements RecorderEngine {
             path,
             sampleRate: rate,
             bitRateKbps: bitRate!,
+            recorded: recorded,
           );
         } else {
-          _wav = await WavWriter.open(path, sampleRate: rate);
+          _wav = await WavWriter.open(
+            path,
+            sampleRate: rate,
+            recorded: recorded,
+          );
         }
       } catch (e) {
         // Nothing can be written (e.g. storage full): end the recording now
@@ -231,6 +268,9 @@ class RecordPluginEngine implements RecorderEngine {
     _pcmSub = stream.listen(
       (chunk) {
         _sinceChunk.reset();
+        // Audio delivered after the system resumed a paused recording on its
+        // own, before it is paused again (see _onState).
+        if (_userPaused) return;
         final now = DateTime.now();
         final pcm = _channels == 2 ? downmixToMono(chunk) : chunk;
         if (now.difference(lastLevel).inMilliseconds >= 90) {
@@ -274,13 +314,27 @@ class RecordPluginEngine implements RecorderEngine {
     switch (state) {
       case RecordState.pause:
         _paused = true;
-        _interrupted.add(true);
+        if (!_userPaused) _interrupted.add(true);
       case RecordState.record:
+        if (_userPaused) {
+          // The system resumed a recording the user had paused (iOS, when a
+          // call ends): keep it paused.
+          if (_running && !_stopping) unawaited(_pauseQuietly());
+          return;
+        }
         _paused = false;
         _sinceChunk.reset();
         _interrupted.add(false);
       case RecordState.stop:
         _endedOnItsOwn(CaptureEnd.stopped);
+    }
+  }
+
+  Future<void> _pauseQuietly() async {
+    try {
+      await _recorder.pause();
+    } catch (_) {
+      // Stopped meanwhile; nothing to keep paused.
     }
   }
 
@@ -298,8 +352,29 @@ class RecordPluginEngine implements RecorderEngine {
   }
 
   @override
+  Future<void> pause() async {
+    if (!_running || _stopping) return;
+    // Set first: the watchdog must not count the pause as a stall, and no
+    // chunk may be written from here on.
+    _userPaused = true;
+    _paused = true;
+    await _recorder.pause();
+  }
+
+  @override
   Future<void> resume() async {
-    if (_running && _paused) await _recorder.resume();
+    if (!_running || _stopping) return;
+    final wasUserPaused = _userPaused;
+    _userPaused = false;
+    try {
+      await _recorder.resume();
+    } catch (e) {
+      _userPaused = wasUserPaused;
+      rethrow;
+    }
+    // A resume that happened while only the user's pause was in effect
+    // restarts the stall clock (the state event may come later).
+    _sinceChunk.reset();
   }
 
   @override
@@ -338,6 +413,7 @@ class RecordPluginEngine implements RecorderEngine {
         _running = false;
         _stopping = false;
         _paused = false;
+        _userPaused = false;
       }
     }
     error ??= _writeError;

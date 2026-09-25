@@ -5,13 +5,57 @@ import 'frame.dart';
 
 /// The recessed "LCD" panel that holds the timer: an inner shadow along the
 /// top and left edges and a light bevel along the bottom and right edges.
-class TimerBox extends StatelessWidget {
-  const TimerBox({super.key, required this.text});
+/// With [blink] (a paused recording) the digits flash.
+class TimerBox extends StatefulWidget {
+  const TimerBox({super.key, required this.text, this.blink = false});
 
   final String text;
+  final bool blink;
+
+  @override
+  State<TimerBox> createState() => _TimerBoxState();
+}
+
+class _TimerBoxState extends State<TimerBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _blink = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.blink) _blink.repeat();
+  }
+
+  @override
+  void didUpdateWidget(TimerBox old) {
+    super.didUpdateWidget(old);
+    if (widget.blink && !_blink.isAnimating) {
+      _blink.repeat();
+    } else if (!widget.blink && _blink.isAnimating) {
+      _blink
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _blink.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final digits = AText(
+      widget.text,
+      style: Spec.timerText,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.visible,
+    );
     return SizedBox(
       width: Spec.timerBoxWidth,
       height: Spec.timerBoxHeight,
@@ -24,13 +68,16 @@ class TimerBox extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: FittedBox(
               fit: BoxFit.scaleDown,
-              child: AText(
-                text,
-                style: Spec.timerText,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.visible,
-              ),
+              child: widget.blink
+                  ? AnimatedBuilder(
+                      animation: _blink,
+                      builder: (context, child) => Opacity(
+                        opacity: _blink.value < 0.6 ? 1 : 0,
+                        child: child,
+                      ),
+                      child: digits,
+                    )
+                  : digits,
             ),
           ),
         ),

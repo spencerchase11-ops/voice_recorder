@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
+import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/playback.dart';
 import 'package:voice_recorder/src/audio/recorder_engine.dart';
 import 'package:voice_recorder/src/core/format.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/recording_format.dart';
+import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/storage/recording_store.dart';
 
 /// In-memory [RecordingStore].
@@ -33,6 +37,17 @@ class FakeStore extends RecordingStore {
   /// Old ids that [find] resolves to current ones (moved files).
   final aliases = <String, String>{};
 
+  /// File contents for [openBytes], by id (a missing file reads as empty).
+  final contents = <String, List<int>>{};
+
+  /// Ids whose bytes can't be opened (like a file deleted meanwhile).
+  final unreadable = <String>{};
+  var opens = 0;
+
+  /// Makes [renameTo] (rename, trash, restore) fail.
+  bool failRenames = false;
+  final deletedForGood = <String>[];
+
   @override
   String get folderDisplayPath => '/storage/emulated/0/Recorders';
 
@@ -51,7 +66,56 @@ class FakeStore extends RecordingStore {
   }
 
   @override
-  Future<List<RecordingFile>> list() async => [...files];
+  Future<List<RecordingFile>> list() async => [
+    for (final f in files)
+      if (isAudioFileName(f.name)) f,
+  ];
+
+  @override
+  Future<List<TrashedRecording>> listTrash() async => [
+    for (final f in files) ?TrashedRecording.parse(f),
+  ];
+
+  @override
+  Future<RecordingFile?> restore(TrashedRecording t) async {
+    var name = t.originalName;
+    final (base, ext) = splitExtension(name);
+    for (var n = 1; files.any((f) => f.name == name); n++) {
+      name = '$base ($n)${ext.isEmpty ? '' : '.$ext'}';
+    }
+    return renameTo(t.file, name);
+  }
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
+    await slow?.future;
+    if (failRenames) return null;
+    final i = files.indexWhere((f) => f.id == file.id);
+    if (i < 0) return null;
+    final r = RecordingFile(
+      id: 'mem://$fileName',
+      name: fileName,
+      size: file.size,
+      modified: file.modified,
+    );
+    files[i] = r;
+    final bytes = contents.remove(file.id);
+    if (bytes != null) contents[r.id] = bytes;
+    return r;
+  }
+
+  @override
+  Future<void> shareAll(List<RecordingFile> files, {Rect? origin}) async =>
+      shared.addAll(files.map((f) => f.name));
+
+  @override
+  Future<ByteAccess> openBytes(RecordingFile file, {bool write = false}) async {
+    opens++;
+    if (unreadable.contains(file.id)) {
+      throw const FileSystemException('gone');
+    }
+    return MemoryBytes(contents.putIfAbsent(file.id, () => <int>[]));
+  }
 
   @override
   Future<RecordingFile?> find(String id) async {
@@ -70,7 +134,8 @@ class FakeStore extends RecordingStore {
   ) async {
     if (failSaves) throw const FileSystemException('no access');
     final size = await source.length();
-    savedBytes[fileName] = await source.readAsBytes();
+    final bytes = await source.readAsBytes();
+    savedBytes[fileName] = bytes;
     await source.delete();
     final f = RecordingFile(
       id: 'mem://$fileName',
@@ -78,35 +143,28 @@ class FakeStore extends RecordingStore {
       size: size,
       modified: DateTime(2026, 9, 23, 19, 14),
     );
+    contents[f.id] = [...bytes];
     files.add(f);
     saved.add(fileName);
     return f;
   }
 
   @override
-  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) async {
-    await slow?.future;
-    final i = files.indexWhere((f) => f.id == file.id);
-    if (i < 0) return null;
-    final name = file.extension.isEmpty
-        ? newBaseName
-        : '$newBaseName.${file.extension}';
-    final r = file.copyWith(id: 'mem://$name', name: name);
-    files[i] = r;
-    return r;
-  }
+  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) =>
+      renameTo(
+        file,
+        file.extension.isEmpty ? newBaseName : '$newBaseName.${file.extension}',
+      );
 
   @override
   Future<bool> delete(RecordingFile file) async {
     await slow?.future;
     final before = files.length;
     files.removeWhere((f) => f.id == file.id);
+    contents.remove(file.id);
+    if (files.length < before) deletedForGood.add(file.name);
     return files.length < before;
   }
-
-  @override
-  Future<void> share(RecordingFile file, {Rect? origin}) async =>
-      shared.add(file.name);
 
   @override
   Future<int?> usableBytes({int pendingBytes = 0}) async => free;
@@ -136,12 +194,31 @@ class FakeEngine implements RecorderEngine {
   @override
   Future<bool> requestPermission() async => permission;
 
+  DateTime? recorded;
+  bool? noiseReduction;
+
   @override
-  Future<void> start(RecordingProfile profile, String path) async {
+  Future<void> start(
+    RecordingProfile profile,
+    String path, {
+    DateTime? recorded,
+    bool noiseReduction = false,
+  }) async {
     this.profile = profile;
     this.path = path;
+    this.recorded = recorded;
+    this.noiseReduction = noiseReduction;
     await startGate?.future;
     await File(path).writeAsBytes(content);
+  }
+
+  var pauses = 0;
+  Object? pauseError;
+
+  @override
+  Future<void> pause() async {
+    pauses++;
+    if (pauseError != null) throw pauseError!;
   }
 
   @override
@@ -235,6 +312,17 @@ class FakePlayback extends Playback {
     notifyListeners();
   }
 
+  double _speed = 1;
+
+  @override
+  double get speed => _speed;
+
+  @override
+  Future<void> setSpeed(double speed) async {
+    _speed = speed;
+    notifyListeners();
+  }
+
   void setPosition(Duration p) {
     _position = p;
     notifyListeners();
@@ -272,3 +360,41 @@ final int referenceFreeBytes = (9665 * 3600 + 13 * 60 + 10) * 20000;
 
 /// Display name helper for tests.
 String baseOf(String name) => splitExtension(name).$1;
+
+/// [ByteAccess] over bytes in memory.
+class MemoryBytes implements ByteAccess {
+  MemoryBytes(this.data);
+
+  final List<int> data;
+  var closed = false;
+
+  @override
+  Future<int> length() async => data.length;
+
+  @override
+  Future<Uint8List> read(int offset, int count) async {
+    final start = math.min(offset, data.length);
+    final end = math.min(offset + count, data.length);
+    return Uint8List.fromList(data.sublist(start, end));
+  }
+
+  @override
+  Future<void> write(int offset, List<int> bytes) async {
+    if (data.length < offset + bytes.length) {
+      data.addAll(List.filled(offset + bytes.length - data.length, 0));
+    }
+    data.setRange(offset, offset + bytes.length, bytes);
+  }
+
+  @override
+  Future<void> close() async => closed = true;
+}
+
+/// [NativeBridge] whose platform events come from the test. Calls still go
+/// to the method channel (mock it to see them).
+class FakeNative extends NativeBridge {
+  final eventController = StreamController<NativeEvent>.broadcast();
+
+  @override
+  Stream<NativeEvent> get events => eventController.stream;
+}

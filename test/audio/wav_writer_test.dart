@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/wav_writer.dart';
 
 void main() {
@@ -43,10 +44,46 @@ void main() {
     ]);
     await WavWriter.repair(file, sampleRate: 44100);
     final b = await file.readAsBytes();
-    expect(b.length, 44 + 5001);
+    // The half-written sample at the end is dropped.
+    expect(b.length, 44 + 5000);
     expect(u32(b, 40), 5000);
     expect(u32(b, 4), 36 + 5000);
     expect(u32(b, 24), 44100);
+  });
+
+  test('repair keeps a finished file (with its date chunk) intact', () async {
+    final path = '${dir.path}/d.wav';
+    final w = await WavWriter.open(
+      path,
+      sampleRate: 16000,
+      recorded: DateTime(2026, 9, 25, 3, 30),
+    );
+    await w.add(Uint8List(3200));
+    await w.close();
+    final file = File(path);
+    final before = await file.readAsBytes();
+    await WavWriter.repair(file, sampleRate: 16000);
+    expect(await file.readAsBytes(), before);
+  });
+
+  test('close stores the recording date after the data', () async {
+    final path = '${dir.path}/e.wav';
+    final w = await WavWriter.open(
+      path,
+      sampleRate: 16000,
+      recorded: DateTime(2026, 9, 25, 3, 30, 5),
+    );
+    await w.add(Uint8List(32000));
+    await w.close();
+    final b = await File(path).readAsBytes();
+    expect(u32(b, 40), 32000);
+    expect(u32(b, 4), b.length - 8);
+    expect(String.fromCharCodes(b.sublist(44 + 32000, 44 + 32000 + 4)), 'LIST');
+    final a = await FileByteAccess.open(File(path));
+    final info = await readAudioInfo(a, path);
+    await a.close();
+    expect(info.recorded, DateTime(2026, 9, 25, 3, 30, 5));
+    expect(info.duration, const Duration(seconds: 1));
   });
 
   test('repair ignores files too short to hold a header', () async {

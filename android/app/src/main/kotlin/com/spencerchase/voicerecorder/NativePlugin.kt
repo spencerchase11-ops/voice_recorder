@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.StatFs
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
@@ -28,6 +29,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -49,18 +52,35 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
+    /** Documents opened for random access, by handle. Only used on [io]. */
+    private val documents = HashMap<Int, OpenDocument>()
+    private var nextHandle = 1
+
     private val activity: Activity? get() = binding?.activity
 
     // ---------------------------------------------------------- lifecycle
     override fun onAttachedToEngine(b: FlutterPlugin.FlutterPluginBinding) {
         context = b.applicationContext
         channel = MethodChannel(b.binaryMessenger, CHANNEL).also { it.setMethodCallHandler(this) }
+        active = this
     }
 
     override fun onDetachedFromEngine(b: FlutterPlugin.FlutterPluginBinding) {
+        if (active === this) active = null
         channel?.setMethodCallHandler(null)
         channel = null
+        io.execute {
+            for (doc in documents.values) doc.close()
+            documents.clear()
+        }
         io.shutdown()
+    }
+
+    /** Tells the Dart side about something that happened outside the app. */
+    private fun send(method: String, args: Map<String, Any?>): Boolean {
+        val ch = channel ?: return false
+        main.post { ch.invokeMethod(method, args) }
+        return true
     }
 
     override fun onAttachedToActivity(b: ActivityPluginBinding) {
@@ -83,7 +103,9 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
             "pickFolder" -> pickFolder(call.argument("initialPath"), result)
             "hasFolderAccess" -> background(result) { hasFolderAccess(Uri.parse(call.argument<String>("treeUri"))) }
             "folderPath" -> background(result) { folderPath(Uri.parse(call.argument<String>("treeUri"))) }
-            "listFolder" -> background(result) { listFolder(Uri.parse(call.argument<String>("treeUri"))) }
+            "listFolder" -> background(result) {
+                listFolder(Uri.parse(call.argument<String>("treeUri")), call.argument<Boolean>("hidden") ?: false)
+            }
             "statDocument" -> background(result) { stat(Uri.parse(call.argument<String>("documentUri"))) }
             "importFile" -> background(result) {
                 importFile(
@@ -101,18 +123,65 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 stat(renamed)
             }
             "deleteDocument" -> background(result) { delete(Uri.parse(call.argument<String>("documentUri"))) }
-            "shareDocument" -> {
-                share(Uri.parse(call.argument<String>("documentUri")), call.argument<String>("mimeType")!!)
+            "shareDocuments" -> {
+                share(
+                    call.argument<List<String>>("documentUris")!!.map { Uri.parse(it) },
+                    call.argument<String>("mimeType")!!,
+                )
                 result.success(null)
+            }
+            "openDocument" -> background(result) {
+                openDocument(Uri.parse(call.argument<String>("documentUri")), call.argument<Boolean>("write") ?: false)
+            }
+            "documentLength" -> background(result) { document(call).length() }
+            "readDocument" -> background(result) {
+                document(call).read(call.argument<Number>("offset")!!.toLong(), call.argument<Int>("count")!!)
+            }
+            "writeDocument" -> background(result) {
+                document(call).write(call.argument<Number>("offset")!!.toLong(), call.argument<ByteArray>("bytes")!!)
+                null
+            }
+            "closeDocument" -> background(result) {
+                documents.remove(call.argument<Int>("handle")!!)?.close()
+                null
             }
             "startRecordingService" -> {
                 requestNotificationPermission()
                 RecordingService.start(context, call.argument("title")!!, call.argument("text")!!)
                 result.success(null)
             }
+            "updateRecordingService" -> {
+                RecordingService.update(
+                    call.argument("text")!!,
+                    call.argument<Boolean>("paused") ?: false,
+                    call.argument<Number>("elapsedMs")?.toLong() ?: 0L,
+                )
+                result.success(null)
+            }
             "stopRecordingService" -> {
                 RecordingService.stop(context)
                 result.success(null)
+            }
+            "updateMediaSession" -> {
+                PlaybackService.update(
+                    context,
+                    PlaybackService.Info(
+                        title = call.argument("title")!!,
+                        durationMs = call.argument<Number>("durationMs")?.toLong() ?: 0L,
+                        positionMs = call.argument<Number>("positionMs")?.toLong() ?: 0L,
+                        playing = call.argument<Boolean>("playing") ?: false,
+                        speed = call.argument<Number>("speed")?.toFloat() ?: 1f,
+                    ),
+                )
+                result.success(null)
+            }
+            "clearMediaSession" -> {
+                PlaybackService.clear()
+                result.success(null)
+            }
+            "takeLaunchAction" -> {
+                result.success(launchAction)
+                launchAction = null
             }
             "storageSpace" -> background(result) { storageSpace(call.argument("location")) }
             "openAppSettings" -> {
@@ -273,7 +342,8 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         "modified" to (if (c.isNull(3)) 0L else c.getLong(3)),
     )
 
-    private fun listFolder(tree: Uri): List<Map<String, Any?>> {
+    /** The folder's files: with [hidden], only dot files (Recently deleted), else all others. */
+    private fun listFolder(tree: Uri, hidden: Boolean): List<Map<String, Any?>> {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val out = ArrayList<Map<String, Any?>>()
         val cursor = context.contentResolver.query(children, columns, null, null, null)
@@ -281,12 +351,72 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         cursor.use { c ->
             while (c.moveToNext()) {
                 if (c.getString(4) == Document.MIME_TYPE_DIR) continue
-                if (c.getString(1)?.startsWith(".") != false) continue
+                val name = c.getString(1) ?: continue
+                if (name.startsWith(".") != hidden) continue
                 out.add(row(c, DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0))))
             }
         }
         return out
     }
+
+    // ---------------------------------------------------- random access
+    /**
+     * A document open for reading (and, with [writable], writing) at any
+     * offset: recording dates and lengths are read from, and dates stored in,
+     * the files themselves.
+     */
+    private class OpenDocument(val fd: ParcelFileDescriptor, writable: Boolean) {
+        private val input: FileChannel = FileInputStream(fd.fileDescriptor).channel
+        private val output: FileChannel? = if (writable) FileOutputStream(fd.fileDescriptor).channel else null
+
+        fun length(): Long = fd.statSize.takeIf { it >= 0 } ?: input.size()
+
+        fun read(offset: Long, count: Int): ByteArray {
+            val buf = ByteBuffer.allocate(count.coerceIn(0, 1 shl 20))
+            var pos = offset
+            while (buf.hasRemaining()) {
+                val n = input.read(buf, pos)
+                if (n <= 0) break
+                pos += n
+            }
+            return buf.array().copyOf(buf.position())
+        }
+
+        fun write(offset: Long, bytes: ByteArray) {
+            val out = output ?: throw IllegalStateException("The document was opened read-only")
+            val buf = ByteBuffer.wrap(bytes)
+            var pos = offset
+            while (buf.hasRemaining()) pos += out.write(buf, pos)
+        }
+
+        fun close() {
+            try {
+                // Written dates should survive a crash right after.
+                output?.force(true)
+            } catch (e: IOException) {
+            }
+            try {
+                input.close()
+                output?.close()
+            } catch (e: IOException) {
+            }
+            try {
+                fd.close()
+            } catch (e: IOException) {
+            }
+        }
+    }
+
+    private fun openDocument(uri: Uri, write: Boolean): Int {
+        val fd = context.contentResolver.openFileDescriptor(uri, if (write) "rw" else "r")
+            ?: throw IllegalStateException("The file can't be opened")
+        val handle = nextHandle++
+        documents[handle] = OpenDocument(fd, write)
+        return handle
+    }
+
+    private fun document(call: MethodCall): OpenDocument =
+        documents[call.argument<Int>("handle")!!] ?: throw IllegalStateException("The file is closed")
 
     /** Null when the document no longer exists; throws if storage can't be reached. */
     private fun stat(uri: Uri): Map<String, Any?>? {
@@ -368,12 +498,18 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         return stat(target)
     }
 
-    private fun share(uri: Uri, mimeType: String) {
-        val send = Intent(Intent.ACTION_SEND)
-            .setType(mimeType)
-            .putExtra(Intent.EXTRA_STREAM, uri)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        send.clipData = ClipData.newRawUri(null, uri)
+    private fun share(uris: List<Uri>, mimeType: String) {
+        if (uris.isEmpty()) return
+        val send = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        }
+        send.setType(mimeType).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // The receiving app gets read access to every file through the clip.
+        val clip = ClipData.newRawUri(null, uris[0])
+        for (uri in uris.drop(1)) clip.addItem(ClipData.Item(uri))
+        send.clipData = clip
         val chooser = Intent.createChooser(send, null).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val act = activity
         if (act != null) {
@@ -425,5 +561,18 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
         private const val REQUEST_PICK_FOLDER = 0x5646
         private const val REQUEST_NOTIFICATIONS = 0x5647
+
+        /** The plugin of the running engine, for the services to report buttons through. */
+        private var active: NativePlugin? = null
+
+        /** What a home-screen shortcut opened the app for, until the Dart side asks. */
+        @Volatile
+        var launchAction: String? = null
+
+        /**
+         * Reports a notification, lock-screen or headset button to the Dart
+         * side. False if the engine isn't running.
+         */
+        fun emit(method: String, args: Map<String, Any?>): Boolean = active?.send(method, args) ?: false
     }
 }

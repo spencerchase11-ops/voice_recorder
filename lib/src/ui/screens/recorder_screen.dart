@@ -3,10 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
-import '../../app_controller.dart';
 import '../../core/format.dart';
 import '../app_scope.dart';
-import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
@@ -26,21 +24,30 @@ class RecorderScreen extends StatefulWidget {
 
 class _RecorderScreenState extends State<RecorderScreen> {
   StreamSubscription<String>? _notices;
+  StreamSubscription<String>? _launches;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final app = AppScope.read(context);
     // The Recorder is the root screen, so it is always there to show what
     // the app did on its own (e.g. a recording stopped because storage ran
     // out), whichever screen is on top.
-    _notices ??= AppScope.read(context).notices.listen((message) {
+    _notices ??= app.notices.listen((message) {
       if (mounted) showToast(context, message, long: true);
+    });
+    // The home-screen "Record" shortcut.
+    _launches ??= app.launchActions.listen((action) {
+      if (!mounted || action != 'record') return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (!app.isRecording && !app.isBusy) toggleRecording(context);
     });
   }
 
   @override
   void dispose() {
     _notices?.cancel();
+    _launches?.cancel();
     super.dispose();
   }
 
@@ -127,58 +134,6 @@ class _RecorderScreenState extends State<RecorderScreen> {
 class _RecorderBody extends StatelessWidget {
   const _RecorderBody();
 
-  Future<void> _record(BuildContext context) async {
-    final app = AppScope.read(context);
-    var outcome = await app.toggleRecord();
-    if (!context.mounted) return;
-    if (outcome == RecordOutcome.needsFolder) {
-      final ok = await showChooseFolderDialog(context);
-      if (!ok || !context.mounted) return;
-      outcome = await app.toggleRecord();
-      if (!context.mounted) return;
-    }
-    switch (outcome) {
-      case RecordOutcome.noPermission:
-        final open = await showSpecDialog<bool>(
-          context,
-          (ctx) => HoloDialog(
-            title: 'Recorder',
-            message:
-                'Voice Recorder needs access to the microphone. Allow it in '
-                'Settings, then try again.',
-            buttons: [
-              HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
-              HoloButton('Settings', onTap: () => Navigator.of(ctx).pop(true)),
-            ],
-          ),
-        );
-        if (open == true) await app.openAppSettings();
-      case RecordOutcome.notSaved:
-        // The file is kept in the app and saved once the folder works again.
-        if (!app.store.isReady) {
-          await showChooseFolderDialog(
-            context,
-            reason: "The recording couldn't be saved to the folder.",
-          );
-        } else {
-          showToast(
-            context,
-            "The recording couldn't be saved. It will be saved the next time "
-            'the app starts.',
-          );
-        }
-      case RecordOutcome.noSpace:
-        showToast(context, 'Not enough storage left to record');
-      case RecordOutcome.failed:
-        showToast(context, 'Recording failed');
-      case RecordOutcome.needsFolder:
-      case RecordOutcome.started:
-      case RecordOutcome.stopped:
-      case RecordOutcome.busy:
-        break;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
@@ -216,13 +171,17 @@ class _RecorderBody extends StatelessWidget {
               width: micSize.width,
               height: micSize.height,
               child: _Microphone(
-                recording: app.isRecording && !app.isInterrupted,
+                recording:
+                    app.isRecording && !app.isInterrupted && !app.isPaused,
               ),
             ),
             Positioned(
               left: (w - Spec.timerBoxWidth) / 2,
               top: boxTop,
-              child: TimerBox(text: formatTimer(app.timerValue)),
+              child: TimerBox(
+                text: formatTimer(app.timerValue),
+                blink: app.isPaused,
+              ),
             ),
             Positioned(
               left:
@@ -234,30 +193,54 @@ class _RecorderBody extends StatelessWidget {
                     : 'assets/images/record.png',
                 size: Spec.recordButtonCanvas,
                 semanticLabel: app.isRecording ? 'Stop recording' : 'Record',
-                onTap: app.isBusy ? null : () => _record(context),
+                onTap: app.isBusy ? null : () => toggleRecording(context),
               ),
             ),
-            Positioned(
-              left:
-                  w -
-                  Spec.playCenterFromRight -
-                  Spec.playButtonCanvas.width / 2,
-              top: buttonsY - Spec.playButtonCanvas.height / 2,
-              child: GlossyButton(
-                asset: app.isPlayingCurrent
-                    ? 'assets/images/pause.png'
-                    : 'assets/images/play.png',
-                disabledAsset: 'assets/images/play_disabled.png',
-                size: Spec.playButtonCanvas,
-                semanticLabel: app.isPlayingCurrent ? 'Pause' : 'Play',
-                onTap: app.currentFile == null || app.isRecording
-                    ? null
-                    : () async {
-                        final outcome = await app.togglePlayCurrent();
-                        if (context.mounted) showPlayProblem(context, outcome);
-                      },
+            // While recording, the play button's place holds pause/resume.
+            if (app.isRecording)
+              Positioned(
+                left:
+                    w -
+                    Spec.playCenterFromRight -
+                    Spec.recordButtonCanvas.width / 2,
+                top: buttonsY - Spec.recordButtonCanvas.height / 2,
+                child: GlossyButton(
+                  asset: app.isPaused
+                      ? 'assets/images/record.png'
+                      : 'assets/images/record_pause.png',
+                  size: Spec.recordButtonCanvas,
+                  semanticLabel: app.isPaused
+                      ? 'Resume recording'
+                      : 'Pause recording',
+                  onTap: app.isBusy
+                      ? null
+                      : () => togglePauseRecording(context),
+                ),
+              )
+            else
+              Positioned(
+                left:
+                    w -
+                    Spec.playCenterFromRight -
+                    Spec.playButtonCanvas.width / 2,
+                top: buttonsY - Spec.playButtonCanvas.height / 2,
+                child: GlossyButton(
+                  asset: app.isPlayingCurrent
+                      ? 'assets/images/pause.png'
+                      : 'assets/images/play.png',
+                  disabledAsset: 'assets/images/play_disabled.png',
+                  size: Spec.playButtonCanvas,
+                  semanticLabel: app.isPlayingCurrent ? 'Pause' : 'Play',
+                  onTap: app.currentFile == null
+                      ? null
+                      : () async {
+                          final outcome = await app.togglePlayCurrent();
+                          if (context.mounted) {
+                            showPlayProblem(context, outcome);
+                          }
+                        },
+                ),
               ),
-            ),
             Positioned(
               left: (w - LevelMeter.width) / 2,
               top: meterTop,

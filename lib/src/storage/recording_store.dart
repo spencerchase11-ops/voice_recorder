@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../audio/audio_info.dart';
 import '../core/format.dart';
 import '../core/recording_file.dart';
 import '../core/settings.dart';
@@ -36,10 +37,38 @@ abstract class RecordingStore extends ChangeNotifier {
   /// Renames to [newBaseName] keeping the extension. Returns the updated file.
   Future<RecordingFile?> rename(RecordingFile file, String newBaseName);
 
+  /// Deletes for good (see [trash] for Recently deleted).
   Future<bool> delete(RecordingFile file);
 
+  /// Moves [file] to Recently deleted: it gets a hidden name in the same
+  /// folder (see [TrashedRecording]). Null if the folder refused.
+  Future<TrashedRecording?> trash(RecordingFile file, DateTime now) async {
+    final hidden = TrashedRecording.hiddenName(file.name, now);
+    final moved = await renameTo(file, hidden);
+    return moved == null ? null : TrashedRecording.parse(moved);
+  }
+
+  /// What is in Recently deleted.
+  Future<List<TrashedRecording>> listTrash();
+
+  /// Puts a deleted recording back under its old name (a free variant of it
+  /// if that name is taken meanwhile).
+  Future<RecordingFile?> restore(TrashedRecording t);
+
+  /// Gives [file] exactly the name [fileName] (extension included).
+  @protected
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName);
+
   /// Opens the system share sheet. [origin] anchors the popover on iPad.
-  Future<void> share(RecordingFile file, {Rect? origin});
+  Future<void> share(RecordingFile file, {Rect? origin}) =>
+      shareAll([file], origin: origin);
+
+  /// Shares several recordings at once.
+  Future<void> shareAll(List<RecordingFile> files, {Rect? origin});
+
+  /// Reads (and with [write], changes) a recording's bytes, e.g. to read or
+  /// store its recording date.
+  Future<ByteAccess> openBytes(RecordingFile file, {bool write = false});
 
   /// Bytes a recording may still grow by and be saved, or null if unknown.
   /// [pendingBytes] is the size of the recording in progress (0 when idle).
@@ -128,6 +157,19 @@ class AndroidRecordingStore extends RecordingStore {
   }
 
   @override
+  Future<List<TrashedRecording>> listTrash() async {
+    final uri = _settings.folder;
+    if (uri == null || !_ready) return const [];
+    final rows = await _native.listFolder(uri, hidden: true);
+    return [for (final row in rows) ?TrashedRecording.parse(_fromMap(row))];
+  }
+
+  /// The folder picks a free name itself if the old one is taken ("a (1).mp3").
+  @override
+  Future<RecordingFile?> restore(TrashedRecording t) =>
+      renameTo(t.file, t.originalName);
+
+  @override
   Future<RecordingFile?> find(String id) async {
     final m = await _native.statDocument(id);
     return m == null ? null : _fromMap(m);
@@ -155,10 +197,14 @@ class AndroidRecordingStore extends RecordingStore {
   }
 
   @override
-  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) async {
+  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) {
     final ext = file.extension;
-    final name = ext.isEmpty ? newBaseName : '$newBaseName.$ext';
-    final m = await _native.renameDocument(file.id, name);
+    return renameTo(file, ext.isEmpty ? newBaseName : '$newBaseName.$ext');
+  }
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
+    final m = await _native.renameDocument(file.id, fileName);
     return m == null ? null : _fromMap(m);
   }
 
@@ -166,8 +212,21 @@ class AndroidRecordingStore extends RecordingStore {
   Future<bool> delete(RecordingFile file) => _native.deleteDocument(file.id);
 
   @override
-  Future<void> share(RecordingFile file, {Rect? origin}) =>
-      _native.shareDocument(file.id, RecordingStore.mimeTypeFor(file.name));
+  Future<void> shareAll(List<RecordingFile> files, {Rect? origin}) {
+    final types = {for (final f in files) RecordingStore.mimeTypeFor(f.name)};
+    return _native.shareDocuments([
+      for (final f in files) f.id,
+    ], types.length == 1 ? types.first : 'audio/*');
+  }
+
+  @override
+  Future<ByteAccess> openBytes(
+    RecordingFile file, {
+    bool write = false,
+  }) async => _DocumentBytes(
+    _native,
+    await _native.openDocument(file.id, write: write),
+  );
 
   /// A recording is written to app storage while it runs and copied into
   /// the folder when it stops, so it needs room in both places; on the same
@@ -245,6 +304,32 @@ class IosRecordingStore extends RecordingStore {
   }
 
   @override
+  Future<List<TrashedRecording>> listTrash() async {
+    if (!await _dir.exists()) return const [];
+    return [
+      for (final f in _dir.listSync().whereType<File>())
+        if (f.uri.pathSegments.last.startsWith(TrashedRecording.prefix))
+          ?TrashedRecording.parse(_fromFile(f)),
+    ];
+  }
+
+  @override
+  Future<RecordingFile?> restore(TrashedRecording t) async {
+    final target = _unique(t.originalName);
+    return _fromFile(await File(t.file.id).rename(target.path));
+  }
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
+    final target = File('${_dir.path}/$fileName');
+    return _fromFile(await File(file.id).rename(target.path));
+  }
+
+  /// Copies recordings picked in the Files app into the folder. Returns how
+  /// many were copied (null if the picker was cancelled).
+  Future<int?> importRecordings() => _native.importRecordings(_dir.path);
+
+  @override
   Future<RecordingFile?> find(String id) async {
     var f = File(id);
     // iOS moves the app container on updates, so a saved path can go stale:
@@ -301,20 +386,25 @@ class IosRecordingStore extends RecordingStore {
   }
 
   @override
-  Future<void> share(RecordingFile file, {Rect? origin}) async {
+  Future<void> shareAll(List<RecordingFile> files, {Rect? origin}) async {
     await SharePlus.instance.share(
       ShareParams(
         files: [
-          XFile(
-            file.id,
-            mimeType: RecordingStore.mimeTypeFor(file.name),
-            name: file.name,
-          ),
+          for (final file in files)
+            XFile(
+              file.id,
+              mimeType: RecordingStore.mimeTypeFor(file.name),
+              name: file.name,
+            ),
         ],
         sharePositionOrigin: origin,
       ),
     );
   }
+
+  @override
+  Future<ByteAccess> openBytes(RecordingFile file, {bool write = false}) =>
+      FileByteAccess.open(File(file.id), write: write);
 
   /// The recording in progress is already on this volume and is moved (not
   /// copied) into the folder, so the free space is all usable.
@@ -324,4 +414,26 @@ class IosRecordingStore extends RecordingStore {
 
   @override
   Uri playbackUri(RecordingFile file) => Uri.file(file.id);
+}
+
+/// [ByteAccess] to an Android document, through the platform side.
+class _DocumentBytes implements ByteAccess {
+  _DocumentBytes(this._native, this._handle);
+
+  final NativeBridge _native;
+  final int _handle;
+
+  @override
+  Future<int> length() => _native.documentLength(_handle);
+
+  @override
+  Future<Uint8List> read(int offset, int count) =>
+      _native.readDocument(_handle, offset, count);
+
+  @override
+  Future<void> write(int offset, List<int> bytes) =>
+      _native.writeDocument(_handle, offset, bytes);
+
+  @override
+  Future<void> close() => _native.closeDocument(_handle);
 }

@@ -254,14 +254,21 @@ class _WarningPainter extends CustomPainter {
   bool shouldRepaint(_WarningPainter oldDelegate) => false;
 }
 
-/// "Are you sure to delete file? /name.mp3" - returns true on OK.
-Future<bool> showDeleteDialog(BuildContext context, String fileName) async {
+/// "Are you sure to delete file? /name.mp3" - returns true on OK. With
+/// several files ([count]), asks about all of them instead.
+Future<bool> showDeleteDialog(
+  BuildContext context,
+  String fileName, {
+  int count = 1,
+}) async {
   final ok = await showSpecDialog<bool>(
     context,
     (ctx) => HoloDialog(
-      title: 'Delete file',
+      title: count == 1 ? 'Delete file' : 'Delete files',
       icon: const HoloWarningIcon(),
-      message: 'Are you sure to delete file? /$fileName',
+      message: count == 1
+          ? 'Are you sure to delete file? /$fileName'
+          : 'Are you sure to delete $count files?',
       buttons: [
         HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
         HoloButton('OK', onTap: () => Navigator.of(ctx).pop(true)),
@@ -269,6 +276,28 @@ Future<bool> showDeleteDialog(BuildContext context, String fileName) async {
     ),
   );
   return ok ?? false;
+}
+
+/// A Holo question with Cancel and OK buttons; true on OK.
+Future<bool> showConfirmDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String ok = 'OK',
+}) async {
+  final answer = await showSpecDialog<bool>(
+    context,
+    (ctx) => HoloDialog(
+      title: title,
+      icon: const HoloWarningIcon(),
+      message: message,
+      buttons: [
+        HoloButton('Cancel', onTap: () => Navigator.of(ctx).pop(false)),
+        HoloButton(ok, onTap: () => Navigator.of(ctx).pop(true)),
+      ],
+    ),
+  );
+  return answer ?? false;
 }
 
 /// A Holo message with a single OK button.

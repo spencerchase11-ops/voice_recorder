@@ -12,6 +12,7 @@ import 'src/audio/recorder_engine.dart';
 import 'src/core/settings.dart';
 import 'src/licenses.dart';
 import 'src/platform/native_bridge.dart';
+import 'src/storage/info_cache.dart';
 import 'src/storage/recording_store.dart';
 
 Future<void> main() async {
@@ -20,7 +21,7 @@ Future<void> main() async {
   registerThirdPartyLicenses();
 
   final settings = await Settings.load();
-  const native = NativeBridge();
+  final native = NativeBridge();
   final RecordingStore store = Platform.isAndroid
       ? AndroidRecordingStore(native, settings)
       : IosRecordingStore(native);
@@ -35,6 +36,11 @@ Future<void> main() async {
     native: native,
     workDir: getApplicationSupportDirectory,
     isAndroid: Platform.isAndroid,
+    info: RecordingInfoCache(
+      file: () async => File(
+        '${(await getApplicationSupportDirectory()).path}/recording_info.json',
+      ),
+    ),
   );
   runApp(VoiceRecorderApp(controller: controller));
   unawaited(controller.init());

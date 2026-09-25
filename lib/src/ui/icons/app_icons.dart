@@ -100,6 +100,24 @@ abstract final class AppIcons {
   static const list = PathShape(_list);
   static const back = PathShape(_chevron);
   static const quality = PathShape(_quality);
+
+  // Added with the upgrades.
+  static const search = GlyphShape(GlyphData.search);
+  static const sort = GlyphShape(GlyphData.sortDown);
+  static const close = GlyphShape(GlyphData.close);
+  static const checkBox = GlyphShape(GlyphData.checkBox);
+  static const checkBoxBlank = GlyphShape(GlyphData.checkBoxBlank);
+  static const selectAll = GlyphShape(GlyphData.doneAll);
+  static const restore = GlyphShape(GlyphData.restoreFromTrash);
+  static const deleteForever = GlyphShape(GlyphData.deleteForever);
+  static const emptyTrash = GlyphShape(GlyphData.deleteSweep);
+  static const recentlyDeleted = GlyphShape(GlyphData.autoDelete);
+  static const import = GlyphShape(GlyphData.download);
+  static const lock = GlyphShape(GlyphData.lock);
+  static const speed = GlyphShape(GlyphData.speed);
+  static const noise = GlyphShape(GlyphData.noiseAware);
+  static const replay10 = GlyphShape(GlyphData.replay10);
+  static const forward10 = GlyphShape(GlyphData.forward10);
 }
 
 // ---------------------------------------------------------------- pencil

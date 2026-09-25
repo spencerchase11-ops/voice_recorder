@@ -1,20 +1,24 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'audio_info.dart';
+
 /// Streams 16-bit little-endian PCM into a RIFF/WAVE file.
 ///
 /// The header is written up front with placeholder sizes and patched on
-/// [close]; [repair] fixes the header of a file whose recording was cut short.
+/// [close], which also appends the recording date (a LIST/INFO chunk);
+/// [repair] fixes the header of a file whose recording was cut short.
 class WavWriter {
-  WavWriter._(this._file, this.sampleRate, this.channels);
+  WavWriter._(this._file, this.sampleRate, this.channels, this.recorded);
 
   static Future<WavWriter> open(
     String path, {
     required int sampleRate,
     int channels = 1,
+    DateTime? recorded,
   }) async {
     final raf = await File(path).open(mode: FileMode.write);
-    final w = WavWriter._(raf, sampleRate, channels);
+    final w = WavWriter._(raf, sampleRate, channels, recorded);
     await raf.writeFrom(
       header(sampleRate: sampleRate, channels: channels, dataBytes: 0),
     );
@@ -24,6 +28,9 @@ class WavWriter {
   final RandomAccessFile _file;
   final int sampleRate;
   final int channels;
+
+  /// Stored in the file on [close].
+  final DateTime? recorded;
   int _dataBytes = 0;
 
   int get dataBytes => _dataBytes;
@@ -34,17 +41,36 @@ class WavWriter {
   }
 
   Future<void> close() async {
-    await _file.setPosition(0);
-    await _file.writeFrom(
-      header(sampleRate: sampleRate, channels: channels, dataBytes: _dataBytes),
-    );
-    await _file.close();
+    try {
+      final info = recorded == null ? null : wavInfoChunk(recorded!);
+      // The data chunk is padded to an even size (mono 16-bit always is).
+      final pad = _dataBytes.isOdd ? 1 : 0;
+      // Sizes first: if appending the date fails (storage full), the audio is
+      // still described correctly.
+      await _file.setPosition(0);
+      await _file.writeFrom(
+        header(
+          sampleRate: sampleRate,
+          channels: channels,
+          dataBytes: _dataBytes,
+          trailingBytes: info == null ? 0 : pad + info.length,
+        ),
+      );
+      if (info != null) {
+        await _file.setPosition(44 + _dataBytes);
+        await _file.writeFrom([if (pad == 1) 0, ...info]);
+      }
+    } finally {
+      await _file.close();
+    }
   }
 
+  /// The 44-byte header; [trailingBytes] are chunks after the data.
   static Uint8List header({
     required int sampleRate,
     required int channels,
     required int dataBytes,
+    int trailingBytes = 0,
   }) {
     const bits = 16;
     final blockAlign = channels * bits ~/ 8;
@@ -56,7 +82,7 @@ class WavWriter {
     }
 
     ascii(0, 'RIFF');
-    b.setUint32(4, 36 + dataBytes, Endian.little);
+    b.setUint32(4, 36 + dataBytes + trailingBytes, Endian.little);
     ascii(8, 'WAVE');
     ascii(12, 'fmt ');
     b.setUint32(16, 16, Endian.little);
@@ -72,20 +98,42 @@ class WavWriter {
   }
 
   /// Rewrites the size fields of an interrupted recording made by [WavWriter].
+  ///
+  /// A header still holding the placeholder (no data size) gets the size of
+  /// everything after it, less a partly written sample at the end; a valid
+  /// data size is kept (the recording was finished, and the date chunk may
+  /// follow the data).
   static Future<void> repair(
     File file, {
     required int sampleRate,
     int channels = 1,
   }) async {
-    final length = await file.length();
+    var length = await file.length();
     if (length < 44) return;
     final raf = await file.open(mode: FileMode.append);
     try {
-      var data = length - 44;
-      data -= data % (channels * 2);
+      await raf.setPosition(40);
+      final field = await raf.read(4);
+      final declared = field.length < 4
+          ? 0
+          : ByteData.sublistView(field).getUint32(0, Endian.little);
+      final available = length - 44;
+      var data = declared;
+      if (data == 0 || data > available) {
+        data = available - available % (channels * 2);
+        if (44 + data < length) {
+          await raf.truncate(44 + data);
+          length = 44 + data;
+        }
+      }
       await raf.setPosition(0);
       await raf.writeFrom(
-        header(sampleRate: sampleRate, channels: channels, dataBytes: data),
+        header(
+          sampleRate: sampleRate,
+          channels: channels,
+          dataBytes: data,
+          trailingBytes: length - 44 - data,
+        ),
       );
     } finally {
       await raf.close();

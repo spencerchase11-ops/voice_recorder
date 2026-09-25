@@ -58,10 +58,7 @@ void main() {
 
   Future<AndroidRecordingStore> open() async {
     SharedPreferences.setMockInitialValues({'folder': _tree});
-    final store = AndroidRecordingStore(
-      const NativeBridge(),
-      await Settings.load(),
-    );
+    final store = AndroidRecordingStore(NativeBridge(), await Settings.load());
     await store.init();
     return store;
   }

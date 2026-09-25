@@ -3,4 +3,13 @@
     <string name="app_name">Voice Recorder</string>
     <string name="recording">Recording…</string>
     <string name="recording_channel">Recording</string>
+    <string name="playback_channel">Playback</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="stop">Stop</string>
+    <string name="play">Play</string>
+    <string name="back_10">Back 10 seconds</string>
+    <string name="forward_10">Forward 10 seconds</string>
+    <string name="shortcut_record_short">Record</string>
+    <string name="shortcut_record_long">Start recording</string>
 </resources>

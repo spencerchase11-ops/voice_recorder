@@ -235,14 +235,20 @@ class PressableArea extends StatefulWidget {
     super.key,
     required this.child,
     this.onTap,
+    this.onLongPress,
     this.highlight = const Color(0x6633B5E5),
     this.semanticLabel,
+    this.selected,
   });
 
   final Widget child;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final Color highlight;
   final String? semanticLabel;
+
+  /// For accessibility: whether this item is ticked (selection mode).
+  final bool? selected;
 
   @override
   State<PressableArea> createState() => _PressableAreaState();
@@ -261,6 +267,7 @@ class _PressableAreaState extends State<PressableArea> {
     return Semantics(
       button: true,
       enabled: enabled,
+      selected: widget.selected,
       label: widget.semanticLabel,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -268,6 +275,12 @@ class _PressableAreaState extends State<PressableArea> {
         onTapUp: enabled ? (_) => _set(false) : null,
         onTapCancel: enabled ? () => _set(false) : null,
         onTap: widget.onTap,
+        onLongPress: widget.onLongPress == null
+            ? null
+            : () {
+                _set(false);
+                widget.onLongPress!();
+              },
         child: Stack(
           fit: StackFit.passthrough,
           children: [

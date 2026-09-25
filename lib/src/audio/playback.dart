@@ -30,6 +30,10 @@ abstract class Playback extends ChangeNotifier {
   Future<void> pause();
   Future<void> seek(Duration position);
 
+  /// Playback speed (1 = normal); the pitch stays the same.
+  double get speed;
+  Future<void> setSpeed(double speed);
+
   /// Stops and unloads the current recording.
   Future<void> stop();
 
@@ -134,6 +138,15 @@ class JustAudioPlayback extends Playback {
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  double get speed => _player.speed;
+
+  @override
+  Future<void> setSpeed(double speed) async {
+    await _player.setSpeed(speed);
+    notifyListeners();
+  }
 
   @override
   Future<void> stop() async {

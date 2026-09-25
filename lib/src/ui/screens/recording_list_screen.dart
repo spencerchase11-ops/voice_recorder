@@ -1,12 +1,16 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart' show MaterialPageRoute;
+import 'package:flutter/material.dart'
+    show InputBorder, InputDecoration, MaterialPageRoute, TextField;
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../app_controller.dart';
 import '../../core/format.dart';
 import '../../core/recording_file.dart';
+import '../../core/settings.dart';
 import '../app_scope.dart';
+import '../dialogs/dialogs.dart';
 import '../icons/app_icons.dart';
 import '../spec.dart';
 import '../widgets/frame.dart';
@@ -14,6 +18,8 @@ import '../widgets/recorder_widgets.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
+
+const _white = Color(0xFFFFFFFF);
 
 class RecordingListScreen extends StatefulWidget {
   const RecordingListScreen({super.key, this.initialSelection});
@@ -30,7 +36,16 @@ class RecordingListScreen extends StatefulWidget {
 
 class _RecordingListScreenState extends State<RecordingListScreen>
     with WidgetsBindingObserver {
+  /// The row that is open (orange, with the seek bar).
   String? _selected;
+
+  /// Rows ticked in selection mode (long press); null when not selecting.
+  Set<String>? _ticked;
+
+  /// The search text; null when not searching.
+  String? _query;
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode();
   late AppController _app;
   bool _loaded = false;
 
@@ -67,7 +82,22 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _search.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// The rows shown: all recordings, or those matching the search (by name
+  /// or by date, e.g. "2026-09").
+  List<RecordingFile> _visible(List<RecordingFile> files) {
+    final q = (_query ?? '').trim().toLowerCase();
+    if (q.isEmpty) return files;
+    return [
+      for (final f in files)
+        if (f.name.toLowerCase().contains(q) ||
+            formatListDate(f.date).contains(q))
+          f,
+    ];
   }
 
   RecordingFile? _selectedFile(List<RecordingFile> files) {
@@ -77,15 +107,107 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     return null;
   }
 
-  Future<void> _withSelection(
-    Future<void> Function(RecordingFile f) action,
-  ) async {
-    final f = _selectedFile(_app.files);
+  List<RecordingFile> _tickedFiles(List<RecordingFile> files) {
+    final ticked = _ticked ?? const <String>{};
+    return [
+      for (final f in files)
+        if (ticked.contains(f.id)) f,
+    ];
+  }
+
+  void _startSearch() {
+    setState(() {
+      _query = '';
+      _ticked = null;
+    });
+    _searchFocus.requestFocus();
+  }
+
+  void _endSearch() {
+    _search.clear();
+    _searchFocus.unfocus();
+    setState(() => _query = null);
+  }
+
+  void _startSelecting(RecordingFile f) {
+    HapticFeedback.selectionClick();
+    _searchFocus.unfocus();
+    setState(() => _ticked = {f.id});
+  }
+
+  void _endSelecting() => setState(() => _ticked = null);
+
+  void _toggleTick(RecordingFile f) {
+    setState(() {
+      final t = _ticked!;
+      if (!t.remove(f.id)) t.add(f.id);
+    });
+  }
+
+  Future<void> _sort() async {
+    final settings = _app.settings;
+    final i = await showChoiceDialog(
+      context,
+      title: 'Sort by',
+      items: [for (final o in SortOrder.values) o.label],
+      selected: settings.sortOrder.index,
+    );
+    if (i != null) settings.sortOrder = SortOrder.values[i];
+  }
+
+  /// The files the bottom bar acts on: the ticked ones in selection mode,
+  /// else the open row. Null (with a message) when there are none.
+  List<RecordingFile>? _targets(List<RecordingFile> visible) {
+    if (_ticked != null) {
+      final files = _tickedFiles(visible);
+      if (files.isEmpty) {
+        showToast(context, 'Please select a file');
+        return null;
+      }
+      return files;
+    }
+    final f = _selectedFile(visible);
     if (f == null) {
       showToast(context, 'Please select a file');
+      return null;
+    }
+    return [f];
+  }
+
+  Future<void> _delete(List<RecordingFile> visible) async {
+    final files = _targets(visible);
+    if (files == null) return;
+    if (await deleteRecordings(context, files) && mounted) {
+      setState(() {
+        _selected = null;
+        _ticked = null;
+      });
+    }
+  }
+
+  Future<void> _rename(List<RecordingFile> visible) async {
+    final files = _targets(visible);
+    if (files == null) return;
+    if (files.length > 1) {
+      showToast(context, 'Select one file to rename');
       return;
     }
-    await action(f);
+    final renamed = await renameRecording(context, files.single);
+    if (renamed != null && mounted) {
+      setState(() {
+        if (_ticked != null) {
+          _ticked = {renamed.id};
+        } else {
+          _selected = renamed.id;
+        }
+      });
+    }
+  }
+
+  Future<void> _share(List<RecordingFile> visible, Rect origin) async {
+    final files = _targets(visible);
+    if (files == null) return;
+    await shareRecordings(context, files, origin: origin);
   }
 
   Future<void> _play(RecordingFile f) async {
@@ -96,96 +218,249 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final files = app.files;
+    final visible = _visible(app.files);
     final width = MediaQuery.sizeOf(context).width;
+    final ticked = _ticked;
 
-    return ScreenFrame(
-      child: Column(
-        children: [
-          RedHeader(
-            title: 'Recording list',
-            children: [
-              BarButton(
-                center: const Offset(18.26, 23.14),
-                semanticLabel: 'Back',
-                onTap: () => Navigator.of(context).maybePop(),
-                child: const InkIcon(
-                  AppIcons.back,
-                  size: Size(13.7, 26.3),
-                  color: Color(0xFFFFFFFF),
-                ),
+    return PopScope(
+      canPop: ticked == null && _query == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_ticked != null) {
+          _endSelecting();
+        } else if (_query != null) {
+          _endSearch();
+        }
+      },
+      child: ScreenFrame(
+        child: Column(
+          children: [
+            _header(width, visible),
+            Expanded(
+              child: BrushedMetal(
+                child: visible.isEmpty && (_query ?? '').trim().isNotEmpty
+                    ? const _Empty('No recordings match')
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(top: Spec.listTopGap),
+                        itemCount: visible.length,
+                        itemBuilder: (context, i) {
+                          final f = visible[i];
+                          if (ticked != null) {
+                            return _RecordingRow(
+                              key: ValueKey(f.id),
+                              file: f,
+                              selected: ticked.contains(f.id),
+                              ticking: true,
+                              onSelect: () => _toggleTick(f),
+                              onPlay: () => _toggleTick(f),
+                            );
+                          }
+                          return _RecordingRow(
+                            key: ValueKey(f.id),
+                            file: f,
+                            selected: f.id == _selected,
+                            open: f.id == _selected,
+                            onSelect: () => setState(() => _selected = f.id),
+                            onLongPress: () => _startSelecting(f),
+                            onPlay: () {
+                              setState(() => _selected = f.id);
+                              if (app.isRecording) {
+                                showToast(
+                                  context,
+                                  'Stop recording to play a file',
+                                );
+                                return;
+                              }
+                              _play(f);
+                            },
+                          );
+                        },
+                      ),
               ),
-            ],
+            ),
+            RedFooter(
+              height: Spec.actionBarHeight,
+              cells: [
+                _FooterIcon(
+                  icon: AppIcons.trash,
+                  size: const Size(28.6, 34.3),
+                  semanticLabel: 'Delete',
+                  onTap: () => _delete(visible),
+                ),
+                _FooterIcon(
+                  icon: AppIcons.pencil,
+                  size: const Size(32.9, 32.9),
+                  semanticLabel: 'Rename',
+                  onTap: () => _rename(visible),
+                ),
+                _FooterIcon(
+                  icon: AppIcons.share,
+                  size: const Size(26.9, 27.1),
+                  semanticLabel: 'Share',
+                  onTap: () {
+                    final bottom =
+                        MediaQuery.sizeOf(context).height -
+                        MediaQuery.viewPaddingOf(context).bottom;
+                    _share(
+                      visible,
+                      Rect.fromLTWH(
+                        width * 2 / 3,
+                        bottom - Spec.actionBarHeight,
+                        width / 3,
+                        Spec.actionBarHeight,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header(double width, List<RecordingFile> visible) {
+    final ticked = _ticked;
+    if (ticked != null) {
+      final all =
+          visible.isNotEmpty && visible.every((f) => ticked.contains(f.id));
+      return RedHeader(
+        title: '${ticked.length} selected',
+        children: [
+          BarButton(
+            center: const Offset(22.0, 24.0),
+            semanticLabel: 'Cancel selection',
+            onTap: _endSelecting,
+            child: const InkIcon(
+              AppIcons.close,
+              size: Size(16.5, 16.5),
+              color: _white,
+            ),
           ),
-          Expanded(
-            child: BrushedMetal(
-              child: ListView.builder(
-                padding: const EdgeInsets.only(top: Spec.listTopGap),
-                itemCount: files.length,
-                itemBuilder: (context, i) {
-                  final f = files[i];
-                  return _RecordingRow(
-                    key: ValueKey(f.id),
-                    file: f,
-                    selected: f.id == _selected,
-                    onSelect: () => setState(() => _selected = f.id),
-                    onPlay: () {
-                      setState(() => _selected = f.id);
-                      if (app.isRecording) {
-                        showToast(context, 'Stop recording to play a file');
-                        return;
-                      }
-                      _play(f);
-                    },
-                  );
-                },
+          BarButton(
+            center: Offset(width - 26.0, 24.0),
+            semanticLabel: all ? 'Select none' : 'Select all',
+            onTap: () => setState(() {
+              if (all) {
+                ticked.clear();
+              } else {
+                ticked.addAll(visible.map((f) => f.id));
+              }
+            }),
+            child: const InkIcon(
+              AppIcons.selectAll,
+              size: Size(27.7, 16.0),
+              color: _white,
+            ),
+          ),
+        ],
+      );
+    }
+    final query = _query;
+    if (query != null) {
+      return RedHeader(
+        title: '',
+        children: [
+          _backButton(_endSearch),
+          Positioned(
+            left: 40,
+            right: query.isEmpty ? 12 : 48,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: TextField(
+                controller: _search,
+                focusNode: _searchFocus,
+                autofocus: true,
+                cursorColor: _white,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(
+                  fontFamily: Spec.font,
+                  fontSize: 17,
+                  color: _white,
+                ),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Search recordings',
+                  hintStyle: TextStyle(
+                    fontFamily: Spec.font,
+                    fontSize: 17,
+                    color: Color(0xB3FFFFFF),
+                  ),
+                ),
+                onChanged: (v) => setState(() => _query = v),
               ),
             ),
           ),
-          RedFooter(
-            height: Spec.actionBarHeight,
-            cells: [
-              _FooterIcon(
-                icon: AppIcons.trash,
-                size: const Size(28.6, 34.3),
-                semanticLabel: 'Delete',
-                onTap: () => _withSelection((f) async {
-                  if (await deleteRecording(context, f) && mounted) {
-                    setState(() => _selected = null);
-                  }
-                }),
+          if (query.isNotEmpty)
+            BarButton(
+              center: Offset(width - 26.0, 24.0),
+              semanticLabel: 'Clear search',
+              onTap: () {
+                _search.clear();
+                setState(() => _query = '');
+                _searchFocus.requestFocus();
+              },
+              child: const InkIcon(
+                AppIcons.close,
+                size: Size(15.0, 15.0),
+                color: _white,
               ),
-              _FooterIcon(
-                icon: AppIcons.pencil,
-                size: const Size(32.9, 32.9),
-                semanticLabel: 'Rename',
-                onTap: () => _withSelection((f) async {
-                  final renamed = await renameRecording(context, f);
-                  if (renamed != null && mounted) {
-                    setState(() => _selected = renamed.id);
-                  }
-                }),
-              ),
-              _FooterIcon(
-                icon: AppIcons.share,
-                size: const Size(26.9, 27.1),
-                semanticLabel: 'Share',
-                onTap: () => _withSelection((f) {
-                  final bottom =
-                      MediaQuery.sizeOf(context).height -
-                      MediaQuery.viewPaddingOf(context).bottom;
-                  final origin = Rect.fromLTWH(
-                    width * 2 / 3,
-                    bottom - Spec.actionBarHeight,
-                    width / 3,
-                    Spec.actionBarHeight,
-                  );
-                  return shareRecording(context, f, origin: origin);
-                }),
-              ),
-            ],
-          ),
+            ),
         ],
+      );
+    }
+    return RedHeader(
+      title: 'Recording list',
+      children: [
+        _backButton(() => Navigator.of(context).maybePop()),
+        BarButton(
+          center: Offset(width - 77.0, 24.0),
+          semanticLabel: 'Sort',
+          onTap: _sort,
+          child: const InkIcon(
+            AppIcons.sort,
+            size: Size(22.0, 22.4),
+            color: _white,
+          ),
+        ),
+        BarButton(
+          center: Offset(width - 26.0, 24.0),
+          semanticLabel: 'Search',
+          onTap: _startSearch,
+          child: const InkIcon(
+            AppIcons.search,
+            size: Size(21.0, 21.0),
+            color: _white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _backButton(VoidCallback onTap) => BarButton(
+    center: const Offset(18.26, 23.14),
+    semanticLabel: 'Back',
+    onTap: onTap,
+    child: const InkIcon(AppIcons.back, size: Size(13.7, 26.3), color: _white),
+  );
+}
+
+/// A line of text in the middle of an empty list.
+class _Empty extends StatelessWidget {
+  const _Empty(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 0),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: AText(text, style: Spec.listDetail, textAlign: TextAlign.center),
       ),
     );
   }
@@ -216,7 +491,7 @@ class _FooterIcon extends StatelessWidget {
             Positioned(
               left: (c.maxWidth - size.width) / 2,
               top: Spec.actionIconCenterY - size.height / 2,
-              child: InkIcon(icon, size: size, color: const Color(0xFFFFFFFF)),
+              child: InkIcon(icon, size: size, color: _white),
             ),
           ],
         ),
@@ -232,38 +507,65 @@ class _RecordingRow extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onPlay,
+    this.open = false,
+    this.ticking = false,
+    this.onLongPress,
   });
 
   final RecordingFile file;
+
+  /// Orange: the open row, or a ticked row in selection mode.
   final bool selected;
+
+  /// Shows the seek bar and playback controls.
+  final bool open;
+
+  /// Selection mode: a check box instead of the play button.
+  final bool ticking;
   final VoidCallback onSelect;
   final VoidCallback onPlay;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
+    // The length (and a date stored in the file) are read when first shown.
+    if (file.duration == null) app.requestInfo(file);
     final playing = app.playback.isPlaying(file.id);
     final lineBox = AText.boxHeight(context, Spec.listName);
     final topPart = Spec.listRowPadding * 2 + lineBox * 2 + Spec.listLineGap;
+    final duration = file.duration;
+    final date = formatListDate(file.date);
 
     final info = SizedBox(
       height: topPart,
       child: Stack(
         children: [
-          Positioned(
-            left: Spec.listPlayIconLeft,
-            top: (topPart - Spec.listPlayCanvas.height) / 2,
-            child: GlossyButton(
-              asset: playing
-                  ? 'assets/images/list_pause.png'
-                  : 'assets/images/list_play.png',
-              size: Spec.listPlayCanvas,
-              semanticLabel: playing
-                  ? 'Pause ${file.name}'
-                  : 'Play ${file.name}',
-              onTap: onPlay,
+          if (ticking)
+            Positioned(
+              left: Spec.listPlayIconLeft + 5,
+              top: (topPart - 22) / 2,
+              child: InkIcon(
+                selected ? AppIcons.checkBox : AppIcons.checkBoxBlank,
+                size: const Size(22, 22),
+                color: _white,
+              ),
+            )
+          else
+            Positioned(
+              left: Spec.listPlayIconLeft,
+              top: (topPart - Spec.listPlayCanvas.height) / 2,
+              child: GlossyButton(
+                asset: playing
+                    ? 'assets/images/list_pause.png'
+                    : 'assets/images/list_play.png',
+                size: Spec.listPlayCanvas,
+                semanticLabel: playing
+                    ? 'Pause ${file.name}'
+                    : 'Play ${file.name}',
+                onTap: onPlay,
+              ),
             ),
-          ),
           Positioned(
             left: Spec.listTextLeft,
             right: Spec.listTextRight,
@@ -281,12 +583,19 @@ class _RecordingRow extends StatelessWidget {
             top: Spec.listRowPadding + lineBox + Spec.listLineGap,
             child: Row(
               children: [
-                AText(
-                  formatListDate(file.date),
-                  style: Spec.listDetail,
-                  maxLines: 1,
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AText(
+                      duration == null
+                          ? date
+                          : '$date · ${formatTimer(duration)}',
+                      style: Spec.listDetail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
-                const Spacer(),
                 AText(
                   formatListSize(file.size),
                   style: Spec.listDetail,
@@ -303,13 +612,15 @@ class _RecordingRow extends StatelessWidget {
       children: [
         PressableArea(
           onTap: onSelect,
+          onLongPress: onLongPress,
+          selected: ticking ? selected : null,
           semanticLabel: file.name,
           child: Container(
             color: selected ? Spec.listSelected : null,
             child: Column(
               children: [
                 info,
-                if (selected) _SeekSection(file: file),
+                if (open && !ticking) _SeekSection(file: file),
               ],
             ),
           ),
@@ -323,7 +634,7 @@ class _RecordingRow extends StatelessWidget {
   }
 }
 
-/// Seek bar and position shown under the selected row.
+/// Seek bar, position and playback controls shown under the open row.
 class _SeekSection extends StatefulWidget {
   const _SeekSection({required this.file});
 
@@ -336,6 +647,13 @@ class _SeekSection extends StatefulWidget {
 class _SeekSectionState extends State<_SeekSection> {
   /// Where the thumb is while the user drags it (0..1).
   double? _drag;
+
+  /// The controls react to a tap, not to a recording in progress.
+  bool _blocked(AppController app) {
+    if (!app.isRecording) return false;
+    showToast(context, 'Stop recording to play a file');
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -354,6 +672,9 @@ class _SeekSectionState extends State<_SeekSection> {
     final shown = _drag != null && duration > Duration.zero
         ? duration * _drag!
         : position;
+    final lineBox = AText.boxHeight(context, Spec.listName);
+    // The buttons reach a little below the text, for an easier tap.
+    final controlsHeight = lineBox + 10;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -367,10 +688,7 @@ class _SeekSectionState extends State<_SeekSection> {
             onChanged: (p) => setState(() => _drag = p),
             onChangeEnd: (p) async {
               setState(() => _drag = null);
-              if (app.isRecording) {
-                showToast(context, 'Stop recording to play a file');
-                return;
-              }
+              if (_blocked(app)) return;
               if (!await app.seek(widget.file, p) && context.mounted) {
                 showToast(context, "Can't play this file");
               }
@@ -378,15 +696,108 @@ class _SeekSectionState extends State<_SeekSection> {
           ),
         ),
         const SizedBox(height: Spec.seekTimeGap),
-        Padding(
-          padding: const EdgeInsets.only(left: Spec.seekTimeLeft),
-          child: AText(
-            formatPosition(shown),
-            style: Spec.listName,
-            maxLines: 1,
+        SizedBox(
+          height: controlsHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: Spec.seekTimeLeft),
+                child: AText(
+                  formatPosition(shown),
+                  style: Spec.listName,
+                  maxLines: 1,
+                ),
+              ),
+              const Spacer(),
+              _ControlButton(
+                semanticLabel: 'Back 10 seconds',
+                height: controlsHeight,
+                lineBox: lineBox,
+                onTap: () {
+                  if (!_blocked(app)) {
+                    app.skip(-skipInterval, file: widget.file);
+                  }
+                },
+                child: const InkIcon(
+                  AppIcons.replay10,
+                  size: Size(17.6, 22.0),
+                  color: _white,
+                ),
+              ),
+              _ControlButton(
+                semanticLabel:
+                    'Playback speed ${formatSpeed(app.settings.playbackSpeed)}',
+                height: controlsHeight,
+                lineBox: lineBox,
+                width: 56,
+                onTap: app.cycleSpeed,
+                child: AText(
+                  formatSpeed(app.settings.playbackSpeed),
+                  style: Spec.listName,
+                  maxLines: 1,
+                ),
+              ),
+              _ControlButton(
+                semanticLabel: 'Forward 10 seconds',
+                height: controlsHeight,
+                lineBox: lineBox,
+                onTap: () {
+                  if (!_blocked(app)) {
+                    app.skip(skipInterval, file: widget.file);
+                  }
+                },
+                child: const InkIcon(
+                  AppIcons.forward10,
+                  size: Size(17.6, 22.0),
+                  color: _white,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A small button on the position line; its [child] is centred on the text
+/// line ([lineBox] high) and the touch area reaches down to [height].
+class _ControlButton extends StatelessWidget {
+  const _ControlButton({
+    required this.child,
+    required this.onTap,
+    required this.height,
+    required this.lineBox,
+    required this.semanticLabel,
+    this.width = 48,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+  final double height;
+  final double lineBox;
+  final double width;
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: height,
+      child: PressableArea(
+        onTap: onTap,
+        semanticLabel: semanticLabel,
+        highlight: const Color(0x33FFFFFF),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            height: lineBox,
+            child: Center(child: child),
+          ),
+        ),
+      ),
     );
   }
 }

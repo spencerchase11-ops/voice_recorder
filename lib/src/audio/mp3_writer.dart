@@ -3,16 +3,29 @@ import 'dart:typed_data';
 
 import 'package:lame_mp3/lame_mp3.dart';
 
+import 'audio_info.dart';
+
 /// Encodes 16-bit little-endian PCM to a constant-bitrate MP3 file with LAME.
+///
+/// The file starts with an ID3v2.4 tag holding the recording date.
 class Mp3Writer {
-  Mp3Writer._(this._file, this._encoder);
+  Mp3Writer._(this._file, this._encoder, this._bytesWritten);
 
   static Future<Mp3Writer> open(
     String path, {
     required int sampleRate,
     required int bitRateKbps,
     int channels = 1,
+    DateTime? recorded,
   }) async {
+    final raf = await File(path).open(mode: FileMode.write);
+    final tag = recorded == null ? null : id3DateTag(recorded);
+    try {
+      if (tag != null) await raf.writeFrom(tag);
+    } catch (_) {
+      await raf.close();
+      rethrow;
+    }
     final encoder = LameMp3Encoder(
       sampleRate: sampleRate,
       channels: channels,
@@ -20,14 +33,13 @@ class Mp3Writer {
       // LAME's recommended speed/quality trade-off for real-time encoding.
       quality: 5,
     );
-    final raf = await File(path).open(mode: FileMode.write);
-    return Mp3Writer._(raf, encoder);
+    return Mp3Writer._(raf, encoder, tag?.length ?? 0);
   }
 
   final RandomAccessFile _file;
   final LameMp3Encoder _encoder;
   int _pending = -1; // odd trailing byte carried over between chunks
-  int _bytesWritten = 0;
+  int _bytesWritten;
 
   int get bytesWritten => _bytesWritten;
 

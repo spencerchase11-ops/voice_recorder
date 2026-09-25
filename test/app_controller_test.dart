@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 import 'package:voice_recorder/src/app_controller.dart';
+import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/recorder_engine.dart';
 import 'package:voice_recorder/src/audio/wav_writer.dart';
 import 'package:voice_recorder/src/core/format.dart';
@@ -28,6 +29,7 @@ void main() {
   late FakeStore store;
   late FakeEngine engine;
   late FakePlayback playback;
+  late FakeNative native;
   late AppController app;
 
   Future<AppController> build({
@@ -47,12 +49,13 @@ void main() {
     );
     engine = FakeEngine();
     playback = FakePlayback();
+    native = FakeNative();
     app = AppController(
       settings: settings,
       store: store,
       engine: engine,
       playback: playback,
-      native: const NativeBridge(),
+      native: native,
       workDir: () async => work,
       isAndroid: isAndroid,
       clock: () => DateTime(2026, 9, 23, 19, 14, 5),
@@ -118,8 +121,19 @@ void main() {
       );
       expect(pending.listSync(), isEmpty);
       final wav = store.files.firstWhere((f) => f.name.endsWith('.wav'));
-      expect(wav.size, 44 + 3201);
+      // The half sample at the end is dropped; the date chunk (40 bytes)
+      // is added.
+      expect(wav.size, 44 + 3200 + 40);
       expect(app.currentFile, isNotNull);
+      // Both carry their recording date inside now.
+      for (final name in ['2026_09_22_10_00_00.wav']) {
+        final info = await readAudioInfo(
+          MemoryBytes(store.savedBytes[name]!),
+          name,
+        );
+        expect(info.recorded, DateTime(2026, 9, 22, 10));
+        expect(info.duration, const Duration(milliseconds: 100));
+      }
     });
 
     test('drops empty recordings and keeps cut-off M4A files out', () async {
@@ -565,11 +579,12 @@ void main() {
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
       await (await build(isAndroid: true)).init();
+      Iterable<String> service() => calls.where((c) => c.contains('Service'));
       await app.toggleRecord();
-      expect(calls, ['startRecordingService:0']);
+      expect(service(), ['startRecordingService:0']);
       await app.toggleRecord();
       // The service keeps the process alive until the file is in the folder.
-      expect(calls, ['startRecordingService:0', 'stopRecordingService:1']);
+      expect(service(), ['startRecordingService:0', 'stopRecordingService:1']);
     });
   });
 
@@ -619,17 +634,27 @@ void main() {
       expect(store.files.map((f) => f.name), contains(cur.name));
     });
 
-    test('delete removes the file and clears the Recorder screen', () async {
+    test('delete moves the file to Recently deleted and clears the Recorder '
+        'screen; undo brings both back', () async {
       await (await build()).init();
       await app.refreshFiles();
       await app.togglePlayCurrent();
-      expect(await app.delete(app.currentFile!), isTrue);
+      final deleted = await app.delete([app.currentFile!]);
+      expect(deleted.items.single.originalName, _last.substring(6));
+      expect(deleted.failed, 0);
       expect(playback.fileId, isNull);
       expect(app.currentFile, isNull);
       expect(settings.lastFile, isNull);
       expect(app.timerValue, Duration.zero);
       expect(app.files, hasLength(9));
-      expect(store.files, hasLength(9));
+      expect(await store.list(), hasLength(9));
+      expect(await app.deletedRecordings(), hasLength(1));
+
+      expect(await app.undoDelete(deleted), 1);
+      expect(app.files, hasLength(10));
+      expect(app.currentFile?.name, _last.substring(6));
+      expect(settings.lastDuration, const Duration(minutes: 33, seconds: 57));
+      expect(await app.deletedRecordings(), isEmpty);
     });
 
     test(
@@ -747,7 +772,7 @@ void main() {
           store: s,
           engine: engine,
           playback: playback,
-          native: const NativeBridge(),
+          native: NativeBridge(),
           workDir: () async => work,
         );
         addTearDown(c.dispose);

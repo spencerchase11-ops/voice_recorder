@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import '../audio/audio_info.dart';
 import 'format.dart';
 
 /// A recording in the recordings folder.
@@ -7,6 +10,8 @@ class RecordingFile {
     required this.name,
     required this.size,
     required this.modified,
+    this.recorded,
+    this.duration,
   });
 
   /// Android: the document URI inside the chosen folder.
@@ -19,13 +24,33 @@ class RecordingFile {
   final int size;
   final DateTime modified;
 
+  /// The recording date stored inside the file (see audio_info.dart), once
+  /// it has been read; null until then or if the file has none.
+  final DateTime? recorded;
+
+  /// Playing time read from the file's headers, once known.
+  final Duration? duration;
+
   String get baseName => splitExtension(name).$1;
   String get extension => splitExtension(name).$2;
 
-  /// When it was recorded: the time in a timestamp name
-  /// (`2026_09_16_16_37_26.mp3`), which survives copies and phone transfers
-  /// that reset file dates; otherwise the file's modification time.
-  DateTime get date => parseTimestampName(baseName) ?? modified;
+  /// When it was recorded: the date stored in the file, which survives
+  /// renames; else the time in a timestamp name (`2026_09_16_16_37_26.mp3`),
+  /// which survives copies and phone transfers that reset file dates; else
+  /// the file's modification time.
+  DateTime get date => recorded ?? parseTimestampName(baseName) ?? modified;
+
+  /// This file with what [info] says about it (unchanged for null).
+  RecordingFile withInfo(AudioInfo? info) => info == null
+      ? this
+      : RecordingFile(
+          id: id,
+          name: name,
+          size: size,
+          modified: modified,
+          recorded: info.recorded ?? recorded,
+          duration: info.duration ?? duration,
+        );
 
   RecordingFile copyWith({
     String? id,
@@ -37,6 +62,8 @@ class RecordingFile {
     name: name ?? this.name,
     size: size ?? this.size,
     modified: modified ?? this.modified,
+    recorded: recorded,
+    duration: duration,
   );
 
   @override
@@ -45,13 +72,78 @@ class RecordingFile {
       other.id == id &&
       other.name == name &&
       other.size == size &&
-      other.modified == modified;
+      other.modified == modified &&
+      other.recorded == recorded &&
+      other.duration == duration;
 
   @override
-  int get hashCode => Object.hash(id, name, size, modified);
+  int get hashCode => Object.hash(id, name, size, modified, recorded, duration);
 
   @override
   String toString() => 'RecordingFile($name, $size bytes, $modified)';
+}
+
+/// How long Recently deleted keeps a recording.
+const trashRetention = Duration(days: 30);
+
+/// A recording in Recently deleted: the file under a hidden name
+/// (`.trashed-<ms>-<original name>`) in the recordings folder, so it is out of
+/// the list (and out of file managers and music apps) but can come back.
+class TrashedRecording {
+  const TrashedRecording({
+    required this.file,
+    required this.originalName,
+    required this.deletedAt,
+  });
+
+  static const prefix = '.trashed-';
+
+  /// The file under its hidden name.
+  final RecordingFile file;
+
+  /// The name it gets back when restored.
+  final String originalName;
+  final DateTime deletedAt;
+
+  /// The hidden name for [name], deleted at [at]. Long names are shortened
+  /// to keep within the file system's 255-byte limit.
+  static String hiddenName(String name, DateTime at) {
+    final head = '$prefix${at.millisecondsSinceEpoch}-';
+    var fitted = name;
+    if (utf8.encode(head + fitted).length > 250) {
+      final (base, ext) = splitExtension(name);
+      final tail = ext.isEmpty ? '' : '.$ext';
+      var b = base;
+      while (b.isNotEmpty && utf8.encode('$head$b$tail').length > 250) {
+        b = String.fromCharCodes(b.runes.take(b.runes.length - 1));
+      }
+      fitted = '$b$tail';
+    }
+    return head + fitted;
+  }
+
+  static final _pattern = RegExp(r'^\.trashed-(\d{1,16})-(.+)$');
+
+  /// The deleted recording [file] stands for, or null for other files.
+  static TrashedRecording? parse(RecordingFile file) {
+    final m = _pattern.firstMatch(file.name);
+    if (m == null) return null;
+    final original = m.group(2)!;
+    if (!isAudioFileName(original)) return null;
+    return TrashedRecording(
+      file: file,
+      originalName: original,
+      deletedAt: DateTime.fromMillisecondsSinceEpoch(int.parse(m.group(1)!)),
+    );
+  }
+
+  /// Whole days until it is deleted for good (0 on the last day).
+  int daysLeft(DateTime now) {
+    final left = deletedAt.add(trashRetention).difference(now);
+    return left.isNegative ? 0 : left.inDays;
+  }
+
+  bool expired(DateTime now) => !deletedAt.add(trashRetention).isAfter(now);
 }
 
 /// Extensions the recording list shows (files the original app could create

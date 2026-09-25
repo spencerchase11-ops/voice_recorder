@@ -161,15 +161,23 @@ def red_ball(scale, ss, symbol=None):
     img = (np.zeros(x.shape + (3,)), np.zeros(x.shape))
     img = over(img, rgb, a)
 
-    if symbol == 'stop':
+    if symbol in ('stop', 'pause'):
         s = 5.4
-        sd = sd_rounded_rect(x, y, cx - s, cy - s, cx + s, cy + s, 1.6)
-        sa = cover(sd, px)
-        sym = blend(col(255, 255, 255) + 0 * x[..., None], col(236, 222, 222), smoothstep(cy - s, cy + s, y))
-        # soft shadow under the symbol
-        sh = cover(sd_rounded_rect(x, y - 0.6, cx - s, cy - s, cx + s, cy + s, 1.6) - 0.3, 1.2) * 0.35
-        img = over(img, np.zeros_like(rgb) + col(60, 0, 0), sh * a)
-        img = over(img, sym, sa)
+        if symbol == 'stop':
+            rects = [(cx - s, cy - s, cx + s, cy + s)]
+        else:
+            # two bars of the stop square's height (the recording pause)
+            bw, gap = 3.6, 3.2
+            rects = [(cx - gap / 2 - bw, cy - s, cx - gap / 2, cy + s),
+                     (cx + gap / 2, cy - s, cx + gap / 2 + bw, cy + s)]
+        for x0, y0, x1, y1 in rects:
+            sd = sd_rounded_rect(x, y, x0, y0, x1, y1, 1.2 if symbol == 'pause' else 1.6)
+            sa = cover(sd, px)
+            sym = blend(col(255, 255, 255) + 0 * x[..., None], col(236, 222, 222), smoothstep(cy - s, cy + s, y))
+            # soft shadow under the symbol
+            sh = cover(sd_rounded_rect(x, y - 0.6, x0, y0, x1, y1, 1.2 if symbol == 'pause' else 1.6) - 0.3, 1.2) * 0.35
+            img = over(img, np.zeros_like(rgb) + col(60, 0, 0), sh * a)
+            img = over(img, sym, sa)
     return finish(img, W, H, ss)
 
 
@@ -293,6 +301,7 @@ def main():
     jobs = {
         'record.png': lambda: red_ball(args.scale, args.ss),
         'record_stop.png': lambda: red_ball(args.scale, args.ss, symbol='stop'),
+        'record_pause.png': lambda: red_ball(args.scale, args.ss, symbol='pause'),
         'play.png': lambda: green_play(args.scale, args.ss),
         'pause.png': lambda: green_pause(args.scale, args.ss),
         'play_disabled.png': lambda: silver_play(args.scale, args.ss),

@@ -13,7 +13,7 @@ void main() {
     final docs = Directory('${root.path}/$container/Documents');
     await docs.create(recursive: true);
     final store = IosRecordingStore(
-      const NativeBridge(),
+      NativeBridge(),
       documents: () async => docs,
     );
     await store.init();

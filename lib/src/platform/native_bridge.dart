@@ -1,18 +1,80 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Free space on Android, see [NativeBridge.storageSpace].
 typedef StorageSpace = ({int destination, int internal, bool sameVolume});
 
+/// Something the platform side reports on its own.
+sealed class NativeEvent {
+  const NativeEvent();
+}
+
+/// A button on the lock screen, in the playback notification, on
+/// headphones or in the car was pressed.
+class MediaButton extends NativeEvent {
+  const MediaButton(this.action, {this.position});
+
+  /// play, pause, toggle, seek, forward, rewind, stop or dismiss (the
+  /// notification was swiped away).
+  final String action;
+
+  /// Target of a seek.
+  final Duration? position;
+
+  @override
+  String toString() => 'MediaButton($action, $position)';
+}
+
+/// A button in the Android recording notification: pause, resume or stop.
+class RecordingButton extends NativeEvent {
+  const RecordingButton(this.action);
+
+  final String action;
+
+  @override
+  String toString() => 'RecordingButton($action)';
+}
+
 /// Calls into the small amount of platform code the app needs
-/// (android/app/src/main/kotlin/.../MainActivity.kt and ios/Runner/AppDelegate.swift).
+/// (android/app/src/main/kotlin/... and ios/Runner/AppDelegate.swift).
 class NativeBridge {
-  const NativeBridge([
-    this._channel = const MethodChannel(
-      'com.spencerchase.voicerecorder/native',
-    ),
-  ]);
+  NativeBridge([MethodChannel? channel])
+    : _channel =
+          channel ??
+          const MethodChannel('com.spencerchase.voicerecorder/native');
 
   final MethodChannel _channel;
+  StreamController<NativeEvent>? _events;
+
+  /// Buttons pressed outside the app (see [NativeEvent]).
+  Stream<NativeEvent> get events {
+    final existing = _events;
+    if (existing != null) return existing.stream;
+    final c = _events = StreamController<NativeEvent>.broadcast();
+    _channel.setMethodCallHandler((call) async {
+      final args = call.arguments is Map
+          ? (call.arguments as Map).cast<Object?, Object?>()
+          : const <Object?, Object?>{};
+      switch (call.method) {
+        case 'mediaAction':
+          final ms = args['position'];
+          c.add(
+            MediaButton(
+              args['action']! as String,
+              position: ms is int ? Duration(milliseconds: ms) : null,
+            ),
+          );
+        case 'recordingAction':
+          c.add(RecordingButton(args['action']! as String));
+        default:
+          debugPrint('Unknown call from the platform: ${call.method}');
+      }
+      return null;
+    });
+    return c.stream;
+  }
 
   // ------------------------------------------------------------ Android
   /// Opens the system folder picker. Returns the persisted tree URI or null.
@@ -29,9 +91,15 @@ class NativeBridge {
   Future<String?> folderPath(String treeUri) =>
       _channel.invokeMethod<String>('folderPath', {'treeUri': treeUri});
 
-  Future<List<Map<Object?, Object?>>> listFolder(String treeUri) async =>
+  /// The folder's files; with [hidden], only those whose names start with a
+  /// dot (Recently deleted), otherwise all others.
+  Future<List<Map<Object?, Object?>>> listFolder(
+    String treeUri, {
+    bool hidden = false,
+  }) async =>
       (await _channel.invokeListMethod<Map<Object?, Object?>>('listFolder', {
         'treeUri': treeUri,
+        'hidden': hidden,
       })) ??
       const [];
 
@@ -67,13 +135,43 @@ class NativeBridge {
       }) ??
       false;
 
-  Future<void> shareDocument(String documentUri, String mimeType) =>
-      _channel.invokeMethod<void>('shareDocument', {
-        'documentUri': documentUri,
+  Future<void> shareDocuments(List<String> documentUris, String mimeType) =>
+      _channel.invokeMethod<void>('shareDocuments', {
+        'documentUris': documentUris,
         'mimeType': mimeType,
       });
 
-  /// Keeps the process (and microphone access) alive while recording.
+  /// Opens a document for random access; [write] also allows changes.
+  /// Returns a handle for the calls below.
+  Future<int> openDocument(String documentUri, {bool write = false}) async =>
+      (await _channel.invokeMethod<int>('openDocument', {
+        'documentUri': documentUri,
+        'write': write,
+      }))!;
+
+  Future<int> documentLength(int handle) async =>
+      (await _channel.invokeMethod<int>('documentLength', {'handle': handle}))!;
+
+  Future<Uint8List> readDocument(int handle, int offset, int count) async =>
+      (await _channel.invokeMethod<Uint8List>('readDocument', {
+        'handle': handle,
+        'offset': offset,
+        'count': count,
+      })) ??
+      Uint8List(0);
+
+  Future<void> writeDocument(int handle, int offset, List<int> bytes) =>
+      _channel.invokeMethod<void>('writeDocument', {
+        'handle': handle,
+        'offset': offset,
+        'bytes': Uint8List.fromList(bytes),
+      });
+
+  Future<void> closeDocument(int handle) =>
+      _channel.invokeMethod<void>('closeDocument', {'handle': handle});
+
+  /// Keeps the process (and microphone access) alive while recording, with
+  /// an ongoing notification that has Pause and Stop buttons.
   Future<void> startRecordingService({
     required String title,
     required String text,
@@ -82,10 +180,47 @@ class NativeBridge {
     'text': text,
   });
 
+  /// Shows whether the recording is [paused] in its notification, and how
+  /// long it has run ([elapsed], for the notification's timer).
+  Future<void> updateRecordingService({
+    required String text,
+    required bool paused,
+    required Duration elapsed,
+  }) => _channel.invokeMethod<void>('updateRecordingService', {
+    'text': text,
+    'paused': paused,
+    'elapsedMs': elapsed.inMilliseconds,
+  });
+
   Future<void> stopRecordingService() =>
       _channel.invokeMethod<void>('stopRecordingService');
 
   // ---------------------------------------------------------------- both
+  /// Shows (or updates) the playback controls on the lock screen and, on
+  /// Android, in a notification that keeps playback going in the background.
+  Future<void> updateMediaSession({
+    required String title,
+    required Duration duration,
+    required Duration position,
+    required bool playing,
+    required double speed,
+  }) => _channel.invokeMethod<void>('updateMediaSession', {
+    'title': title,
+    'durationMs': duration.inMilliseconds,
+    'positionMs': position.inMilliseconds,
+    'playing': playing,
+    'speed': speed,
+  });
+
+  /// Removes the playback controls.
+  Future<void> clearMediaSession() =>
+      _channel.invokeMethod<void>('clearMediaSession');
+
+  /// What the app was opened for from a home-screen shortcut ("record"),
+  /// once; null otherwise.
+  Future<String?> takeLaunchAction() =>
+      _channel.invokeMethod<String>('takeLaunchAction');
+
   /// Android: free space of the folder's volume ([treeUri], or shared storage
   /// when none is chosen) and of internal app storage, where recordings are
   /// written before being copied into the folder.
@@ -112,6 +247,12 @@ class NativeBridge {
 
   /// iOS: "iPhone" or "iPad", used to describe the Files app location.
   Future<String?> deviceKind() => _channel.invokeMethod<String>('deviceKind');
+
+  /// iOS: lets the user pick audio files or folders (in Files, iCloud Drive,
+  /// on a USB drive) and copies the recordings among them into
+  /// [destination]. Returns how many were copied, or null if cancelled.
+  Future<int?> importRecordings(String destination) => _channel
+      .invokeMethod<int>('importRecordings', {'destination': destination});
 
   /// Opens this app's page in the system settings (to allow the microphone).
   Future<void> openAppSettings() =>

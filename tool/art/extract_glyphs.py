@@ -32,6 +32,24 @@ GLYPHS = [
     ('gear', 'ion', 0xf43c),          # ion-ios-gear-outline
     ('errorOutline', 'material', 0xf025),  # error_outline (outlined)
     ('fileOutline', 'material', 0xf12d),   # insert_drive_file (outlined)
+    # Added with the upgrades (search, sort, selection, Recently deleted,
+    # playback and settings).
+    ('search', 'fa', 0xf002),         # fa-search
+    ('sortDown', 'fa', 0xf160),       # fa-sort-amount-desc
+    ('close', 'fa', 0xf00d),          # fa-times
+    ('checkBox', 'material', 0xe157),         # check_box
+    ('checkBoxBlank', 'material', 0xe158),    # check_box_outline_blank
+    ('doneAll', 'material', 0xe1f7),          # done_all
+    ('restoreFromTrash', 'material', 0xf317), # restore_from_trash (outlined)
+    ('deleteForever', 'material', 0xefa8),    # delete_forever (outlined)
+    ('deleteSweep', 'material', 0xefab),      # delete_sweep (outlined)
+    ('autoDelete', 'material', 0xeeaa),       # auto_delete (outlined)
+    ('download', 'material', 0xeff2),         # download (outlined)
+    ('lock', 'material', 0xf197),             # lock (outlined)
+    ('speed', 'material', 0xf3c3),            # speed (outlined)
+    ('noiseAware', 'material', 0xf0705),      # noise_aware (outlined)
+    ('replay10', 'material', 0xe524),         # replay_10
+    ('forward10', 'material', 0xe2c5),        # forward_10
 ]
 
 
