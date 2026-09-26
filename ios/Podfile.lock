@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - lame_mp3 (0.1.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - lame_mp3 (from `.symlinks/plugins/lame_mp3/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  lame_mp3:
+    :path: ".symlinks/plugins/lame_mp3/ios"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  lame_mp3: 8eb474a5ba83f5331cb7f22634f1af5c9b52a81f
+
+PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
+
+COCOAPODS: 1.16.2
