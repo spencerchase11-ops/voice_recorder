@@ -2,7 +2,7 @@ name: voice_recorder
 description: "Voice Recorder - a faithful revival of the classic 2016 voice recorder."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.13.4

@@ -18,8 +18,7 @@ export PATH="$HOME/flutter-3.47.5/bin:$PATH"   # add to ~/.zshrc to keep it
 brew install cocoapods
 ```
 
-Get the code (the repository is private: if `git clone` asks for a password,
-use GitHub Desktop's *File → Clone Repository*, or `gh repo clone`):
+Get the code:
 
 ```sh
 git clone https://github.com/spencerchase11-ops/voice_recorder.git
@@ -134,10 +133,12 @@ slot accepts, and App Store Connect scales them for smaller iPhones):
 volume up) once your recordings are in; a Pro Max or Plus iPhone gives the
 right size.
 
-**Support URL** and **Privacy Policy URL:** both are required and must be
-public web pages; this repository is private, so its `PRIVACY.md` can't be
-the link. Put the text of [PRIVACY.md](../PRIVACY.md) wherever your other
-apps' policies live, and use that page (or your support page) for both.
+**Support URL:** https://github.com/spencerchase11-ops/voice_recorder/issues
+
+**Privacy Policy URL** (under *App Privacy*):
+https://github.com/spencerchase11-ops/voice_recorder/blob/HEAD/PRIVACY.md
+
+**Marketing URL** (optional): https://github.com/spencerchase11-ops/voice_recorder
 
 **Category:** Utilities (secondary: Productivity). **Price:** Free.
 
@@ -164,10 +165,11 @@ Then choose the build, and **Add for Review** → **Submit**.
 ## Before you release
 
 - **The MP3 encoder's license.** MP3 recording uses LAME, which is under the
-  LGPL. For an app on the App Store, that license expects you to make the
-  source available so people could rebuild the app with a changed LAME. The
-  simplest way is to make this repository public when the app goes out, or
-  to publish the source somewhere else. See
+  LGPL. For an app on the App Store, that license expects the source to be
+  available so people could rebuild the app with a changed LAME: this
+  repository is public for that, and the About dialog says so. Tag the
+  commit of every store build (`git tag v1.0.1 && git push --tags`) and
+  keep the repository public. See
   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 - **After the first release**, put the app's Apple ID (the number under
   *App Information* in App Store Connect) into `lib/src/config.dart`

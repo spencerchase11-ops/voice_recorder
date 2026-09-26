@@ -28,13 +28,22 @@ LGPL asks you to:
 
 - ship the license text with it. The app bundles it and shows it under
   About → Licenses;
-- give notice that the app uses LAME. The About dialog does this;
+- give notice that the app uses LAME. The About dialog does this, with
+  LAME's copyright and where the source is;
 - make LAME's source code, including any changes, available to users. It is
-  in this repository, unmodified, with its checksum in
-  `packages/lame_mp3/src/lame/PATCHES.md`. If the repository is private,
-  provide the source another way, for example with a written offer;
+  in this public repository
+  (<https://github.com/spencerchase11-ops/voice_recorder>), unmodified,
+  with its checksum in `packages/lame_mp3/src/lame/PATCHES.md`, together
+  with its build configuration (`config.h`, the podspec and CMake files).
+  Each store release is tagged (`v1.0.0`, …) so the exact source of every
+  published build stays available;
 - let users replace LAME with a modified version. Android's separate `.so`
-  makes this simple. For App Store builds it takes more care: publishing
-  the app's source, as this repository does, is the usual way to comply.
+  makes this simple. For App Store builds, the app's full source is
+  published here so anyone can build the app with a changed LAME; on iOS,
+  LAME stays in its own `lame_mp3.framework` (keep `use_frameworks!` in
+  `ios/Podfile`).
+
+You may modify this app for your own use and reverse-engineer it to debug
+such modifications, as section 6 of the LGPL requires.
 
 This is a summary, not legal advice.

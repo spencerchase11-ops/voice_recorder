@@ -496,9 +496,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         message:
             'Voice Recorder\nVersion $version\n\n'
             'A faithful revival of the classic 2016 voice recorder.\n\n'
-            'MP3 encoding by LAME (lame.sourceforge.io), used under the GNU '
-            'LGPL. Its source code is available there, and is included with '
-            "this app's source code.",
+            'MP3 encoding by LAME 4.0, © 1999–2011 The LAME Project and '
+            'others (lame.sourceforge.io), used under the GNU LGPL. The '
+            'source code of LAME and of this app, to build it with a changed '
+            'LAME, is at github.com/spencerchase11-ops/voice_recorder.',
         buttons: [
           HoloButton('Licenses', onTap: () => Navigator.of(ctx).pop(true)),
           HoloButton('OK', onTap: () => Navigator.of(ctx).pop(false)),

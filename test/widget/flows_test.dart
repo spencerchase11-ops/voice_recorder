@@ -635,6 +635,11 @@ void main() {
       await tester.tap(labeled('About'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Version 1.0.0 (1)'), findsOneWidget);
+      // The LGPL: where LAME's (and the app's) source is.
+      expect(
+        find.textContaining('github.com/spencerchase11-ops/voice_recorder'),
+        findsOneWidget,
+      );
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Version 1.0.0 (1)'), findsNothing);
