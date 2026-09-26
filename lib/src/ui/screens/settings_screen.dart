@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart'
     show ColorScheme, LicensePage, MaterialPageRoute, Theme, ThemeData;
 import 'package:flutter/widgets.dart';
@@ -22,6 +23,9 @@ import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
 import 'recently_deleted_screen.dart';
+
+/// Width of the header's "up" button on iPhone (the caret and the app icon).
+const double _upWidth = 66;
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -180,6 +184,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final app = AppScope.of(context);
     final settings = app.settings;
     final deleted = _deleted;
+    // On iPhone the page goes on under the home indicator; the list's end can
+    // scroll clear of it.
+    final homeIndicator = ScreenFrame.underHomeIndicator
+        ? MediaQuery.viewPaddingOf(context).bottom
+        : 0.0;
+    final appIcon = Semantics(
+      label: 'Voice Recorder',
+      child: Image.asset(
+        'assets/images/app_icon.png',
+        filterQuality: FilterQuality.medium,
+      ),
+    );
 
     return ScreenFrame(
       child: Column(
@@ -187,25 +203,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
           RedHeader(
             title: 'Voice Recorder',
             children: [
-              Positioned(
-                left: 10.9,
-                top: 6.6,
-                width: 34.3,
-                height: 34.3,
-                child: Semantics(
-                  label: 'Voice Recorder',
-                  child: Image.asset(
-                    'assets/images/app_icon.png',
-                    filterQuality: FilterQuality.medium,
+              // An iPhone has no Back button: an "up" caret before the icon
+              // goes back, where the other screens have their back arrow.
+              if (defaultTargetPlatform == TargetPlatform.iOS)
+                BarButton(
+                  center: const Offset(_upWidth / 2, Spec.headerHeight / 2),
+                  touchSize: const Size(_upWidth, Spec.headerHeight),
+                  semanticLabel: 'Back',
+                  onTap: () => Navigator.of(context).maybePop(),
+                  child: SizedBox(
+                    width: _upWidth,
+                    height: Spec.headerHeight,
+                    child: Stack(
+                      children: [
+                        const Positioned(
+                          left: 18.26 - 13.7 / 2,
+                          top: 23.14 - 26.3 / 2,
+                          child: InkIcon(
+                            AppIcons.back,
+                            size: Size(13.7, 26.3),
+                            color: Color(0xFFFFFFFF),
+                          ),
+                        ),
+                        Positioned(
+                          left: 30,
+                          top: 6.6,
+                          width: 34.3,
+                          height: 34.3,
+                          child: appIcon,
+                        ),
+                      ],
+                    ),
                   ),
+                )
+              else
+                Positioned(
+                  left: 10.9,
+                  top: 6.6,
+                  width: 34.3,
+                  height: 34.3,
+                  child: appIcon,
                 ),
-              ),
             ],
           ),
           Expanded(
             child: BrushedMetal(
               child: ListView(
-                padding: EdgeInsets.zero,
+                padding: EdgeInsets.only(bottom: homeIndicator),
                 children: [
                   const _Section('Recorder'),
                   _Item(

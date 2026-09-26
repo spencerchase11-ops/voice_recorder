@@ -45,15 +45,21 @@ class RedFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // On iPhone the bar goes on under the home indicator, its shading drawn
+    // out to the screen's edge; the cells keep their height.
+    final bottom = ScreenFrame.homeIndicatorOf(context);
     return SizedBox(
-      height: height,
+      height: height + bottom,
       child: DecoratedBox(
         decoration: const BoxDecoration(gradient: Spec.footerGradient),
-        child: CustomPaint(
-          foregroundPainter: _DividerPainter(cells.length),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [for (final c in cells) Expanded(child: c)],
+        child: Padding(
+          padding: EdgeInsets.only(bottom: bottom),
+          child: CustomPaint(
+            foregroundPainter: _DividerPainter(cells.length),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [for (final c in cells) Expanded(child: c)],
+            ),
           ),
         ),
       ),

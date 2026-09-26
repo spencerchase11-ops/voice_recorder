@@ -224,8 +224,12 @@ decided:
   is called "Rate this app" (the App Store's rules don't allow asking for a
   number of stars); it appears once `AppConfig.appStoreId` is set, and opens
   the App Store review page.
-- On iPhone the strip under the bottom bar (the home indicator's) is black,
-  like the status bar, instead of Android's light navigation bar.
+- On iPhone the bottom bar goes on under the home indicator, to the screen's
+  edge, instead of Android's light navigation bar. The status bar is black,
+  as in the original.
+- An iPhone has no Back button, so on iOS the Settings header starts with a
+  back caret before the app icon (like Android's "up"); tapping either goes
+  back. On Android the header shows only the icon, as in the original.
 - Recordings always use the phone's own microphone, also with Bluetooth
   headphones connected; the headphones keep full quality for playback.
 - On iOS the app is iPhone-only, like the original phone app. iPads run it in

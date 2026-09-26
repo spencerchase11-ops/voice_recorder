@@ -6,12 +6,22 @@ import 'package:flutter/widgets.dart';
 import '../spec.dart';
 
 /// Paints the system-bar areas the way the original looked (black status
-/// bar, light navigation bar; black on iPhone) now that apps draw edge to
-/// edge.
+/// bar, light navigation bar) now that apps draw edge to edge. On iPhone the
+/// bottom bar (or the page, on screens without one) goes on under the home
+/// indicator instead, to the screen's edge.
 class ScreenFrame extends StatelessWidget {
   const ScreenFrame({super.key, required this.child});
 
   final Widget child;
+
+  /// Whether the screens reach under the home indicator (iPhone).
+  static bool get underHomeIndicator =>
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// How far the bottom bar reaches under the home indicator: zero where the
+  /// frame paints the navigation bar.
+  static double homeIndicatorOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_HomeIndicator>()?.height ?? 0;
 
   static const overlayStyle = SystemUiOverlayStyle(
     statusBarColor: Color(0x00000000),
@@ -44,25 +54,30 @@ class ScreenFrame extends StatelessWidget {
                     context: context,
                     removeTop: true,
                     removeBottom: true,
-                    child: child,
+                    child: underHomeIndicator
+                        ? _HomeIndicator(height: pad.bottom, child: child)
+                        : child,
                   ),
                 ),
               ),
-              // Android's navigation bar, as in the original; on iPhone the
-              // home indicator's strip stays black, like the status bar.
-              if (pad.bottom > 0)
-                Container(
-                  height: pad.bottom,
-                  color: defaultTargetPlatform == TargetPlatform.iOS
-                      ? Spec.statusBarColor
-                      : Spec.navigationBarColor,
-                ),
+              // Android's navigation bar, as in the original.
+              if (pad.bottom > 0 && !underHomeIndicator)
+                Container(height: pad.bottom, color: Spec.navigationBarColor),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _HomeIndicator extends InheritedWidget {
+  const _HomeIndicator({required this.height, required super.child});
+
+  final double height;
+
+  @override
+  bool updateShouldNotify(_HomeIndicator old) => old.height != height;
 }
 
 /// Resets the inherited text style (no Material/Scaffold ancestors are used)
