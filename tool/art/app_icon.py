@@ -62,7 +62,8 @@ def diagonal_distance(mask, max_steps):
     return d
 
 
-def render(size, ss=4, tile=True, tile_radius=0.092, disc_scale=1.0, opaque_bg=None):
+def render(size, ss=4, tile=True, tile_radius=0.092, disc_scale=1.0, opaque_bg=None, bg_window=(0.0, 1.0)):
+    """[bg_window]: the part of the tile's top-to-bottom gradient that shows."""
     n = size * ss
     ys, xs = np.mgrid[0:n, 0:n].astype(np.float64)
     x = (xs + 0.5) / n
@@ -95,7 +96,8 @@ def render(size, ss=4, tile=True, tile_radius=0.092, disc_scale=1.0, opaque_bg=N
             a = np.ones_like(x)
             edge = np.ones_like(x)
         # (top, middle, bottom) per channel, measured from the original
-        g = np.stack([np.interp(y, [0, 0.5, 1], c) for c in ([255, 231, 194], [243, 227, 195], [245, 228, 197])], -1)
+        gy = bg_window[0] + (bg_window[1] - bg_window[0]) * y
+        g = np.stack([np.interp(gy, [0, 0.5, 1], c) for c in ([255, 231, 194], [243, 227, 195], [245, 228, 197])], -1)
         g = g * (0.86 + 0.14 * edge[..., None])
         over(g, a)
 
@@ -165,7 +167,11 @@ def main():
     ios = os.path.join(root, 'ios/Runner/Assets.xcassets/AppIcon.appiconset')
     with open(os.path.join(ios, 'Contents.json')) as fh:
         contents = json.load(fh)
-    master = render(1024, ss=2, tile=True, tile_radius=0, disc_scale=0.84).convert('RGB')
+    # What Android's adaptive icon shows inside its 72 dp mask: the middle of
+    # the 108 dp layers, so the disc is 0.64 * 108 / 72 = 0.96 and the tile's
+    # gradient runs from 18 dp to 90 dp. iOS then rounds the corners.
+    master = render(1024, ss=2, tile=True, tile_radius=0, disc_scale=0.96,
+                    bg_window=(18 / 108, 90 / 108)).convert('RGB')
     for img in contents['images']:
         name = img.get('filename')
         if not name:
