@@ -221,8 +221,11 @@ decided:
   ads, so both are left out.
 - **Rate 5 stars** opens the Play Store listing on Android (until the app is
   published there, the Play Store says the item isn't found). On iOS the row
-  appears once `AppConfig.appStoreId` is set, and opens the App Store review
-  page.
+  is called "Rate this app" (the App Store's rules don't allow asking for a
+  number of stars); it appears once `AppConfig.appStoreId` is set, and opens
+  the App Store review page.
+- On iPhone the strip under the bottom bar (the home indicator's) is black,
+  like the status bar, instead of Android's light navigation bar.
 - Recordings always use the phone's own microphone, also with Bluetooth
   headphones connected; the headphones keep full quality for playback.
 - On iOS the app is iPhone-only, like the original phone app. iPads run it in
@@ -251,6 +254,9 @@ flutter build ipa                # iOS archive for App Store Connect (needs sign
 ```
 
 ### Before publishing
+
+For the App Store, [docs/APP_STORE.md](docs/APP_STORE.md) has the steps on
+the Mac, the listing text and screenshots.
 
 1. **App id.** Both platforms use `com.spencerchase.voicerecorder`
    (`android/app/build.gradle.kts`, and `PRODUCT_BUNDLE_IDENTIFIER` in

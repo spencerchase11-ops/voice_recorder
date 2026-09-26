@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Material, MaterialType;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -5,7 +6,8 @@ import 'package:flutter/widgets.dart';
 import '../spec.dart';
 
 /// Paints the system-bar areas the way the original looked (black status
-/// bar, light navigation bar) now that apps draw edge to edge.
+/// bar, light navigation bar; black on iPhone) now that apps draw edge to
+/// edge.
 class ScreenFrame extends StatelessWidget {
   const ScreenFrame({super.key, required this.child});
 
@@ -46,8 +48,15 @@ class ScreenFrame extends StatelessWidget {
                   ),
                 ),
               ),
+              // Android's navigation bar, as in the original; on iPhone the
+              // home indicator's strip stays black, like the status bar.
               if (pad.bottom > 0)
-                Container(height: pad.bottom, color: Spec.navigationBarColor),
+                Container(
+                  height: pad.bottom,
+                  color: defaultTargetPlatform == TargetPlatform.iOS
+                      ? Spec.statusBarColor
+                      : Spec.navigationBarColor,
+                ),
             ],
           ),
         ),

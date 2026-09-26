@@ -29,8 +29,9 @@ everything on your device.
   with the dates and lengths it read from them. Your phone's own backup
   (Google or iCloud), if you use it, may include the settings; the names,
   dates and lengths are left out of it.
-- **Links.** "Rate 5 stars" opens the app's page in Google Play or the App
-  Store. Those stores' own privacy policies apply there.
+- **Links.** "Rate 5 stars" (Android) and "Rate this app" (iPhone) open the
+  app's page in Google Play or the App Store. Those stores' own privacy
+  policies apply there.
 
 Questions about this policy: use the developer contact address shown on the
 app's Google Play or App Store listing.

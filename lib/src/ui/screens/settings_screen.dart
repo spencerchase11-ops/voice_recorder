@@ -395,7 +395,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         size: Size(24.3, 23.1),
                         color: Color(0xFFFFFFFF),
                       ),
-                      title: 'Rate 5 stars',
+                      // The App Store's rules don't allow asking for a
+                      // number of stars.
+                      title: Platform.isIOS ? 'Rate this app' : 'Rate 5 stars',
                       onTap: () => _rate(context),
                     ),
                   _Item(
