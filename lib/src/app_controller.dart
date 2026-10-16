@@ -1037,14 +1037,14 @@ class AppController extends ChangeNotifier {
         }
         // The platform's encoder writes its own time (when it stopped).
         await _safe(() => _stamp(file, name, startedAt));
-        // Its length is in the file (the timer may have run through an
-        // interruption the encoder paused for).
-        duration =
-            await _safe<Duration?>(() => audioDuration(file)) ?? duration;
       } else if (lower.endsWith('.wav')) {
         // Added when the file was finished, unless finishing failed.
         await _safe(() => _stamp(file, name, startedAt));
       }
+      // The length is the file's: the timer may have run through an
+      // interruption the M4A encoder paused for, or (iOS, MP3 and WAV)
+      // through the seconds before a broken capture was started again.
+      duration = await _safe<Duration?>(() => audioDuration(file)) ?? duration;
       final saved = await store.save(
         file,
         name,

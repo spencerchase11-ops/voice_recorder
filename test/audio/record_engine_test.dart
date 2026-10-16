@@ -31,18 +31,52 @@ class _FakeRecordPlatform extends RecordPlatform {
     RecordConfig config, {
     required String path,
   }) async {}
+
+  /// Whether the platform recorder runs (record_ios: its state isn't "stop").
+  var recording = false;
+  var streamStarts = 0;
+
+  /// Stream starts that fail from now on (e.g. no audio session to be had).
+  var failingStarts = 0;
+
+  /// Holds the next stream start until completed.
+  Completer<void>? startGate;
+
   @override
   Future<Stream<Uint8List>> startStream(
     String recorderId,
     RecordConfig config,
   ) async {
+    // Like record_ios: a running capture is stopped first, and says so.
+    if (recording) {
+      recording = false;
+      emit(RecordState.stop);
+    }
+    final gate = startGate;
+    startGate = null;
+    await gate?.future;
+    streamStarts++;
+    if (failingStarts > 0) {
+      failingStarts--;
+      throw Exception('cannot start');
+    }
     this.config = config;
     bytes = StreamController<Uint8List>.broadcast();
+    recording = true;
+    emit(RecordState.record);
     return bytes!.stream;
+  }
+
+  /// record_ios stopping its own capture (e.g. a conversion that failed):
+  /// it reports the state, the stream just goes quiet.
+  void dies() {
+    recording = false;
+    emit(RecordState.stop);
   }
 
   @override
   Future<String?> stop(String recorderId) async {
+    recording = false;
     await bytes?.close();
     return null;
   }
@@ -56,14 +90,19 @@ class _FakeRecordPlatform extends RecordPlatform {
     emit(RecordState.pause);
   }
 
+  Object? resumeError;
+
   @override
   Future<void> resume(String recorderId) async {
     resumes++;
+    // record_ios ignores a resume when it isn't paused (e.g. stopped).
+    if (!recording) return;
+    if (resumeError != null) throw resumeError!;
     emit(RecordState.record);
   }
 
   @override
-  Future<bool> isRecording(String recorderId) async => true;
+  Future<bool> isRecording(String recorderId) async => recording;
   @override
   Future<bool> isPaused(String recorderId) async => false;
   @override
@@ -305,5 +344,404 @@ void main() {
     await feed(_tone(4410), 3); // still written
     await engine.stop();
     expect(await File(path).length(), 44 + 3 * 8820);
+  });
+
+  group('iOS: capture the system breaks goes on in the same file', () {
+    late StreamController<AudioInterruptionEvent> calls;
+    late StreamController<void> routes;
+    late StreamController<void> resets;
+    late List<bool> interruptions;
+    late bool foreground;
+
+    RecordPluginEngine iosEngine({
+      List<Duration> restartDelays = const [
+        Duration(milliseconds: 20),
+        Duration(milliseconds: 20),
+      ],
+      Duration resumeCheck = const Duration(milliseconds: 50),
+    }) {
+      final e = RecordPluginEngine(
+        isAndroid: false,
+        sessionInterruptions: calls.stream,
+        routeChanges: routes.stream,
+        mediaResets: resets.stream,
+        stallLimit: const Duration(milliseconds: 200),
+        restartDelays: restartDelays,
+        resumeCheck: resumeCheck,
+        routeCheck: const Duration(milliseconds: 50),
+        inForeground: () => foreground,
+      );
+      ends = [];
+      e.ended.listen(ends.add);
+      interruptions = [];
+      e.interrupted.listen(interruptions.add);
+      return e;
+    }
+
+    setUp(() {
+      foreground = true;
+      calls = StreamController<AudioInterruptionEvent>.broadcast();
+      routes = StreamController<void>.broadcast();
+      resets = StreamController<void>.broadcast();
+      engine = iosEngine();
+    });
+    tearDown(() async {
+      // A failed test must not leave an engine running into the next one.
+      try {
+        await engine.stop();
+      } catch (_) {}
+      await engine.dispose();
+      await calls.close();
+      await routes.close();
+      await resets.close();
+    });
+
+    Future<void> settle([int ms = 100]) =>
+        Future<void>.delayed(Duration(milliseconds: ms));
+
+    /// Waits (up to 5 s, so a slow machine doesn't fail it) for [done].
+    Future<void> eventually(bool Function() done) async {
+      final clock = Stopwatch()..start();
+      while (!done()) {
+        if (clock.elapsed > const Duration(seconds: 5)) {
+          fail('timed out');
+        }
+        await settle(10);
+      }
+    }
+
+    AudioInterruptionEvent began() =>
+        AudioInterruptionEvent(true, AudioInterruptionType.unknown);
+    AudioInterruptionEvent over({bool resume = false}) =>
+        AudioInterruptionEvent(
+          false,
+          resume ? AudioInterruptionType.pause : AudioInterruptionType.unknown,
+        );
+
+    test('the plugin stopping its capture (after a call)', () async {
+      final path = '${dir.path}/c1.wav';
+      await engine.start(wavBest, path, noiseReduction: true);
+      final first = platform.config!;
+      await feed(_tone(4410), 2);
+      platform.dies();
+      await eventually(() => platform.streamStarts == 2);
+      // The same capture as before: format, voice processing, session.
+      final again = platform.config!;
+      expect(again.encoder, AudioEncoder.pcm16bits);
+      expect(again.sampleRate, first.sampleRate);
+      expect(again.numChannels, 1);
+      expect(again.echoCancel, isTrue);
+      expect(again.autoGain, isFalse);
+      expect(again.iosConfig.categoryOptions, first.iosConfig.categoryOptions);
+      expect(again.audioInterruption, AudioInterruptionMode.pauseResume);
+      await feed(_tone(4410), 3);
+      await engine.stop();
+      expect(ends, isEmpty);
+      expect(await File(path).length(), 44 + 5 * 8820);
+      // The timer stood still meanwhile.
+      expect(interruptions, containsAllInOrder([true, false]));
+      expect(interruptions.last, isFalse);
+    });
+
+    test('a capture that goes silent', () async {
+      final path = '${dir.path}/c2.mp3';
+      await engine.start(
+        RecordingProfile.of(RecordingType.mp3, RecordingQuality.best),
+        path,
+      );
+      await feed(_tone(4410));
+      // No more audio: the watchdog (every second) notices.
+      await eventually(() => platform.streamStarts == 2);
+      await feed(_tone(4410));
+      await engine.stop();
+      expect(ends, isEmpty);
+    }, skip: lame.existsSync() ? null : 'needs the host LAME build');
+
+    test(
+      'a route change that silences the capture is noticed at once',
+      () async {
+        await engine.start(wavBest, '${dir.path}/r1.wav');
+        await feed(_tone(4410));
+        routes.add(null); // AirPods connect; the engine stops, unreported
+        // Well before the stall check (it looks once a second).
+        await settle(400);
+        expect(platform.streamStarts, 2);
+        expect(ends, isEmpty);
+        await engine.stop();
+      },
+    );
+
+    test(
+      'a route change with the audio still flowing changes nothing',
+      () async {
+        await engine.start(wavBest, '${dir.path}/r2.wav');
+        routes.add(null);
+        await feed(_tone(441), 10); // keeps arriving through the check
+        await settle(100);
+        expect(platform.streamStarts, 1);
+        await engine.stop();
+        expect(ends, isEmpty);
+      },
+    );
+
+    test('a reset of the media services starts the capture again', () async {
+      await engine.start(wavBest, '${dir.path}/r3.wav');
+      await feed(_tone(4410));
+      resets.add(null);
+      await eventually(() => platform.streamStarts == 2);
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('an interruption ending without "should resume"', () async {
+      await engine.start(wavBest, '${dir.path}/c3.wav');
+      await feed(_tone(4410));
+      calls.add(began());
+      platform.emit(RecordState.pause); // the plugin pauses for the call
+      await settle(60);
+      expect(platform.streamStarts, 1);
+      // Over; record_ios only resumes when told to, and isn't.
+      calls.add(over());
+      await eventually(() => platform.streamStarts == 2);
+      await settle(10);
+      expect(interruptions.last, isFalse);
+      await feed(_tone(4410));
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('an interruption whose resumed capture stays silent', () async {
+      await engine.start(wavBest, '${dir.path}/c4.wav');
+      await feed(_tone(4410));
+      calls.add(began());
+      platform.emit(RecordState.pause);
+      calls.add(over(resume: true));
+      // record_ios resumes its engine a moment later, which delivers
+      // nothing (the input changed during the call); its "record" resets
+      // the stall clock.
+      await settle(25);
+      platform.emit(RecordState.record);
+      // Well before the stall check (it looks once a second).
+      await settle(400);
+      expect(platform.streamStarts, 2);
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('waits for a call to end before starting again', () async {
+      await engine.start(wavBest, '${dir.path}/c5.wav');
+      await feed(_tone(4410));
+      calls.add(began());
+      platform.emit(RecordState.pause);
+      platform.dies(); // during the call
+      await settle(500);
+      expect(platform.streamStarts, 1); // not yet: the call still has it
+      expect(ends, isEmpty);
+      calls.add(over(resume: true));
+      await eventually(() => platform.streamStarts == 2);
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('an interruption that never says it ended does not block '
+        'later restarts', () async {
+      await engine.start(wavBest, '${dir.path}/c6.wav');
+      await feed(_tone(4410));
+      calls.add(began()); // another app's audio; no end ever comes
+      platform.emit(RecordState.pause);
+      await settle(20);
+      // Back in the app: AppController.onResume resumes it.
+      await engine.resume();
+      await feed(_tone(4410));
+      // Later, a route change kills the capture.
+      platform.dies();
+      await eventually(() => platform.streamStarts == 2);
+      await feed(_tone(4410));
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('a capture that cannot be started again ends it, saved', () async {
+      final path = '${dir.path}/c7.wav';
+      await engine.start(wavBest, path);
+      await feed(_tone(4410), 2);
+      platform.failingStarts = 99;
+      platform.dies();
+      await eventually(() => ends.isNotEmpty);
+      expect(ends, [CaptureEnd.stopped]);
+      expect(platform.streamStarts, 1 + 3); // at once, then twice more
+      await engine.stop();
+      expect(await File(path).length(), 44 + 2 * 8820);
+    });
+
+    test('in the background, one that cannot be started again stays paused '
+        'until the app is opened', () async {
+      final path = '${dir.path}/c8.wav';
+      await engine.start(wavBest, path);
+      await feed(_tone(4410));
+      foreground = false;
+      platform.failingStarts = 3; // iOS refuses while in the background
+      platform.dies();
+      await eventually(() => platform.streamStarts == 1 + 3);
+      await settle(100);
+      expect(ends, isEmpty);
+      expect(interruptions.last, isTrue); // the timer stands still
+      // Opened again: AppController.onResume resumes it.
+      foreground = true;
+      await engine.resume();
+      expect(platform.streamStarts, 1 + 3 + 1);
+      await settle(10);
+      expect(interruptions.last, isFalse);
+      await feed(_tone(4410), 2);
+      await engine.stop();
+      expect(ends, isEmpty);
+      expect(await File(path).length(), 44 + 3 * 8820);
+    });
+
+    test(
+      'opened again but still failing, it is tried again and ends',
+      () async {
+        await engine.start(wavBest, '${dir.path}/c9.wav');
+        await feed(_tone(4410));
+        foreground = false;
+        platform.failingStarts = 99;
+        platform.dies();
+        await eventually(() => platform.streamStarts == 1 + 3);
+        await settle(100);
+        expect(ends, isEmpty);
+        foreground = true;
+        // AppController.onResume: the error is only logged there.
+        await expectLater(engine.resume(), throwsException);
+        await eventually(() => ends.isNotEmpty);
+        expect(ends, [CaptureEnd.stopped]);
+      },
+    );
+
+    test('a user pause during a recovery stops it; resume starts the '
+        'capture', () async {
+      engine = iosEngine(restartDelays: const [Duration(milliseconds: 300)]);
+      await engine.start(wavBest, '${dir.path}/c10.wav');
+      await feed(_tone(4410));
+      platform.failingStarts = 1; // the first attempt fails
+      platform.dies();
+      await eventually(() => platform.streamStarts == 2);
+      await engine.pause(); // during the 300 ms wait
+      await settle(500);
+      expect(platform.streamStarts, 2); // no attempt while paused
+      expect(ends, isEmpty); // and no end either
+      await engine.resume();
+      expect(platform.streamStarts, 3);
+      await feed(_tone(4410));
+      await engine.stop();
+      expect(ends, isEmpty);
+    });
+
+    test('a resume when the capture died while paused by the user', () async {
+      final path = '${dir.path}/c11.wav';
+      await engine.start(wavBest, path);
+      await feed(_tone(4410));
+      await engine.pause();
+      platform.dies();
+      await settle(500);
+      expect(platform.streamStarts, 1); // kept paused: nothing to restart yet
+      await engine.resume();
+      expect(platform.streamStarts, 2);
+      expect(platform.resumes, 0); // not a resume of the dead one
+      await feed(_tone(4410));
+      await engine.stop();
+      expect(await File(path).length(), 44 + 2 * 8820);
+      expect(ends, isEmpty);
+    });
+
+    test('a resume the plugin refuses starts a new capture', () async {
+      final path = '${dir.path}/c12.wav';
+      await engine.start(wavBest, path);
+      await feed(_tone(4410));
+      await engine.pause();
+      platform.resumeError = Exception('engine gone');
+      await engine.resume();
+      expect(platform.streamStarts, 2);
+      await feed(_tone(4410), 2);
+      await engine.stop();
+      expect(await File(path).length(), 44 + 3 * 8820);
+      expect(ends, isEmpty);
+    });
+
+    test(
+      'a stop while a recovery starts the capture leaves none running',
+      () async {
+        await engine.start(wavBest, '${dir.path}/c13.wav');
+        await feed(_tone(4410));
+        final gate = platform.startGate = Completer<void>();
+        platform.dies();
+        await settle(400);
+        final stopping = engine.stop();
+        gate.complete();
+        await stopping;
+        expect(platform.streamStarts, 2);
+        expect(platform.recording, isFalse);
+        expect(ends, isEmpty);
+      },
+    );
+
+    test(
+      'a stop while resume starts the capture leaves none running',
+      () async {
+        await engine.start(wavBest, '${dir.path}/c14.wav');
+        await feed(_tone(4410));
+        await engine.pause();
+        platform.dies();
+        await settle(400);
+        final gate = platform.startGate = Completer<void>();
+        final resuming = engine.resume();
+        await settle(10);
+        final stopping = engine.stop();
+        gate.complete();
+        await resuming;
+        await stopping;
+        expect(platform.recording, isFalse);
+      },
+    );
+
+    test('a stop during a long wait between attempts is quick', () async {
+      engine = iosEngine(restartDelays: const [Duration(seconds: 30)]);
+      await engine.start(wavBest, '${dir.path}/c15.wav');
+      await feed(_tone(4410));
+      platform.failingStarts = 1;
+      platform.dies();
+      await eventually(() => platform.streamStarts == 2);
+      final clock = Stopwatch()..start();
+      await engine.stop();
+      expect(clock.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(platform.streamStarts, 2);
+      expect(ends, isEmpty);
+    });
+
+    test('an interruption check of a stopped recording does not reach the '
+        'next one', () async {
+      engine = iosEngine(resumeCheck: const Duration(milliseconds: 300));
+      await engine.start(wavBest, '${dir.path}/c16.wav');
+      calls.add(over()); // arms the check (no audio yet, like the next one)
+      await settle(20);
+      await engine.stop();
+      // The next recording is M4A, which isn't restarted but would end.
+      await engine.start(
+        RecordingProfile.of(RecordingType.m4a, RecordingQuality.best),
+        '${dir.path}/c16.m4a',
+      );
+      await settle(500);
+      expect(ends, isEmpty);
+    });
+
+    test('M4A is not started again (it would replace the file)', () async {
+      await engine.start(
+        RecordingProfile.of(RecordingType.m4a, RecordingQuality.best),
+        '${dir.path}/c17.m4a',
+      );
+      platform.emit(RecordState.stop);
+      await settle(50);
+      expect(ends, [CaptureEnd.stopped]);
+      expect(platform.streamStarts, 0);
+    });
   });
 }

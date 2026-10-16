@@ -170,11 +170,19 @@ are left, a recording stops and is saved, and a new one won't start.
   the recording and the timer, and recording resumes when they end (or when
   you return to the app, if iOS didn't resume it; during a call it stays
   paused).
+- **iPhone, MP3 and WAV:** when iOS breaks the capture (after a call the
+  microphone may come back in another format, which stops the recorder's
+  audio engine or leaves it silent), the app starts the capture again and
+  goes on in the same file; only the moment of the switch is missing. If
+  that keeps failing, it ends the recording as below (in the background it
+  stays paused instead, and goes on when you open the app). M4A uses iOS's
+  own recorder, which handles this itself.
 - If recording stops on its own, what was recorded is saved and the app
   says so (when you're back in the app, if it happened in the background).
-  That happens after a system error, when audio stops arriving for 5 seconds,
-  when the storage can't be written any more, or when a WAV recording reaches
-  the format's limit of about 13 hours.
+  That happens after a system error, when audio stops arriving for 5 seconds
+  (and, on iPhone, can't be started again), when the storage can't be
+  written any more, or when a WAV recording reaches the format's limit of
+  about 13 hours.
 - **Pause.** A paused recording stays one file; nothing is recorded until it
   is resumed. On iPhone, a recording you paused stays paused after a call.
   On Android, the recording notification has Pause/Resume and Stop buttons.

@@ -2,6 +2,7 @@
 // Recently deleted edge cases, dates kept on rename, and the date cache.
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -300,6 +301,40 @@ void main() {
       expect(saved.name, endsWith('.m4a'));
       expect(settings.lastDuration, const Duration(seconds: 90));
     });
+
+    test(
+      'a WAV is saved with its length from the file, not the timer\'s '
+      '(iOS: the seconds before a broken capture is started again)',
+      () async {
+        await build();
+        settings.type = RecordingType.wav;
+        // 2 s of mono 16-bit audio at 44.1 kHz; the timer runs for almost
+        // none of that here.
+        const data = 2 * 44100 * 2;
+        final header = ByteData(44)
+          ..setUint32(0, 0x52494646) // RIFF
+          ..setUint32(4, 36 + data, Endian.little)
+          ..setUint32(8, 0x57415645) // WAVE
+          ..setUint32(12, 0x666d7420) // fmt
+          ..setUint32(16, 16, Endian.little)
+          ..setUint16(20, 1, Endian.little) // PCM
+          ..setUint16(22, 1, Endian.little) // mono
+          ..setUint32(24, 44100, Endian.little)
+          ..setUint32(28, 44100 * 2, Endian.little)
+          ..setUint16(32, 2, Endian.little)
+          ..setUint16(34, 16, Endian.little)
+          ..setUint32(36, 0x64617461) // data
+          ..setUint32(40, data, Endian.little);
+        engine.content = [
+          ...header.buffer.asUint8List(),
+          ...List.filled(data, 0),
+        ];
+        await app.toggleRecord();
+        await app.toggleRecord();
+        expect(store.files.last.name, endsWith('.wav'));
+        expect(settings.lastDuration, const Duration(seconds: 2));
+      },
+    );
   });
 
   group('many recordings', () {
