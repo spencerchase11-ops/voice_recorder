@@ -121,6 +121,9 @@ ORGANIZE
 
 PRIVATE
 • No account, no ads, no tracking. Your recordings stay on your iPhone.
+
+OPEN SOURCE
+• The app's source code, including the LAME MP3 encoder (GNU LGPL), is at github.com/spencerchase11-ops/voice_recorder.
 ```
 
 **Keywords** (100 max):
@@ -168,10 +171,11 @@ Then choose the build, and **Add for Review** → **Submit**.
   LGPL. For an app on the App Store, that license expects the source to be
   available so people could rebuild the app with a changed LAME: this
   repository is public for that, and the About dialog says so. Tag the
-  commit of every store build (`git tag v1.0.1 && git push --tags`) and
+  commit of every store build (`git tag -a v1.0.1 -m "…" <commit> && git push origin v1.0.1`) and
   keep the repository public. See
   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 - **After the first release**, put the app's Apple ID (the number under
-  *App Information* in App Store Connect) into `lib/src/config.dart`
+  *App Information* in App Store Connect; for "Voice Recorder – Classic" it is
+  `6816329122`, live since 2026-09-29) into `lib/src/config.dart`
   (`AppConfig.appStoreId`). From that version on, Settings shows "Rate this
   app", which opens the App Store review page.

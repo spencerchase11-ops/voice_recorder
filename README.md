@@ -279,7 +279,7 @@ the Mac, the listing text and screenshots.
 3. **iOS signing.** Open `ios/Runner.xcworkspace` in Xcode and choose your team
    under *Signing & Capabilities*.
 4. **App Store id.** Set `AppConfig.appStoreId` in `lib/src/config.dart` once
-   the app exists in App Store Connect. This shows "Rate 5 stars" on iOS.
+   the app exists in App Store Connect. This shows "Rate this app" on iOS.
 5. **Store forms.**
    - *Google Play:* the app uses two foreground services, so declare both under
      *App content → Foreground service permissions*: `microphone`, "records
@@ -366,4 +366,6 @@ android/app/src/main/kotlin/ folder picker and file access, recording and playba
 ios/Runner/AppDelegate.swift free space, device name, Now Playing controls, import from Files
 packages/lame_mp3/           LAME MP3 encoder as a Flutter FFI plugin
 tool/                        artwork generators and screenshot comparison tools
+docs/project/                status, history, roadmap, decisions and runbook (start with STATUS.md)
+CLAUDE.md                    working notes for Claude sessions, including the doc ritual
 ```
