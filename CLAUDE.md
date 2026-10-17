@@ -17,7 +17,7 @@ a big timer, MP3, WAV or M4A), for Android and iPhone.
 | Path | What's there |
 |---|---|
 | `lib/src/app_controller.dart` | App state: recording, playback, files, the timer. |
-| `lib/src/audio/recorder_engine.dart` | Capture on the `record` plugin, feeding the MP3/WAV writers (`mp3_writer.dart`, `wav_writer.dart`). iOS capture recovery (DECISIONS D9) arrives in 1.0.1, on branch `ios-capture-recovery` until merged. |
+| `lib/src/audio/recorder_engine.dart` | Capture on the `record` plugin, feeding the MP3/WAV writers (`mp3_writer.dart`, `wav_writer.dart`). iOS capture recovery (DECISIONS D9), from 1.0.1. |
 | `lib/src/ui/` | Screens, dialogs, widgets; `spec.dart` holds every measured size and colour. |
 | `ios/Runner/` | Swift side: Now Playing, free space, import from Files; `Assets.xcassets` icons. |
 | `packages/lame_mp3/` | LAME as a Flutter FFI plugin (LGPL source, unmodified). |

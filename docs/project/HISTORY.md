@@ -3,6 +3,23 @@
 Newest first. Add an entry at every doc ritual: what changed and why, with commit hashes.
 Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 
+## 2026-10-17: 1.0.1 (4) prepared
+
+- The owner's call test of 1.0.1 (3) passed: the recording kept going through a call, in one
+  file.
+- `ios-capture-recovery` merged into the default branch (fast-forward to `925abc9`).
+- `ff3dbe2`: `AppConfig.appStoreId = '6816329122'`, so Settings on iPhone shows "Rate this app",
+  which opens the App Store's review page (DECISIONS D13). Version 1.0.1+4. The Rate test now
+  checks the URL opened (it fails without the id).
+- Tests on the Mac: 293 pass, 6 skipped, and the 2 known golden tests fail (RUNBOOK 2).
+- `flutter build ipa`: 1.0.1 (4), with `lame_mp3.framework` embedded on its own. The archive's
+  app is installed on the owner's iPhone over build 3, with every recording intact.
+- **Pre-release review:** 47 agents in 5 dimensions (the Rate link, packaging, regressions on
+  Android and M4A, the recovery against record_ios's and audio_session's sources, release
+  notes and the LGPL), each finding checked by 3 skeptics. No code issues. The engine and the
+  controller are byte-identical to the call-tested build 3. Three doc fixes (README,
+  `docs/APP_STORE.md`, CLAUDE.md) applied. What's New is in `docs/APP_STORE.md`.
+
 ## 2026-10-17: doc ritual; the screenshot and icon tools kept
 
 - Two tools from the 1.0.0 work lived only in the temporary folders of the session and were

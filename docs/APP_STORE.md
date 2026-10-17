@@ -1,7 +1,7 @@
 # Publishing on the App Store
 
 Everything the app itself needs is in place: bundle id
-`com.spencerchase.voicerecorder`, version 1.0.0, iPhone only, portrait, the
+`com.spencerchase.voicerecorder`, version 1.0.1, iPhone only, portrait, the
 icons (no transparency), the microphone text, background audio, the privacy
 manifest and the encryption answer (`ITSAppUsesNonExemptEncryption` = NO, so
 uploads skip that question). What's left is done on your Mac and in App
@@ -78,8 +78,9 @@ open build/ios/archive/Runner.xcarchive
 Xcode's Organizer opens: **Distribute App** → **App Store Connect** →
 **Upload**, and accept the defaults. (Or drag `build/ios/ipa/*.ipa` into
 Apple's Transporter app.) Each later upload needs a higher build number:
-`flutter build ipa --build-number=2`, then 3, and so on; raise the version
-itself in `pubspec.yaml` (`version: 1.0.1+3`).
+raise `version:` in `pubspec.yaml` before building, for example
+`version: 1.0.2+5` (1.0.0 used builds 1 and 2, 1.0.1 build 4). Don't pass
+`--build-number`: it overrides `pubspec.yaml`.
 
 After 10–30 minutes the build shows under **TestFlight**, where you can also
 install it on your iPhone before release.
@@ -164,6 +165,12 @@ Background audio: a recording continues while the screen is locked or another ap
 Settings > Import recordings copies audio files the user picks in the Files app into the app's own folder (On My iPhone > Voice Recorder > Recorders). The app has no network features and collects no data.
 ```
 
+**What's New in This Version** (updates only). For 1.0.1:
+
+```
+A recording now keeps going, in the same file, after a phone or FaceTime call and when headphones or a car connect or disconnect. Settings now has “Rate this app”.
+```
+
 Then choose the build, and **Add for Review** → **Submit**.
 
 ## Before you release
@@ -175,8 +182,8 @@ Then choose the build, and **Add for Review** → **Submit**.
   commit of every store build (`git tag -a v1.0.1 -m "…" <commit> && git push origin v1.0.1`) and
   keep the repository public. See
   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
-- **After the first release**, put the app's Apple ID (the number under
-  *App Information* in App Store Connect; for "Voice Recorder – Classic" it is
-  `6816329122`, live since 2026-09-29) into `lib/src/config.dart`
-  (`AppConfig.appStoreId`). From that version on, Settings shows "Rate this
-  app", which opens the App Store review page.
+- **"Rate this app":** from 1.0.1, `AppConfig.appStoreId` in
+  `lib/src/config.dart` holds the app's Apple ID (the number under *App
+  Information* in App Store Connect; `6816329122` for "Voice Recorder –
+  Classic"), so Settings shows "Rate this app", which opens the App Store
+  review page. A copy of the app under another Apple ID needs its own.

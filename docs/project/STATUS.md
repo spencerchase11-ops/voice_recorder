@@ -10,11 +10,11 @@ recordings in here.
 | Area | State |
 |---|---|
 | App Store | **1.0.0 (build 2) live since 2026-09-29** as "Voice Recorder – Classic": free, 4+, iPhone only. |
-| Next release | **1.0.1 (build 3)** on branch `ios-capture-recovery`: a recording no longer ends after a phone call (see HISTORY 2026-10-12). Waiting for the owner's **call test** on the iPhone (not reported yet), then upload. Not merged, not uploaded. |
-| Owner's own copy | A development build of 1.0.1 (3), installed 2026-10-12 over the App Store copy with every recording intact. A later App Store update installs over it and keeps the recordings. |
+| Next release | **1.0.1 (build 4)**, on the default branch (`ff3dbe2`): a recording no longer ends after a phone call (HISTORY 2026-10-12), and "Rate this app" in Settings. The owner's call test passed (build 3, the same engine). Archive built and reviewed 2026-10-17 (HISTORY). **Next: the owner uploads it through Organizer**, then version 1.0.1 in App Store Connect and submit (with the owner's go-ahead), then tag `v1.0.1`. Not uploaded yet. |
+| Owner's own copy | 1.0.1 (4) from the release archive (development-signed), installed 2026-10-17 over 1.0.1 (3) with every recording intact. The App Store's 1.0.1 installs over it and keeps the recordings. |
 | Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. Everything is pushed (2026-10-17). |
 | CI | Green: `v1.0.0` (push run, 2026-09-26), the default branch (`87a9904`) and `ios-capture-recovery` (`843fa18`, `e936670`), 2026-10-15: analyze, tests and the Android build. The 2026-10-17 doc ritual pushes start new runs. The weekly Monday run only keeps the Android test signing key's cache alive and runs no tests. The iOS build job runs only when started by hand. |
-| Tests | Branch `ios-capture-recovery` on the Mac: 293 pass, 2 skipped (they need `/dev/full`), and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
+| Tests | `ff3dbe2` on the Mac: 293 pass, 2 skipped (they need `/dev/full`), and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
 | Tools | The App Store screenshots and the iOS icons can be made again on the Mac: `test/tool/app_store_screenshots_test.dart` and `tool/art/render_icon.swift` (RUNBOOK 5), both checked against what's published. |
 | Android | Not part of these sessions: no Play Store work done or checked. |
 
@@ -44,10 +44,9 @@ recordings in here.
   work from a fresh clone (`gh repo clone spencerchase11-ops/voice_recorder`) in a permanent
   folder.
 - **Branches:**
-  - `claude/voice-recorder-fork-7xk3bg`: the default branch. `v1.0.0` plus the doc rituals and
-    the screenshot and icon tools.
-  - `ios-capture-recovery`: 1.0.1, the call fix (`843fa18`), with the default branch merged in
-    (2026-10-17), so merging it back is a fast-forward.
+  - `claude/voice-recorder-fork-7xk3bg`: the default branch, with 1.0.1 (4) since 2026-10-17.
+  - `ios-capture-recovery`: the call fix (`843fa18`). Merged into the default branch
+    (fast-forward); can be deleted.
   - `ios-release-polish`: the 1.0.0 work; the same commit as `v1.0.0`. Merged; can be deleted.
 - **Tag:** `v1.0.0` = `d066dd5`, the exact source of App Store build 2 (needed for the LGPL).
 - **Commit identity:** `spencerchase11-ops <285316066+spencerchase11-ops@users.noreply.github.com>`.
@@ -61,9 +60,7 @@ recordings in here.
 
 ## Open decisions
 
-- After the call test: release 1.0.1 as is, or also set `AppConfig.appStoreId` (the app is
-  live now, so "Rate this app" would work). Recommended: set it, and use build 4 then (build
-  3 is on the owner's phone without that change).
+- None. ("Rate this app" in 1.0.1 was settled on 2026-10-17: DECISIONS D13.)
 
 ## Watch items
 

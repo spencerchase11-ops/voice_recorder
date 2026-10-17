@@ -4,25 +4,18 @@ Finished items move to HISTORY. Keep this list short and ordered.
 
 ## Now: release 1.0.1
 
-1. **Owner: call test** of 1.0.1 (3), already on the phone:
-   1. Record MP3 and say "before the call".
-   2. Lock the phone, take a call or FaceTime for 20–30 s, and hang up.
-   3. Say "after the call", then open the app. It should still be recording, with no "stopped
-      unexpectedly".
-   4. Stop and play it back: both parts should be in one file.
-   5. Optional: connect or disconnect AirPods mid-recording.
-2. **Decide** whether 1.0.1 also sets `AppConfig.appStoreId = '6816329122'` in
-   `lib/src/config.dart`, so "Rate this app" shows (STATUS, open decisions). If any code
-   changes, use build 4.
-3. Merge `ios-capture-recovery` into the default branch. It's a fast-forward, because the
-   default branch was merged into it at every doc ritual (last 2026-10-17).
-4. Build and upload (RUNBOOK 4). What's New: "A recording now keeps going after a phone call,
-   and after headphones or a car connect, in the same file." Submit; release is automatic.
-5. Tag `v1.0.1` at the uploaded commit and push it (LGPL).
+1. **Owner: upload** `build/ios/archive/Runner.xcarchive` (1.0.1, build 4) through Organizer
+   (RUNBOOK 4). If the working copy is gone, check out `ff3dbe2` and run `flutter build ipa`.
+2. In App Store Connect: add version 1.0.1, paste What's New (`docs/APP_STORE.md`, section
+   5), choose build 4 once it's processed, and submit (with the owner's go-ahead). Release
+   is automatic after approval.
+3. Tag `v1.0.1` at `ff3dbe2` and push it (LGPL).
+4. Optional: check headphones or a car connecting mid-recording on the phone (covered by unit
+   tests, not tried on the device).
 
 ## Next
 
-- Delete the merged branch `ios-release-polish`.
+- Delete the merged branches `ios-release-polish` and `ios-capture-recovery`.
 - Golden tests: make the two that fail on macOS hosts (anti-aliasing) pass there too, or skip
   them off CI, so a local run is green.
 - After a UI change: render the App Store screenshots again (RUNBOOK 5) and upload them

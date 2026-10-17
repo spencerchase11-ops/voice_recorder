@@ -3,6 +3,16 @@
 One entry per decision: context, decision, why. Newest first. Supersede old entries with a
 new one rather than editing them.
 
+## D13 (2026-10-17): 1.0.1 turns on "Rate this app", as build 4
+
+- **Context:** the "Rate this app" row on iPhone needs the App Store id, which exists since 1.0.0
+  went live. Build 3, tested on the phone, didn't have it.
+- **Decision:** set `AppConfig.appStoreId = '6816329122'` in 1.0.1 and ship it as build 4.
+  It opens `https://apps.apple.com/app/id6816329122?action=write-review` when tapped; there
+  is no prompt.
+- **Why:** it was the recommendation once the app was live, the change is small and reviewed,
+  and the engine the owner tested is unchanged.
+
 ## D12 (2026-10-17): a Swift port of the icon renderer, beside the Python one
 
 - **Context:** `tool/art/app_icon.py` needs numpy and Pillow, and the owner's Mac (arm64, no

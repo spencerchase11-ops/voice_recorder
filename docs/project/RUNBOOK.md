@@ -64,7 +64,8 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
 ## 4. Release to the App Store
 
 1. **Version:** raise `version:` in `pubspec.yaml`. Every upload needs a higher build number;
-   1.0.0 used builds 1 and 2.
+   1.0.0 used builds 1 and 2; 1.0.1 uses build 4 (build 3 was a development
+   build on the owner's phone only). Don't pass `--build-number`.
 2. **Build:** run `flutter build ipa`. It signs automatically with the team, and the export
    step also checks the App Store profile.
 3. **Open the archive:** `open build/ios/archive/Runner.xcarchive`.
