@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart' show LicensePage;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -661,12 +662,23 @@ void main() {
       Navigator.of(tester.element(find.byType(LicensePage))).pop();
       await tester.pumpAndSettle();
 
-      // No store listing yet (see AppConfig.appStoreId; on iPhone the row
-      // is hidden until then): just a thank-you.
+      // Off Android, rating opens the App Store's review page for the app
+      // (AppConfig.appStoreId).
+      final opened = <Object?>[];
+      const launcher = MethodChannel('plugins.flutter.io/url_launcher');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(launcher, (call) async {
+        opened.add((call.arguments as Map)['url']);
+        return true;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(launcher, null));
       await tester.tap(labeled('Rate 5 stars'));
-      await tester.pump();
-      expect(find.text('Thank you!'), findsOneWidget);
-      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(opened, [
+        'https://apps.apple.com/app/id6816329122?action=write-review',
+      ]);
+      expect(find.text('Thank you!'), findsNothing);
     });
   });
 }
