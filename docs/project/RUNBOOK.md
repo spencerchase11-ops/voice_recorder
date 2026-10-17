@@ -85,12 +85,34 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
 ## 5. Screenshots and icon
 
 - **App Store screenshots:** `docs/app-store/*.jpg`, 1290 × 2796 (accepted in the 6.9" slot,
-  and used for 6.5" too).
-  - They were rendered by a temporary widget test at 3× with a 59 pt status bar and a 34 pt
-    home indicator, using neutral sample recordings (ROADMAP: make it permanent).
-  - Order: recording, playing, list, Recently deleted.
-- **App icon:** `python3 tool/art/app_icon.py .` (needs numpy and Pillow). The iOS master uses
-  disc scale 0.96 and gradient window 18/108–90/108. The 1024 image must stay opaque RGB.
+  and used for 6.5" too). Order: recording, playing, list, Recently deleted.
+  - `test/tool/app_store_screenshots_test.dart` renders them: the iOS layout at 3× with a
+    59 pt status bar and a 34 pt home indicator, and neutral sample recordings. A plain
+    `flutter test` skips it. Give it an absolute output folder:
+
+    ```bash
+    flutter test test/tool/app_store_screenshots_test.dart --dart-define=SHOTS_OUT=/tmp/shots
+    for n in 1-recording 2-playing 3-recording-list 4-recently-deleted; do
+      sips -s format jpeg -s formatOptions 90 /tmp/shots/$n.png --out docs/app-store/$n.jpg
+    done
+    ```
+
+  - On 2026-10-17 it reproduced the published images exactly, except the deletion date in
+    Recently deleted, which is today's (the screen counts the 30 days from the real clock).
+- **App icon:** `python3 tool/art/app_icon.py .` makes every icon (needs numpy and Pillow). The
+  iOS master uses disc scale 0.96 and gradient window 18/108–90/108. The 1024 image must stay
+  opaque RGB.
+  - **Without Pillow** (the owner's Mac has no arm64 build), make the iOS icons with the Swift
+    port, which gives the same pixels:
+
+    ```bash
+    swiftc -O tool/art/render_icon.swift -o /tmp/render_icon
+    mkdir -p /tmp/icons && /tmp/render_icon ios . /tmp/icons
+    /tmp/render_icon compare /tmp/icons/Icon-App-1024x1024@1x.png ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png
+    ```
+
+    Copy only the icons whose pixels changed (the PNG bytes always differ). A change to the
+    artwork goes into both scripts; Android's icons still need the Python one.
 
 ## 6. Diagnose a recording problem on the phone
 

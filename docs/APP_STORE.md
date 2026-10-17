@@ -134,7 +134,8 @@ slot accepts, and App Store Connect scales them for smaller iPhones):
 `docs/app-store/1-recording.jpg`, `2-playing.jpg`, `3-recording-list.jpg`,
 `4-recently-deleted.jpg`. Or take your own on the iPhone (side button +
 volume up) once your recordings are in; a Pro Max or Plus iPhone gives the
-right size.
+right size. To render them again after a change to the app, see
+`docs/project/RUNBOOK.md`, section 5.
 
 **Support URL:** https://github.com/spencerchase11-ops/voice_recorder/issues
 
