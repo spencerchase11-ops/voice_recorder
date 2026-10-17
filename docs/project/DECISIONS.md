@@ -3,6 +3,15 @@
 One entry per decision: context, decision, why. Newest first. Supersede old entries with a
 new one rather than editing them.
 
+## D12 (2026-10-17): a Swift port of the icon renderer, beside the Python one
+
+- **Context:** `tool/art/app_icon.py` needs numpy and Pillow, and the owner's Mac (arm64, no
+  Rosetta) only has an x86_64 Pillow. The iOS icons for 1.0.0 were made with a Swift port.
+- **Decision:** commit the port as `tool/art/render_icon.swift`, covering only the iOS icons.
+  The Python script stays the reference and still makes the Android icons; a change to the
+  artwork goes into both, and `render_icon compare` checks they agree.
+- **Why:** the iOS icons can be made again on this Mac without installing anything.
+
 ## D11 (2026-10-15): internal docs live in this public repository
 
 - **Context:** the owner wants status and context kept so nothing is lost; the working copy is

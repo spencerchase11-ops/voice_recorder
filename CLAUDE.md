@@ -11,8 +11,8 @@ a big timer, MP3, WAV or M4A), for Android and iPhone.
 - **On the App Store** as "Voice Recorder – Classic", free, sold by Sable Creek Software LLC
   (team `H7UNC6TN89`). iPhone only, portrait.
 - **This repository is public,** because the bundled LAME encoder is LGPL (DECISIONS D6).
-- **Owner:** Spencer. He prefers short, clear, step-by-step guidance, and does all account
-  sign-ins and payments himself.
+- **Owner:** Spencer, who prefers short, clear, step-by-step guidance and does every account
+  sign-in and payment personally.
 
 | Path | What's there |
 |---|---|
@@ -21,7 +21,8 @@ a big timer, MP3, WAV or M4A), for Android and iPhone.
 | `lib/src/ui/` | Screens, dialogs, widgets; `spec.dart` holds every measured size and colour. |
 | `ios/Runner/` | Swift side: Now Playing, free space, import from Files; `Assets.xcassets` icons. |
 | `packages/lame_mp3/` | LAME as a Flutter FFI plugin (LGPL source, unmodified). |
-| `tool/art/` | Generators for the artwork and the app icon. |
+| `tool/art/` | Generators for the artwork and the app icon (`render_icon.swift`: the iOS icons without Pillow). |
+| `test/tool/` | Renders the App Store screenshots (only with `SHOTS_OUT`; RUNBOOK 5). |
 | `docs/APP_STORE.md` | The App Store guide and listing text. `docs/app-store/` has the screenshots. |
 | `docs/project/` | STATUS, HISTORY, ROADMAP, DECISIONS, RUNBOOK. Public: keep private details out. |
 
@@ -42,7 +43,8 @@ a big timer, MP3, WAV or M4A), for Android and iPhone.
    - Every store build gets a tag.
    - LAME stays its own `lame_mp3.framework`.
 6. **The working copy may be temporary:** some sessions run in a folder the Claude app deletes
-   with the session. Push work before ending one; GitHub is the only lasting copy.
+   with the session. Push work before ending one; GitHub is the only lasting copy. Tools and
+   scripts too: commit them, not just their output.
 
 ## Everyday commands
 

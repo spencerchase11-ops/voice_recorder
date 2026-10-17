@@ -3,6 +3,19 @@
 Newest first. Add an entry at every doc ritual: what changed and why, with commit hashes.
 Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 
+## 2026-10-17: doc ritual; the screenshot and icon tools kept
+
+- Two tools from the 1.0.0 work lived only in the temporary folders of the session and were
+  lost with them. Both were rebuilt and committed:
+  - `test/tool/app_store_screenshots_test.dart` renders the four App Store screenshots. It
+    reproduced the published images exactly, except the deletion date in Recently deleted (the
+    screen reads the real clock, so the test now deletes "just now" to show 30 days left).
+    A plain `flutter test` skips it.
+  - `tool/art/render_icon.swift`, a Swift port of the iOS part of `app_icon.py` (the Mac has
+    no arm64 Pillow). All 15 iOS icons come out pixel-identical to the committed ones, and so
+    does the 1.0.0 (1) icon before the 0.96 disc change.
+- RUNBOOK 5 has the commands. No app code changed; the call test of 1.0.1 (3) is still to do.
+
 ## 2026-10-15: doc ritual
 
 - First doc ritual: `CLAUDE.md` and `docs/project/` (STATUS, HISTORY, ROADMAP, DECISIONS,
@@ -88,5 +101,7 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 - **On macOS, or without CMake,** the host LAME library for the app's MP3 tests must be compiled
   directly with `cc` to `build/host/liblame_mp3.so` (RUNBOOK 2). `build_host_lib.sh` makes a
   `.dylib` on macOS, which those tests don't load.
+- **Anything made in a session's temporary folder is lost with it,** scripts included. Commit a
+  tool the moment it proves useful.
 - A test of recovery code must prove it fails without the fix: two of the first versions
   passed through the slower 5 s stall check instead.

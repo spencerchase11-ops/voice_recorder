@@ -15,7 +15,7 @@ Finished items move to HISTORY. Keep this list short and ordered.
    `lib/src/config.dart`, so "Rate this app" shows (STATUS, open decisions). If any code
    changes, use build 4.
 3. Merge `ios-capture-recovery` into the default branch. It's a fast-forward, because the
-   default branch (with the doc ritual) was merged into it on 2026-10-15.
+   default branch was merged into it at every doc ritual (last 2026-10-17).
 4. Build and upload (RUNBOOK 4). What's New: "A recording now keeps going after a phone call,
    and after headphones or a car connect, in the same file." Submit; release is automatic.
 5. Tag `v1.0.1` at the uploaded commit and push it (LGPL).
@@ -23,11 +23,10 @@ Finished items move to HISTORY. Keep this list short and ordered.
 ## Next
 
 - Delete the merged branch `ios-release-polish`.
-- Make the App Store screenshots reproducible: they were rendered from a temporary widget test
-  (1290 × 2796, iOS layout, neutral sample recordings) that isn't in the repository. Add it as
-  `tool/` or a tagged test.
 - Golden tests: make the two that fail on macOS hosts (anti-aliasing) pass there too, or skip
   them off CI, so a local run is green.
+- After a UI change: render the App Store screenshots again (RUNBOOK 5) and upload them
+  with the next version.
 - Optional: keep the live timer from counting the few seconds before a restart (the engine can
   report the lost time; the saved length is already right).
 

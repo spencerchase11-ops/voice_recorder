@@ -365,7 +365,9 @@ lib/
 android/app/src/main/kotlin/ folder picker and file access, recording and playback services, shortcut
 ios/Runner/AppDelegate.swift free space, device name, Now Playing controls, import from Files
 packages/lame_mp3/           LAME MP3 encoder as a Flutter FFI plugin
-tool/                        artwork generators and screenshot comparison tools
+tool/                        artwork generators (app_icon.py; render_icon.swift for the iOS icons
+                             without Pillow) and screenshot comparison tools
+test/tool/                   the App Store screenshots, rendered only when SHOTS_OUT is set
 docs/project/                status, history, roadmap, decisions and runbook (start with STATUS.md)
 CLAUDE.md                    working notes for Claude sessions, including the doc ritual
 ```
