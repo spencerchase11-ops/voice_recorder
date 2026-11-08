@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Written by failing golden tests (they fail on macOS hosts: RUNBOOK 2).
+test/golden/failures/

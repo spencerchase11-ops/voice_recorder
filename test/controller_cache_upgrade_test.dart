@@ -1,5 +1,6 @@
 // Phones that update from 1.0.0 or 1.0.1 keep the dates that release left
 // in its cache, and lose the copy times it cached on iPhone.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -39,6 +40,7 @@ void main() {
   late File cacheFile;
   late FakeStore store;
   late AppController app;
+  late RecordingInfoCache info;
 
   setUp(() async {
     work = await Directory.systemTemp.createTemp('vr_cache_upgrade');
@@ -69,7 +71,7 @@ void main() {
       native: FakeNative(),
       workDir: () async => work,
       clock: () => DateTime(2026, 11, 8, 12),
-      info: RecordingInfoCache(
+      info: info = RecordingInfoCache(
         file: () async => cacheFile,
         fileTimesAreDates: store.fileTimesAreDates,
       ),
@@ -80,6 +82,12 @@ void main() {
 
   RecordingFile row(String name) =>
       app.files.singleWhere((f) => f.name == name);
+
+  /// The date inside [f] (what is left once the cache is gone).
+  Future<DateTime?> inside(RecordingFile f) async => (await readAudioInfo(
+    MemoryBytes(store.contents[f.id]!),
+    f.name,
+  )).recorded;
 
   test("iPhone: a copy time 1.0.1 cached doesn't hide a date typed into the "
       'name', () async {
@@ -140,13 +148,88 @@ void main() {
     store.contents[f.id] = _mp3();
     await start();
     await app.refreshFiles();
-    // The cached date matches what _keepDate finds, so nothing is written:
-    // the file still has no date inside.
+    // 1.0.x's date may be its only copy: the rename writes it into the
+    // file.
     final renamed = await app.rename(row('lunch.mp3'), 'team lunch');
     expect(renamed!.date, recorded);
+    expect(await inside(renamed), recorded);
     await app.delete([row('team lunch.mp3')]);
     await app.refreshFiles();
     await app.restoreDeleted((await app.deletedRecordings())!.single);
+    await Future<void>.delayed(const Duration(milliseconds: 50)); // read again
     expect(row('team lunch.mp3').date, recorded);
+  });
+
+  test("renamed, a date 1.0.x cached for a dated name is written into the "
+      'file (the old name was its only other copy)', () async {
+    // 1.0.x renamed 2016_05_23_18_14_00.mp3, keeping the time in the name,
+    // and couldn't write the date into the file.
+    final f = _file(
+      '2016_05_23_18_14_00 lunch.mp3',
+      DateTime(2016, 5, 23, 18, 44),
+    );
+    final recorded = DateTime(2016, 5, 23, 18, 14);
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: recorded, duration: const Duration(seconds: 1)),
+    );
+    store = FakeStore(files: [f], free: 1 << 30);
+    store.contents[f.id] = _mp3();
+    await start();
+    await app.refreshFiles();
+    final renamed = await app.rename(row(f.name), 'team lunch');
+    expect(renamed!.date, recorded);
+    expect(await inside(renamed), recorded);
+    expect(app.datesToStore, isEmpty);
+  });
+
+  test('if writing it fails, Store dates offers it again', () async {
+    final f = _file(
+      '2016_05_23_18_14_00 lunch.mp3',
+      DateTime(2016, 5, 23, 18, 44),
+    );
+    final recorded = DateTime(2016, 5, 23, 18, 14);
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: recorded, duration: const Duration(seconds: 1)),
+    );
+    store = FakeStore(files: [f], free: 1 << 30);
+    store.contents[f.id] = _mp3();
+    store.roomFor[f.id] = 0; // the storage is full
+    await start();
+    await app.refreshFiles();
+    final renamed = await app.rename(row(f.name), 'team lunch');
+    expect(renamed!.date, recorded);
+    expect(await inside(renamed), isNull);
+    expect(app.datesToStore!.map((f) => f.name), ['team lunch.mp3']);
+  });
+
+  test('renamed again and again, the cache keeps it under its current name '
+      'only', () async {
+    final f = _file('lunch.mp3', DateTime(2016, 5, 23, 18, 44));
+    final recorded = DateTime(2016, 5, 23, 18, 14);
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: recorded, duration: const Duration(seconds: 1)),
+    );
+    store = FakeStore(
+      files: [f, _file('b.mp3', DateTime(2026))],
+      free: 1 << 30,
+    );
+    store.contents[f.id] = _mp3();
+    await start();
+    await app.refreshFiles();
+    await app.rename(row('lunch.mp3'), 'one');
+    await app.refreshFiles();
+    await app.rename(row('one.mp3'), 'two');
+    await app.refreshFiles();
+    expect(row('two.mp3').date, recorded);
+    await info.save();
+    final json = jsonDecode(await cacheFile.readAsString()) as Map;
+    final names = {
+      for (final k in json.keys)
+        if (k != 'format') (k as String).split('|').first,
+    }..remove('b.mp3');
+    expect(names, {'two.mp3'});
   });
 }

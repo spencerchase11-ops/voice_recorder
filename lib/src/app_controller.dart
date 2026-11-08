@@ -140,6 +140,10 @@ class AppController extends ChangeNotifier {
 
   /// Paused by the system (iOS: a call).
   bool _interrupted = false;
+
+  /// The user has been told that this interruption, another app's audio,
+  /// holds the recording up (see [onResume]).
+  bool _toldOthersPlay = false;
   bool _busy = false;
   bool _pausing = false;
   final Stopwatch _stopwatch = Stopwatch();
@@ -769,7 +773,13 @@ class AppController extends ChangeNotifier {
       return (date: null, failed: false, refused: false);
     }
     final date = named ?? file.modified;
-    if (known != null && date == known && !_info.dateOnlyHere(file)) {
+    // A cached date is in the file too, unless it is marked as known only
+    // here, or came from 1.0.x's cache, which didn't mark one the file
+    // doesn't hold: that one is written (nothing changes if it is there).
+    if (known != null &&
+        date == known &&
+        !_info.dateOnlyHere(file) &&
+        !_info.dateMayBeOnlyHere(file)) {
       return (date: known, failed: false, refused: _info.dateRefused(file));
     }
     try {
@@ -789,9 +799,19 @@ class AppController extends ChangeNotifier {
     // app took the audio session) leaves the recording paused until now.
     if (_recording && _interrupted && !_paused) {
       try {
-        // The app's own resume (iPhone: it leaves the audio session to
+        // The app's own resume (iPhone, M4A: it leaves the audio session to
         // another app that plays, see RecordPluginEngine.resume).
         await engine.resume(byUser: false);
+      } on OtherAudioPlaying {
+        // iPhone, M4A: the recording can't go on until that is over, and
+        // would be lost if the app were closed meanwhile.
+        if (_recording && !_toldOthersPlay) {
+          _toldOthersPlay = true;
+          _notify(
+            'The recording is paused while another app plays audio. Tap the '
+            'stop button to save it.',
+          );
+        }
       } catch (e) {
         // Still in use (a call goes on): it stays paused, and resumes when
         // the call ends or on the next return to the app.
@@ -981,6 +1001,7 @@ class AppController extends ChangeNotifier {
       _recording = true;
       _paused = false;
       _interrupted = false;
+      _toldOthersPlay = false;
       _level = 0;
       _stopwatch
         ..reset()
@@ -992,6 +1013,7 @@ class AppController extends ChangeNotifier {
       });
       _interruptSub = engine.interrupted.listen((paused) {
         _interrupted = paused;
+        if (!paused) _toldOthersPlay = false;
         if (paused) _level = 0;
         _updateStopwatch();
         notifyListeners();
@@ -1454,10 +1476,6 @@ class AppController extends ChangeNotifier {
     clean = fitFileName(clean, ext);
     if (clean.isEmpty || clean == file.baseName) return file;
     if (playback.fileId == file.id) await _stopPlayback();
-    // A date from 1.0.x's cache that _keepDate leaves alone (it matches)
-    // may still be the only copy: it stays marked so.
-    final cachedDate = _info[file]?.recorded;
-    final unsure = _info.dateMayBeOnlyHere(file) && cachedDate != null;
     // The date in the old name goes with it: keep it inside the file.
     final kept = await _keepDate(file);
     final renamed = await _safe(() => store.rename(file, clean));
@@ -1466,15 +1484,12 @@ class AppController extends ChangeNotifier {
       recorded: kept.date,
       duration: file.duration ?? _info[file]?.duration,
     );
+    // Nothing has the old name any more: what the cache knew under it goes
+    // (marked, it would be kept for good).
+    _info.move(file, renamed);
     // A date the file doesn't hold is marked, so it is kept (and a failed
     // write is tried again by Store dates or the next rename).
-    _info.put(
-      renamed,
-      info,
-      onlyHere: kept.failed,
-      refused: kept.refused,
-      mayBeOnlyHere: unsure && !kept.failed && kept.date == cachedDate,
-    );
+    _info.put(renamed, info, onlyHere: kept.failed, refused: kept.refused);
     final shown = renamed.withInfo(info);
     if (_current?.id == file.id) {
       _current = shown;

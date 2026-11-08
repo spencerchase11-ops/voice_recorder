@@ -1029,7 +1029,8 @@ void main() {
 
     test(
       "M4A: opened while another app's audio plays, it takes nothing from it "
-      'and ends nothing; once nothing plays, it ends after the wait',
+      'and ends nothing, and says so; once nothing plays, with the app still '
+      'open, it ends after the wait',
       () async {
         engine = iosEngine(resumeCheck: const Duration(milliseconds: 300));
         await engine.start(m4aBest, '${dir.path}/m12.m4a');
@@ -1039,24 +1040,127 @@ void main() {
         // Back in the app: AppController.onResume resumes it. Taking the
         // audio session would only cut off the podcast.
         othersPlay = true;
-        await engine.resume(byUser: false);
-        await settle(400); // past the wait
+        await expectLater(
+          engine.resume(byUser: false),
+          throwsA(isA<OtherAudioPlaying>()),
+        );
+        await settle(400); // past the wait, and asked again once
         expect(ends, isEmpty);
         expect(activations, 0);
         expect(interruptions, [true]);
-        // The podcast is over, but iOS never said the interruption was:
-        // opened again, the app takes the audio session, and the plugin
-        // can't resume this recorder, so it ends (saved) after the wait.
+        // The podcast is over, but iOS never says the interruption is: the
+        // app, still open, asks again, takes the audio session, and the
+        // plugin can't resume this recorder, so it ends (saved) after the
+        // wait.
         othersPlay = false;
-        await engine.resume(byUser: false);
-        expect(activations, 1);
+        await eventually(() => activations == 1);
         await settle(10);
         expect(ends, isEmpty); // an end with "should resume" may be on its way
         await eventually(() => ends.isNotEmpty);
         expect(ends, [CaptureEnd.stopped]);
+        expect(activations, 1);
         await engine.stop();
       },
     );
+
+    test("M4A: opened while another app's audio plays, then left, nothing is "
+        'asked in the background; opened again once nothing plays, it ends '
+        'after the wait', () async {
+      engine = iosEngine(resumeCheck: const Duration(milliseconds: 100));
+      await engine.start(m4aBest, '${dir.path}/m12b.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      othersPlay = true;
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
+      foreground = false;
+      othersPlay = false;
+      await settle(350);
+      expect(activations, 0);
+      expect(ends, isEmpty);
+      foreground = true;
+      await engine.resume(byUser: false);
+      expect(activations, 1);
+      await eventually(() => ends.isNotEmpty);
+      expect(ends, [CaptureEnd.stopped]);
+      expect(activations, 1);
+      await engine.stop();
+    });
+
+    test("M4A: opened while another app's audio plays, the interruption's end "
+        'decides, not asking again', () async {
+      await engine.start(m4aBest, '${dir.path}/m12c.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      othersPlay = true;
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
+      // It ends, to be resumed: record_ios resumes the recorder.
+      platform.systemPaused = false;
+      calls.add(over(resume: true));
+      othersPlay = false;
+      await settle(300);
+      expect(activations, 0);
+      expect(interruptions, [true, false]);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test("M4A: opened while another app's audio plays, stopping or pausing it "
+        'ends the asking', () async {
+      await engine.start(m4aBest, '${dir.path}/m12d.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      othersPlay = true;
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
+      await engine.pause(); // the user's
+      othersPlay = false;
+      await settle(300);
+      expect(activations, 0);
+      expect(ends, isEmpty);
+
+      await engine.stop();
+      await engine.start(m4aBest, '${dir.path}/m12e.m4a');
+      calls.add(began());
+      await settle(10);
+      othersPlay = true;
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
+      await engine.stop();
+      othersPlay = false;
+      await settle(300);
+      expect(activations, 0);
+      expect(ends, isEmpty);
+    });
+
+    test('M4A: opened during a call that ends without saying so, with the app '
+        'still open it ends after the wait', () async {
+      await engine.start(m4aBest, '${dir.path}/m12f.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      sessionFree = false; // a call iOS doesn't count as playing
+      await expectLater(engine.resume(byUser: false), throwsStateError);
+      expect(activations, 1);
+      await settle(200);
+      expect(ends, isEmpty);
+      sessionFree = true; // over, but no end comes
+      await eventually(() => ends.isNotEmpty);
+      expect(ends, [CaptureEnd.stopped]);
+      await engine.stop();
+    });
 
     test('M4A: opened during a call, it stays paused, whether or not iOS '
         'says another app plays', () async {
@@ -1066,11 +1170,14 @@ void main() {
       await settle(10);
       sessionFree = false; // a call
       othersPlay = true;
-      await engine.resume(byUser: false);
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
       expect(activations, 0);
       othersPlay = false; // even if iOS doesn't count the call as playing
       await expectLater(engine.resume(byUser: false), throwsStateError);
-      expect(activations, 1); // refused
+      expect(activations, greaterThanOrEqualTo(1)); // refused (and asked again)
       await settle(100); // past the wait
       expect(ends, isEmpty);
       expect(interruptions, [true]);
@@ -1090,7 +1197,10 @@ void main() {
       calls.add(began());
       await settle(10);
       othersCheckFails = true;
-      await engine.resume(byUser: false);
+      await expectLater(
+        engine.resume(byUser: false),
+        throwsA(isA<OtherAudioPlaying>()),
+      );
       await settle(100);
       expect(activations, 0);
       expect(ends, isEmpty);

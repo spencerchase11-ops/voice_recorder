@@ -35,7 +35,8 @@ abstract class RecorderEngine {
 
   /// Resumes a capture paused by [pause] or by the system (see
   /// [interrupted]). [byUser] is false when the app does it on its own, on
-  /// being opened again (AppController.onResume).
+  /// being opened again (AppController.onResume); it may then throw
+  /// [OtherAudioPlaying].
   Future<void> resume({bool byUser = true});
 
   /// Input level between 0 (silence) and 1 (full scale), about 10 per second.
@@ -63,6 +64,17 @@ enum CaptureEnd {
 
   /// A WAV file reached the format's 4 GB limit (about 13.5 hours).
   sizeLimit,
+}
+
+/// Thrown by [RecorderEngine.resume] when the app resumed on its own and
+/// left the recording paused (iOS, M4A): another app plays audio that taking
+/// the audio session would cut off (or it can't tell). Until that is over,
+/// the recording can't go on, and only stopping it saves it.
+class OtherAudioPlaying implements Exception {
+  const OtherAudioPlaying();
+
+  @override
+  String toString() => 'Another app plays audio';
 }
 
 /// Largest WAV data size: the RIFF size fields are 32-bit.
@@ -113,9 +125,9 @@ Uint8List downmixToMono(Uint8List stereo) {
 /// interruption unless the interruption ends with "should resume", and
 /// starting it again would replace the file. Such a recording ends (saved)
 /// once the interruption is over without that, or, if no end comes, soon
-/// after the app gets the audio session again: when it is opened while no
-/// other app plays, or when the user resumes. While a call has the audio
-/// session, nothing is resumed.
+/// after the app gets the audio session again: when it is opened (or is
+/// open) while no other app plays, or when the user resumes. While a call
+/// has the audio session, nothing is resumed.
 class RecordPluginEngine implements RecorderEngine {
   /// The streams stand in for the audio session's, the durations for the
   /// real ones, [activateSession] for taking the audio session and
@@ -142,8 +154,14 @@ class RecordPluginEngine implements RecorderEngine {
        _isAndroid = isAndroid ?? Platform.isAndroid,
        _inForeground = inForeground ?? _appInForeground,
        _activateSession = activateSession ?? _activateAudioSession,
-       _otherAudioPlaying =
-           otherAudioPlaying ?? (() => AVAudioSession().isOtherAudioPlaying);
+       _otherAudioPlaying = otherAudioPlaying ?? _otherAppPlays;
+
+  /// iOS: whether another app plays audio that this app's audio session
+  /// (which doesn't mix) would cut off. Audio that mixes with others (an
+  /// ambient app, spoken directions) doesn't count: it would go on.
+  /// (iOS only: checked on a phone, not by the unit tests.)
+  static Future<bool> _otherAppPlays() =>
+      AVAudioSession().secondaryAudioShouldBeSilencedHint;
 
   static bool _appInForeground() {
     final state = WidgetsBinding.instance.lifecycleState;
@@ -166,8 +184,8 @@ class RecordPluginEngine implements RecorderEngine {
   /// a call.
   final Future<bool> Function() _activateSession;
 
-  /// Whether another app plays audio (iOS), asked without taking the audio
-  /// session.
+  /// Whether another app plays audio that taking the audio session would
+  /// cut off (iOS, see [_otherAppPlays]), asked without taking it.
   final Future<bool> Function() _otherAudioPlaying;
 
   /// [_otherAudioPlaying]'s answer; true when it can't tell, so the audio
@@ -285,6 +303,12 @@ class RecordPluginEngine implements RecorderEngine {
   /// recording.
   Timer? _resumeTimer;
   Timer? _routeTimer;
+
+  /// iOS, M4A: the app was opened while the audio session couldn't be had
+  /// for a recorder the system paused (see [_askAgainLater]); [_asking]
+  /// while one of its resumes is under way.
+  Timer? _askTimer;
+  bool _asking = false;
 
   /// Completed by [stop]: cuts a recovery's waits short.
   Completer<void> _stopSignal = Completer<void>();
@@ -582,6 +606,8 @@ class RecordPluginEngine implements RecorderEngine {
       // This event decides now, or (a new interruption) its end will.
       _resumeTimer?.cancel();
       _resumeTimer = null;
+      _askTimer?.cancel();
+      _askTimer = null;
       if (_restartable != null) {
         if (e.begin) return;
         final chunks = _chunks;
@@ -628,6 +654,44 @@ class RecordPluginEngine implements RecorderEngine {
   Future<void> _endIfStuck() async {
     if (!_systemPaused || await _platformPaused()) return;
     if (_systemPaused) _endedOnItsOwn(CaptureEnd.stopped);
+  }
+
+  /// iOS, M4A: the app was opened while it couldn't have the audio session
+  /// for a recorder the system paused (another app plays, or a call has
+  /// it), and the interruption's end may never come. While the app stays
+  /// open, [resume] asks again now and then: once the session is free, the
+  /// recording ends (saved) as on opening the app then. Any interruption
+  /// event, the user's pause or resume, leaving the app or the end of the
+  /// recording stops it.
+  void _askAgainLater() {
+    if (!_systemPaused) return;
+    _askTimer ??= Timer.periodic(_resumeCheck, (_) {
+      if (!_running ||
+          _stopping ||
+          _endedSent ||
+          !_paused ||
+          _userPaused ||
+          !_sessionInterrupted ||
+          !_systemPaused ||
+          // The wait after the session was had decides.
+          _resumeTimer != null ||
+          !_inForeground()) {
+        _askTimer?.cancel();
+        _askTimer = null;
+        return;
+      }
+      if (_asking) return;
+      _asking = true;
+      unawaited(() async {
+        try {
+          await resume(byUser: false);
+        } catch (_) {
+          // Still not free: asked again next time.
+        } finally {
+          _asking = false;
+        }
+      }());
+    });
   }
 
   /// iOS, MP3 and WAV: a route change (headphones, a car, the input's
@@ -678,6 +742,8 @@ class RecordPluginEngine implements RecorderEngine {
     _resumeTimer = null;
     _routeTimer?.cancel();
     _routeTimer = null;
+    _askTimer?.cancel();
+    _askTimer = null;
   }
 
   Future<void> _pauseQuietly() async {
@@ -852,15 +918,18 @@ class RecordPluginEngine implements RecorderEngine {
         // Opened again (not the user), the app leaves it alone while another
         // app plays (music, a podcast, a web call): taking it would cut that
         // off, only for this recording to end (see below). The
-        // interruption's end, a later return to the app, or the user
-        // decides then.
+        // interruption's end, asking again while the app is open, a later
+        // return to it, or the user decides then.
         if (!byUser) {
           final othersPlay = await _othersPlay();
           // Stopped, ended, or resumed by the call's end, meanwhile.
           if (!_running || _stopping || _endedSent || !_paused) return;
           if (othersPlay) {
             if (wasUserPaused) _userPaused = true;
-            return;
+            // Paused by the user meanwhile: their resume decides.
+            if (_userPaused) return;
+            _askAgainLater();
+            throw const OtherAudioPlaying();
           }
         }
         final free = await _activateSession();
@@ -869,6 +938,7 @@ class RecordPluginEngine implements RecorderEngine {
         if (!free) {
           // Paused by the user before, or meanwhile: it stays so.
           if (wasUserPaused) _userPaused = true;
+          if (!byUser && !_userPaused) _askAgainLater();
           throw StateError('The audio session is in use');
         }
       }
