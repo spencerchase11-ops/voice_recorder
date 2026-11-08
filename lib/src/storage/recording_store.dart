@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
@@ -292,6 +293,16 @@ class IosRecordingStore extends RecordingStore {
   late Directory _dir;
   String _device = 'iPhone';
 
+  /// The name an import from Files copies a file in under until it is
+  /// complete (`partialPrefix` in AppDelegate.swift): `.importing-<UUID>.mp3`.
+  static final _partialImport = RegExp(
+    r'^\.importing-[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(\.[^.]*)?$',
+  );
+
+  /// Imports from Files running now (see [importRecordings]).
+  int _importing = 0;
+  bool _sweptImports = false;
+
   @override
   String get folderDisplayPath => 'On My $_device/Voice Recorder/Recorders';
 
@@ -306,9 +317,36 @@ class IosRecordingStore extends RecordingStore {
     final docs = await _documents();
     _dir = Directory('${docs.path}/Recorders');
     await _dir.create(recursive: true);
+    if (!_sweptImports) {
+      _sweptImports = true;
+      await _removePartialImports();
+    }
     try {
       _device = await _native.deviceKind() ?? _device;
     } catch (_) {}
+  }
+
+  /// Removes what an import cut short left: the app was suspended in the
+  /// middle of a copy and then ended by iOS. Hidden, but it can be
+  /// gigabytes of WAV, which take space and go into backups. Only at
+  /// start-up, never while an import runs (the file it is copying has such
+  /// a name), and not a file written to in the last ten minutes, which may
+  /// still be a copy going on.
+  Future<void> _removePartialImports() async {
+    final recent = DateTime.now().subtract(const Duration(minutes: 10));
+    try {
+      await for (final e in _dir.list(followLinks: false)) {
+        if (_importing > 0) return;
+        if (e is! File || !_partialImport.hasMatch(e.uri.pathSegments.last)) {
+          continue;
+        }
+        try {
+          if ((await e.lastModified()).isAfter(recent)) continue;
+          if (_importing > 0) return;
+          await e.delete();
+        } on FileSystemException catch (_) {}
+      }
+    } on FileSystemException catch (_) {}
   }
 
   /// There is no folder picker on iOS; this opens the folder in Files instead.
@@ -316,7 +354,7 @@ class IosRecordingStore extends RecordingStore {
   Future<bool> chooseFolder() =>
       launchUrl(Uri.parse('shareddocuments://${_dir.path}'));
 
-  RecordingFile _fromFile(File f) {
+  static RecordingFile _fromFile(File f) {
     final stat = f.statSync();
     return RecordingFile(
       id: f.path,
@@ -326,24 +364,36 @@ class IosRecordingStore extends RecordingStore {
     );
   }
 
+  /// The audio files in the folder at [path], or with [hidden] its hidden
+  /// files (Recently deleted), in the folder's order. Read on another
+  /// isolate: for thousands of recordings it takes tens of milliseconds,
+  /// which on this one (the UI thread on iOS) would stall the screen.
+  static Future<List<RecordingFile>> _listFolder(
+    String path, {
+    bool hidden = false,
+  }) => Isolate.run(() {
+    final files = <RecordingFile>[];
+    for (final f in Directory(path).listSync().whereType<File>()) {
+      final name = f.uri.pathSegments.last;
+      if (hidden ? name.startsWith('.') : isAudioFileName(name)) {
+        files.add(_fromFile(f));
+      }
+    }
+    return files;
+  });
+
   @override
   Future<List<RecordingFile>> list() async {
     if (!await _dir.exists()) return const [];
-    return _dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => isAudioFileName(f.uri.pathSegments.last))
-        .map(_fromFile)
-        .toList();
+    return _listFolder(_dir.path);
   }
 
   @override
   Future<List<TrashedRecording>> listTrash() async {
     if (!await _dir.exists()) return const [];
     return [
-      for (final f in _dir.listSync().whereType<File>())
-        if (f.uri.pathSegments.last.startsWith('.'))
-          ?TrashedRecording.parse(_fromFile(f)),
+      for (final f in await _listFolder(_dir.path, hidden: true))
+        ?TrashedRecording.parse(f),
     ];
   }
 
@@ -363,8 +413,14 @@ class IosRecordingStore extends RecordingStore {
 
   /// Copies recordings picked in the Files app into the folder (null if the
   /// picker was cancelled).
-  Future<ImportResult?> importRecordings({bool folder = true}) =>
-      _native.importRecordings(_dir.path, folder: folder);
+  Future<ImportResult?> importRecordings({bool folder = true}) async {
+    _importing++;
+    try {
+      return await _native.importRecordings(_dir.path, folder: folder);
+    } finally {
+      _importing--;
+    }
+  }
 
   @override
   Future<RecordingFile?> find(String id) async {
