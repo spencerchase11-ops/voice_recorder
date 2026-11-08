@@ -3,6 +3,36 @@
 One entry per decision: context, decision, why. Newest first. Supersede old entries with a
 new one rather than editing them.
 
+## D16 (2026-11-08): the iPhone's folder listing stays on the UI isolate for now
+
+- **Context:** the audit noted that `IosRecordingStore.list()` reads the folder synchronously.
+  Measured on the Mac: about 15-20 ms for 2,500 files. A fix moved the listing to another
+  isolate, which needed every folder call to run in turn so a listing couldn't undo a delete.
+- **Decision:** reverted for 1.0.1; the listing stays as in 1.0.0. A test
+  (`test/storage/ios_store_controller_test.dart`) guards against that race if it comes back.
+- **Why:** a frame or two of jank on a refresh is a small cost; new concurrency in every folder
+  call (deadlock risk, a timing-based test) was too much risk for a fix release. ROADMAP has it.
+
+## D15 (2026-11-08): no CallKit
+
+- **Context:** a fix asked CallKit (`CXCallObserver`) whether a call was in progress. App Review
+  has rejected apps that link CallKit while they are offered in China mainland, and this app is
+  offered in every country or region.
+- **Decision:** the app doesn't link CallKit. To tell whether it may take the audio session
+  when it is opened during an interrupted M4A recording, it asks
+  `AVAudioSession.isOtherAudioPlaying` instead, and a call still refuses the session.
+- **Why:** keeps the app available everywhere without asking the owner to drop a territory.
+
+## D14 (2026-11-08): 1.0.1 ships as build 5, with the audit fixes
+
+- **Context:** the owner found that playback stopped on the Ring/Silent switch and when leaving
+  the app (1.0.1 build 4 on the phone). 1.0.1 was never submitted: the store still has 1.0.0.
+- **Decision:** a full audit and fix pass goes into 1.0.1, as build 5 (`version: 1.0.1+5`). The
+  work stays on the branch `audit-2026-11-08` until the owner has tested it on the phone; then
+  it is merged into the default branch, uploaded, submitted and tagged `v1.0.1`.
+- **Why:** nothing is lost by keeping the version number (no 1.0.1 was released), and the fixes
+  are what 1.0.1 should have been.
+
 ## D13 (2026-10-17): 1.0.1 turns on "Rate this app", as build 4
 
 - **Context:** the "Rate this app" row on iPhone needs the App Store id, which exists since 1.0.0

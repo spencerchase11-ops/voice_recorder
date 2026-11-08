@@ -81,7 +81,9 @@ apps, and it can come back. After 30 days the app deletes it for good (it
 checks when it starts, when you come back to it after a few hours, and when
 Settings or Recently deleted opens). A recording deleted while the phone's
 clock was set before 2025 gets its 30 days from when the app next sees it,
-and nothing is deleted for good while the clock reads before 2025. Recently deleted
+and nothing is deleted for good while the clock reads before 2025. The same
+goes for a clock set back to an earlier date it had already passed: what is
+deleted meanwhile gets its 30 days from when the clock is right again. Recently deleted
 belongs to the folder: after switching to another folder, what was deleted in
 the old one stays there, hidden, and comes back into Recently deleted when you
 switch back. The app can't clean up when it is uninstalled, so empty Recently
@@ -169,7 +171,11 @@ are left, a recording stops and is saved, and a new one won't start.
   phone call Android gives the app silence. On iPhone, calls and Siri pause
   the recording and the timer, and recording resumes when they end (or when
   you return to the app, if iOS didn't resume it; during a call it stays
-  paused).
+  paused). An M4A recording that iOS doesn't let resume (it ended its pause
+  without saying so, for example for another app's audio) can't go on in
+  the same file: it ends, saved, and the app says so. Returning to the app
+  never cuts off another app's music or podcast to find that out; resuming
+  the recording yourself does.
 - **iPhone, MP3 and WAV:** when iOS breaks the capture (after a call the
   microphone may come back in another format, which stops the recorder's
   audio engine or leaves it silent), the app starts the capture again and
@@ -181,8 +187,8 @@ are left, a recording stops and is saved, and a new one won't start.
   says so (when you're back in the app, if it happened in the background).
   That happens after a system error, when audio stops arriving for 5 seconds
   (and, on iPhone, can't be started again), when the storage can't be
-  written any more, or when a WAV recording reaches the format's limit of
-  about 13 hours.
+  written any more, or when a WAV recording reaches the format's 4 GB limit
+  (about 13 hours at the best quality, 27 to 74 hours at the lower ones).
 - **Pause.** A paused recording stays one file; nothing is recorded until it
   is resumed. On iPhone, a recording you paused stays paused after a call.
   On Android, the recording notification has Pause/Resume and Stop buttons.
@@ -212,7 +218,10 @@ playing when you leave the app or lock the phone:
   the recording stays paused where it was in the app, and playing it again
   brings them back.
 - **iOS:** the lock screen and Control Center show the recording ("Now
-  Playing") with the same controls.
+  Playing") with the same controls. A headphone double or triple press, and
+  a car's next and previous buttons, skip 10 seconds. Playback goes on with
+  the Ring/Silent switch on Silent; the app sets this up again before each
+  play and after iOS resets its audio, so it holds.
 
 With it off, there are no such controls and playback pauses when you leave
 the app or lock the phone.

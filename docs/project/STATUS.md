@@ -1,6 +1,6 @@
 # Voice Recorder status
 
-Snapshot as of **2026-10-17**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
+Snapshot as of **2026-11-08**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
 
 This repository is **public**: no device identifiers, personal email addresses or the owner's
 recordings in here.
@@ -10,11 +10,11 @@ recordings in here.
 | Area | State |
 |---|---|
 | App Store | **1.0.0 (build 2) live since 2026-09-29** as "Voice Recorder – Classic": free, 4+, iPhone only. |
-| Next release | **1.0.1 (build 4)**, on the default branch (`ff3dbe2`): a recording no longer ends after a phone call (HISTORY 2026-10-12), and "Rate this app" in Settings. The owner's call test passed (build 3, the same engine). Archive built and reviewed 2026-10-17 (HISTORY). **Next: the owner uploads it through Organizer**, then version 1.0.1 in App Store Connect and submit (with the owner's go-ahead), then tag `v1.0.1`. Not uploaded yet. |
-| Owner's own copy | 1.0.1 (4) from the release archive (development-signed), installed 2026-10-17 over 1.0.1 (3) with every recording intact. The App Store's 1.0.1 installs over it and keeps the recordings. |
-| Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. Everything is pushed (2026-10-17). |
+| Next release | **1.0.1 (build 5)** on the branch `audit-2026-11-08`: build 4's call fix and "Rate this app", plus the 2026-11-08 audit fixes (HISTORY), first of all playback that stopped on the Ring/Silent switch and when leaving the app. Build 4 was never submitted (D14). **Next: the owner tests it on the phone** (ROADMAP "Now"), then merge, upload, submit and tag `v1.0.1`, each with the owner's go-ahead. |
+| Owner's own copy | 1.0.1 (4) from the 2026-10-17 archive. Build 5 is to be installed with `devicectl` (RUNBOOK 3) once the phone is connected. |
+| Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. The default branch is pushed; `audit-2026-11-08` is pushed too (a work branch, not merged). |
 | CI | Green: `v1.0.0` (push run, 2026-09-26), the default branch (`87a9904`) and `ios-capture-recovery` (`843fa18`, `e936670`), 2026-10-15: analyze, tests and the Android build. The 2026-10-17 doc ritual pushes start new runs. The weekly Monday run only keeps the Android test signing key's cache alive and runs no tests. The iOS build job runs only when started by hand. |
-| Tests | `ff3dbe2` on the Mac: 293 pass, 2 skipped (they need `/dev/full`), and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
+| Tests | `audit-2026-11-08` on the Mac: 408 pass, 6 skipped, and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
 | Tools | The App Store screenshots and the iOS icons can be made again on the Mac: `test/tool/app_store_screenshots_test.dart` and `tool/art/render_icon.swift` (RUNBOOK 5), both checked against what's published. |
 | Android | Not part of these sessions: no Play Store work done or checked. |
 
@@ -45,6 +45,8 @@ recordings in here.
   folder.
 - **Branches:**
   - `claude/voice-recorder-fork-7xk3bg`: the default branch, with 1.0.1 (4) since 2026-10-17.
+  - `audit-2026-11-08`: 1.0.1 (5), the audit fixes; merged into the default branch after the
+    owner's phone test.
   - `ios-capture-recovery`: the call fix (`843fa18`). Merged into the default branch
     (fast-forward); can be deleted.
   - `ios-release-polish`: the 1.0.0 work; the same commit as `v1.0.0`. Merged; can be deleted.
@@ -60,7 +62,9 @@ recordings in here.
 
 ## Open decisions
 
-- None. ("Rate this app" in 1.0.1 was settled on 2026-10-17: DECISIONS D13.)
+- Whether build 5 fixes the owner's playback problem on the phone (the cause couldn't be
+  reproduced on the simulator; ROADMAP "Now" has the test).
+- The owner's go-ahead to merge, upload, submit and tag.
 
 ## Watch items
 
@@ -74,3 +78,8 @@ recordings in here.
   an error in a future version.
 - **record_ios 2.1.1** has no handling of route changes or media service resets; the app works
   around it from 1.0.1 (DECISIONS D9). Re-check when upgrading `record`.
+- **just_audio 0.10.6** doesn't report pauses iOS makes itself; AppDelegate.swift's
+  `PlayerWatch` does (from 1.0.1). Re-check when upgrading `just_audio`.
+- **No CallKit** (D15): App Review rejects apps that link it while offered in China mainland.
+- **iOS 27** deprecates `AVAudioSessionInterruptionNotification` (still posted; the plugins
+  rely on it). Watch the next iOS releases.

@@ -79,7 +79,7 @@ Xcode's Organizer opens: **Distribute App** → **App Store Connect** →
 **Upload**, and accept the defaults. (Or drag `build/ios/ipa/*.ipa` into
 Apple's Transporter app.) Each later upload needs a higher build number:
 raise `version:` in `pubspec.yaml` before building, for example
-`version: 1.0.2+5` (1.0.0 used builds 1 and 2, 1.0.1 build 4). Don't pass
+`version: 1.0.2+6` (1.0.0 used builds 1 and 2, 1.0.1 build 5). Don't pass
 `--build-number`: it overrides `pubspec.yaml`.
 
 After 10–30 minutes the build shows under **TestFlight**, where you can also
@@ -168,7 +168,7 @@ Settings > Import recordings copies audio files the user picks in the Files app 
 **What's New in This Version** (updates only). For 1.0.1:
 
 ```
-A recording now keeps going, in the same file, after a phone or FaceTime call and when headphones or a car connect or disconnect. Settings now has “Rate this app”.
+Playback now keeps going with the Ring/Silent switch on Silent and when you leave the app. A recording now keeps going, in the same file, after a phone or FaceTime call and when headphones or a car connect or disconnect. Headphone double and triple presses skip 10 seconds. Settings now has “Rate this app”. Plus fixes for recording dates, Recently deleted, imports and large text sizes.
 ```
 
 Then choose the build, and **Add for Review** → **Submit**.

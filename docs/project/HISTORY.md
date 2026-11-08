@@ -3,6 +3,52 @@
 Newest first. Add an entry at every doc ritual: what changed and why, with commit hashes.
 Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 
+## 2026-11-08: audit and fixes for 1.0.1 (5)
+
+- **The owner's report:** on 1.0.1 (4), playback stopped when the Ring/Silent switch went to
+  Silent, and when the app was left. Under the app's `playAndRecord` session neither can
+  happen; the likely cause is iOS resetting its media services, which puts the session back to
+  its default (silenced by the switch, not allowed in the background), and nothing in the app
+  set it up again. The just_audio player also never reports a pause iOS makes itself, so the
+  app kept showing "playing". Not reproducible on the simulator.
+- **Audit:** reviewers in several dimensions, each finding checked by 3 skeptics: 36 confirmed
+  (some duplicates), 6 rejected. Fixed in 7 groups, each reviewed independently, merged into
+  the branch `audit-2026-11-08` (`55aab3c` to `8c4928c`), then a polish round on the reviews'
+  remaining points (to `c4b5be2`), a final review of the whole change (6 more issues, fixed in
+  `1a59737`, `842fbc5`, `fb0640c`), and `0074d84` (no CallKit, D15).
+- **Playback (iOS):** the session is set up again before every play and after a media-services
+  reset (which also unloads the dead player); a launch that can't set it up still opens; a
+  refused session says "audio busy" instead of "Can't play this recording"; a pause iOS makes
+  (app sent to the background without background audio, a failed play) or a file failing
+  partway now reaches the app (`PlayerWatch` in AppDelegate.swift); headphone double/triple
+  presses and a car's next/previous skip 10 s; uncaught errors are logged.
+- **Playback (Android):** headphones unplugged during a call no longer let playback resume out
+  loud after it; play during a call says "audio busy".
+- **Recording:** an iOS M4A recording that iOS paused and won't let resume ends, saved, instead
+  of staying frozen; opening the app never takes the audio session from another app that plays
+  (D15); the MP3/WAV level meter no longer freezes when the clock goes back; the WAV limit
+  notice gives the right hours for the quality.
+- **Dates and Recently deleted:** a date kept only in the app's cache (a renamed AAC, a write
+  that failed or was refused, 1.0.x caches) survives delete and restore, folder switches and
+  renames; a 1.0.1 copy time cached on iPhone no longer hides a date typed into the name;
+  Recently deleted no longer purges early after the clock was set back; trash actions run one
+  at a time, so an Undo still running can't be undone by Delete forever or Restore all; the
+  Undo toast goes away when Recently deleted restores or deletes; M4A dates keep their name's
+  clock time after a change of time zone; better date and VBR MP3 length parsing.
+- **Screens:** a notice waiting for the app is no longer closed by the Record shortcut; Android
+  no longer asks for the folder while the app is still starting; large text sizes fit
+  (Remaining time, Recently deleted's buttons); seeking while a recording is saved says why.
+- **Native:** iOS import Cancel stops at once and leftover partial copies are cleaned up; the
+  Record shortcut closes the Files picker or share sheet first. Android: a refused delete is
+  reported, a folder picked while the app was killed is kept, a save copies under a hidden name
+  first (with a fallback where renaming isn't supported), a case-only rename no longer adds
+  " (1)".
+- **Left on purpose:** the iPhone's folder listing stays synchronous (D16); see ROADMAP for the
+  rest.
+- Tests on the Mac: 408 pass, 6 skipped, and the 2 known golden tests fail (RUNBOOK 2).
+  `flutter build ios --simulator` and `flutter build apk --debug` build. On the simulator,
+  playback went on after Home.
+
 ## 2026-10-17: 1.0.1 (4) prepared
 
 - The owner's call test of 1.0.1 (3) passed: the recording kept going through a call, in one
