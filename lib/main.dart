@@ -56,6 +56,7 @@ Future<void> main() async {
         } catch (_) {}
         return File('${dir.path}/recording_info.json');
       },
+      fileTimesAreDates: store.fileTimesAreDates,
     ),
   );
   runApp(VoiceRecorderApp(controller: controller));

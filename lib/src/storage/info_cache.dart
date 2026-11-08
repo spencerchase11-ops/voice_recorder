@@ -15,9 +15,14 @@ import '../core/recording_file.dart';
 /// they stay in step with those after a change of time zone.
 class RecordingInfoCache {
   /// Kept in [file] when given (the app), otherwise in memory only (tests).
-  RecordingInfoCache({Future<File> Function()? file}) : _locate = file;
+  /// [fileTimesAreDates] is the store's: false on iPhone (see [load]).
+  RecordingInfoCache({
+    Future<File> Function()? file,
+    this._fileTimesAreDates = true,
+  }) : _locate = file;
 
   final Future<File> Function()? _locate;
+  final bool _fileTimesAreDates;
   final _map = <String, AudioInfo>{};
 
   /// Files whose date is known only here: writing it into the file failed,
@@ -26,6 +31,12 @@ class RecordingInfoCache {
 
   /// Files that can't take a date inside (see [dateRefused]).
   final _refused = <String>{};
+
+  /// Dates from a cache 1.0.0 or 1.0.1 wrote: they marked neither a date
+  /// whose write failed nor one that was refused, so any of these may be
+  /// known only here (see [_onlyCopy]). Only those dates, each until it is
+  /// replaced, so this never grows.
+  final _mayBeOnlyHere = <String>{};
   Timer? _saveTimer;
   bool _dirty = false;
 
@@ -35,6 +46,12 @@ class RecordingInfoCache {
   static String keyOf(RecordingFile f) =>
       '${f.name}|${f.size}|${f.modified.millisecondsSinceEpoch}';
 
+  /// At the top of the file from this build on. Not a list, so 1.0.x skips
+  /// it (it reads lists only).
+  static const _formatKey = 'format';
+
+  /// A cache 1.0.0 or 1.0.1 wrote (it has no [_formatKey]) is brought up to
+  /// date: see [_mayBeOnlyHere], and on iPhone file times cached as dates.
   Future<void> load() async {
     final locate = _locate;
     if (locate == null) return;
@@ -43,12 +60,17 @@ class RecordingInfoCache {
       if (!await f.exists()) return;
       final json = jsonDecode(await f.readAsString());
       if (json is! Map) return;
+      // Also when an older build wrote it after this one (it drops marks).
+      final old = json[_formatKey] is! int;
+      var migrated = false;
       json.forEach((k, v) {
         if (k is! String || v is! List || v.length < 2) return;
         final r = v[0], d = v[1];
-        if (v.length > 2 && v[2] == 1) _onlyHere.add(k);
-        if (v.length > 2 && v[2] == 2) _refused.add(k);
-        _map[k] = AudioInfo(
+        final mark = v.length > 2 ? v[2] : null;
+        if (mark == 1) _onlyHere.add(k);
+        if (mark == 2) _refused.add(k);
+        if (mark == 3) _mayBeOnlyHere.add(k);
+        final info = AudioInfo(
           recorded: switch (r) {
             final String t => DateTime.tryParse(t),
             // Written by the first test builds: a point in time.
@@ -57,7 +79,22 @@ class RecordingInfoCache {
           },
           duration: d is int ? Duration(milliseconds: d) : null,
         );
+        final recorded = info.recorded;
+        if (old && mark == null && recorded != null) {
+          migrated = true;
+          // On iPhone 1.0.x cached a renamed file's time (when it was copied
+          // there) as its date, which hid a date typed into a later name.
+          // The file is read again: a date inside it comes back.
+          if (!_fileTimesAreDates &&
+              recorded.millisecondsSinceEpoch == _timeIn(k)) {
+            return;
+          }
+          _mayBeOnlyHere.add(k);
+        }
+        _map[k] = info;
       });
+      // Saved with the format, so this is done once.
+      if (migrated) _changed();
     } catch (e) {
       debugPrint('Could not read the recording info cache: $e');
     }
@@ -88,10 +125,12 @@ class RecordingInfoCache {
     final key = keyOf(f);
     if (_map[key] == info &&
         _onlyHere.contains(key) == onlyHere &&
-        _refused.contains(key) == refused) {
+        _refused.contains(key) == refused &&
+        !_mayBeOnlyHere.contains(key)) {
       return;
     }
     _map[key] = info;
+    _mayBeOnlyHere.remove(key);
     if (onlyHere) {
       _onlyHere.add(key);
     } else {
@@ -115,7 +154,7 @@ class RecordingInfoCache {
     _map
       ..remove(a)
       ..[b] = info;
-    for (final marked in [_onlyHere, _refused]) {
+    for (final marked in [_onlyHere, _refused, _mayBeOnlyHere]) {
       if (marked.remove(a)) {
         marked.add(b);
       } else {
@@ -135,22 +174,27 @@ class RecordingInfoCache {
     _map.removeWhere((k, info) => !keep.contains(k) && !_onlyCopy(k, info));
     _onlyHere.removeWhere((k) => !_map.containsKey(k));
     _refused.removeWhere((k) => !_map.containsKey(k));
+    _mayBeOnlyHere.removeWhere((k) => !_map.containsKey(k));
     if (_map.length != before) _changed();
   }
 
   /// Whether [info] is known only here: a date whose write failed, or one
   /// the file can't hold (its format can't, like AAC); and a file that
   /// refused a date, with or without one (read again, it would be offered
-  /// for storing again, and refuse again).
+  /// for storing again, and refuse again). A date 1.0.x kept may be either.
   bool _onlyCopy(String key, AudioInfo info) {
     if (_refused.contains(key)) return true;
     if (info.recorded == null) return false;
-    if (_onlyHere.contains(key)) return true;
+    if (_onlyHere.contains(key) || _mayBeOnlyHere.contains(key)) return true;
     // The name is what comes before "|size|time".
     final last = key.lastIndexOf('|');
     final end = last > 0 ? key.lastIndexOf('|', last - 1) : -1;
     return end > 0 && !canStoreRecordedDate(key.substring(0, end));
   }
+
+  /// The file time in [key] (see [keyOf]), in milliseconds.
+  static int? _timeIn(String key) =>
+      int.tryParse(key.substring(key.lastIndexOf('|') + 1));
 
   void _changed() {
     _dirty = true;
@@ -170,13 +214,19 @@ class RecordingInfoCache {
     final locate = _locate;
     if (locate == null || !_dirty) return;
     _dirty = false;
-    final json = {
+    final json = <String, Object?>{
+      _formatKey: 2,
       for (final e in _map.entries)
         e.key: [
           // Local clock time without a zone: `2026-09-25T10:00:00.000`.
           e.value.recorded?.toLocal().toIso8601String(),
           e.value.duration?.inMilliseconds,
-          if (_onlyHere.contains(e.key)) 1 else if (_refused.contains(e.key)) 2,
+          if (_onlyHere.contains(e.key))
+            1
+          else if (_refused.contains(e.key))
+            2
+          else if (_mayBeOnlyHere.contains(e.key))
+            3,
         ],
     };
     try {
