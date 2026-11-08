@@ -37,6 +37,7 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
       binaryMessenger: registrar.messenger())
     Self.channel = channel
     registrar.addMethodCallDelegate(VoiceRecorderNative(), channel: channel)
+    PlayerWatch.shared.start()
   }
 
   /// A home-screen quick action ("Record"). Returns whether it was ours.
@@ -140,7 +141,8 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
 }
 
 /// The lock screen's and Control Center's "Now Playing" controls, and the
-/// headphone buttons: play/pause, back and forward 10 seconds, seeking.
+/// headphone buttons: play/pause, back and forward 10 seconds (also a double
+/// or triple press, and a car's next and previous buttons), seeking.
 /// The Flutter side plays the audio; the buttons go back to it as
 /// "mediaAction" calls.
 final class NowPlaying {
@@ -170,6 +172,7 @@ final class NowPlaying {
     for command in [
       center.playCommand, center.pauseCommand, center.togglePlayPauseCommand,
       center.skipForwardCommand, center.skipBackwardCommand,
+      center.nextTrackCommand, center.previousTrackCommand,
       center.changePlaybackPositionCommand,
     ] {
       command.isEnabled = false
@@ -187,6 +190,10 @@ final class NowPlaying {
       (center.togglePlayPauseCommand, "toggle"),
       (center.skipForwardCommand, "forward"),
       (center.skipBackwardCommand, "rewind"),
+      // Headphones send a double press as "next track" and a triple press as
+      // "previous track"; so does a car's steering wheel.
+      (center.nextTrackCommand, "forward"),
+      (center.previousTrackCommand, "rewind"),
     ]
     for (command, action) in simple {
       command.isEnabled = true
@@ -208,6 +215,47 @@ final class NowPlaying {
       return .success
     }
     targets.append((seek, target))
+  }
+}
+
+/// Tells the Flutter side when iOS stops the player by itself, which
+/// just_audio doesn't pass on: the app would go on showing "playing" (the
+/// timer running, the lock screen too) while nothing is heard.
+/// - The app went to the background where it may not play (its audio session
+///   lost its category), or a play couldn't start: sent as a "pause" button,
+///   which pauses the player for real.
+/// - The file stopped playing partway: "failed", which unloads it.
+/// Interruptions (a call, Siri) are left to audio_session and just_audio,
+/// which pause and resume after them. The app's own play and pause
+/// (setRateCalled) are ignored, so the pause this asks for adds nothing.
+final class PlayerWatch {
+  static let shared = PlayerWatch()
+
+  private var observers: [NSObjectProtocol] = []
+
+  func start() {
+    guard observers.isEmpty else { return }
+    let center = NotificationCenter.default
+    observers.append(
+      center.addObserver(
+        forName: AVPlayer.rateDidChangeNotification, object: nil, queue: .main
+      ) { note in
+        guard let player = note.object as? AVPlayer, player.rate == 0,
+          let raw = note.userInfo?[AVPlayer.rateDidChangeReasonKey] as? String
+        else { return }
+        let reason = AVPlayer.RateDidChangeReason(rawValue: raw)
+        guard reason == .appBackgrounded || reason == .setRateFailed else { return }
+        NSLog("Voice Recorder: the system paused playback (%@)", raw)
+        VoiceRecorderNative.send("mediaAction", ["action": "pause"])
+      })
+    observers.append(
+      center.addObserver(
+        forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main
+      ) { note in
+        let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey]
+        NSLog("Voice Recorder: playback failed: %@", "\(error ?? "no reason given")")
+        VoiceRecorderNative.send("mediaAction", ["action": "failed"])
+      })
   }
 }
 

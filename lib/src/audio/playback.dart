@@ -1,8 +1,36 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
+
+/// Play back through the loudspeaker even with the ring/silent switch on and
+/// allow recording at any time. No Bluetooth hands-free profile: recordings
+/// use the phone's microphone and headphones keep full playback quality.
+/// Keep in sync with `_iosConfig` in lib/src/audio/recorder_engine.dart.
+final appAudioSession = AudioSessionConfiguration(
+  avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+  avAudioSessionCategoryOptions:
+      AVAudioSessionCategoryOptions.defaultToSpeaker |
+      AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+  avAudioSessionMode: AVAudioSessionMode.defaultMode,
+  androidAudioAttributes: const AndroidAudioAttributes(
+    contentType: AndroidAudioContentType.speech,
+    usage: AndroidAudioUsage.media,
+  ),
+  androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+  // Recordings are speech: pause for a navigation prompt or similar
+  // (and resume after it) instead of playing over it.
+  androidWillPauseWhenDucked: true,
+);
+
+/// Applies [appAudioSession]. Every call sends the category to iOS again
+/// (audio_session doesn't skip one that looks unchanged), which is what
+/// restores it after iOS reset its media services. Throws if iOS refuses.
+Future<void> configureAudioSession() async =>
+    (await AudioSession.instance).configure(appAudioSession);
 
 /// Thrown by [Playback.play] when the system won't let the app play audio
 /// right now (e.g. during a phone call).
@@ -37,11 +65,55 @@ abstract class Playback extends ChangeNotifier {
   /// Stops and unloads the current recording.
   Future<void> stop();
 
+  /// Headphones were unplugged or disconnected (or the like): audio would
+  /// now come out of the loudspeaker.
+  Stream<void> get becameNoisy => const Stream.empty();
+
   bool isPlaying(String id) => playing && fileId == id;
 }
 
+/// The audio session as [JustAudioPlayback] uses it (tests stand in for it).
+class PlaybackSession {
+  const PlaybackSession();
+
+  /// iOS: applies the app's session again. A reset of the media services
+  /// puts it back to the system's default, which the Ring/Silent switch
+  /// mutes and which stops playing when the app is left.
+  Future<void> prepare() async {
+    if (Platform.isIOS) await configureAudioSession();
+  }
+
+  /// Asks for the session (Android: audio focus). False if refused; iOS
+  /// refuses with an error instead.
+  Future<bool> activate() async =>
+      (await AudioSession.instance).setActive(true);
+
+  Future<void> deactivate() async {
+    await (await AudioSession.instance).setActive(false);
+  }
+
+  /// Android: a phone call rings or goes on. The app may still hold audio
+  /// focus from before the call (a call only pauses it), and Android isn't
+  /// asked again then.
+  Future<bool> inCall() async {
+    if (!Platform.isAndroid) return false;
+    final mode = await AndroidAudioManager().getMode();
+    return mode == AndroidAudioHardwareMode.ringtone ||
+        mode == AndroidAudioHardwareMode.inCall ||
+        mode == AndroidAudioHardwareMode.inCommunication;
+  }
+
+  Stream<void> get becomingNoisy =>
+      Stream.fromFuture(AudioSession.instance)
+          .asyncExpand((s) => s.becomingNoisyEventStream);
+}
+
 class JustAudioPlayback extends Playback {
-  JustAudioPlayback() {
+  /// [player] and [session] stand in for the real ones (tests).
+  JustAudioPlayback({
+    AudioPlayer? player,
+    this._session = const PlaybackSession(),
+  }) : _player = player ?? AudioPlayer() {
     _subs.add(
       _player.playerStateStream.listen((s) {
         if (s.processingState == ProcessingState.completed && !_rewinding) {
@@ -83,7 +155,8 @@ class JustAudioPlayback extends Playback {
     );
   }
 
-  final _player = AudioPlayer();
+  final AudioPlayer _player;
+  final PlaybackSession _session;
   final _subs = <StreamSubscription<Object?>>[];
   bool _rewinding = false;
 
@@ -134,22 +207,63 @@ class JustAudioPlayback extends Playback {
   }
 
   @override
+  Stream<void> get becameNoisy => _session.becomingNoisy;
+
+  /// Counts the plays, so a late error of one that was replaced is ignored.
+  var _plays = 0;
+
+  @override
   Future<void> play(String fileId, Uri uri) async {
     await load(fileId, uri);
     if (_fileId != fileId) return; // superseded by another file
-    // Ask for the audio session ourselves: just_audio would silently not
-    // play if refused, and audio_session would keep the refused request.
-    final session = await AudioSession.instance;
-    if (!await session.setActive(true)) {
-      await session.setActive(false);
-      throw const AudioBusyException();
-    }
+    await _claimSession();
+    // Another file may have been loaded meanwhile (a seek in another row).
+    if (_fileId != fileId) return;
+    final ticket = ++_plays;
     // play() completes when playback stops; errors surface as player events.
     unawaited(
       _player.play().catchError((Object e) {
         debugPrint('Playback error: $e');
+        // just_audio says "playing" before it asks for the session itself
+        // and stays so if that fails, although nothing plays: show it
+        // paused (and let the next play start it again).
+        if (ticket == _plays && _player.playing) {
+          unawaited(_player.pause().catchError((Object _) {}));
+        }
       }),
     );
+  }
+
+  /// Asks for the audio session ourselves: just_audio would silently not
+  /// play if refused, and audio_session would keep the refused request.
+  /// Throws [AudioBusyException] if the system won't let the app play now.
+  Future<void> _claimSession() async {
+    var call = false;
+    try {
+      call = await _session.inCall();
+    } catch (e) {
+      debugPrint('Could not tell whether a call goes on: $e');
+    }
+    if (call) throw const AudioBusyException();
+    try {
+      await _session.prepare();
+    } catch (e) {
+      // Playing may still work; if not, the activation below says so.
+      debugPrint('Could not set up the audio session: $e');
+    }
+    var granted = false;
+    try {
+      granted = await _session.activate();
+    } on PlatformException catch (e) {
+      // iOS refuses with an error (a call, another app's session).
+      debugPrint('Audio session refused: $e');
+    }
+    if (!granted) {
+      try {
+        await _session.deactivate();
+      } catch (_) {}
+      throw const AudioBusyException();
+    }
   }
 
   @override

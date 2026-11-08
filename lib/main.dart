@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -17,6 +18,7 @@ import 'src/storage/recording_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  logUncaughtErrors();
   await applySystemUi();
   registerThirdPartyLicenses();
 
@@ -26,13 +28,18 @@ Future<void> main() async {
       ? AndroidRecordingStore(native, settings)
       : IosRecordingStore(native);
 
-  await _configureAudioSession();
+  await configureAtLaunch();
 
   final controller = AppController(
     settings: settings,
     store: store,
     engine: RecordPluginEngine(),
     playback: JustAudioPlayback(),
+    // iOS: a reset of the media services undoes the audio session's setup.
+    mediaResets: Platform.isIOS
+        ? AVAudioSession().mediaServicesWereResetStream
+        : null,
+    configureAudio: configureAudioSession,
     native: native,
     workDir: getApplicationSupportDirectory,
     isAndroid: Platform.isAndroid,
@@ -55,27 +62,29 @@ Future<void> main() async {
   unawaited(controller.init());
 }
 
-/// Play back through the loudspeaker even with the ring/silent switch on and
-/// allow recording at any time. No Bluetooth hands-free profile: recordings
-/// use the phone's microphone and headphones keep full playback quality.
-/// Keep in sync with `_iosConfig` in lib/src/audio/recorder_engine.dart.
-Future<void> _configureAudioSession() async {
-  final session = await AudioSession.instance;
-  await session.configure(
-    AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions:
-          AVAudioSessionCategoryOptions.defaultToSpeaker |
-          AVAudioSessionCategoryOptions.allowBluetoothA2dp,
-      avAudioSessionMode: AVAudioSessionMode.defaultMode,
-      androidAudioAttributes: const AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        usage: AndroidAudioUsage.media,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      // Recordings are speech: pause for a navigation prompt or similar
-      // (and resume after it) instead of playing over it.
-      androidWillPauseWhenDucked: true,
-    ),
-  );
+/// Sets up the audio session ([appAudioSession]). A failure (iOS refuses
+/// while its media services restart) mustn't keep the app from starting:
+/// playback applies the session again before it plays, and the controller
+/// once the media services are back.
+@visibleForTesting
+Future<void> configureAtLaunch([
+  Future<void> Function() configure = configureAudioSession,
+]) async {
+  try {
+    await configure();
+  } catch (e) {
+    debugPrint('Could not configure the audio session: $e');
+  }
+}
+
+/// Errors nothing caught are logged (to the device's console) and the app
+/// carries on. Flutter's own (a widget that failed to build) are still
+/// presented as before.
+@visibleForTesting
+void logUncaughtErrors() {
+  FlutterError.onError = (details) => FlutterError.presentError(details);
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('Voice Recorder: uncaught error: $error\n$stack');
+    return true;
+  };
 }
