@@ -121,15 +121,27 @@ Future<(AppController, bool Function())> _pumpStarting(
 Future<TestApp> _deleteOneThenOpenRecentlyDeleted(WidgetTester tester) async {
   useReferenceDevice(tester);
   final t = await pumpReferenceApp(tester, files: _many(3), current: null);
+  await _deleteThenOpenRecentlyDeleted(tester, ['2026_09_01_10_02_00.mp3']);
+  return t;
+}
+
+/// Deletes [names] from the list one at a time, then opens Recently deleted
+/// while the last delete's Undo toast is still up.
+Future<void> _deleteThenOpenRecentlyDeleted(
+  WidgetTester tester,
+  List<String> names,
+) async {
   await tester.tap(labeled('Recording list'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('2026_09_01_10_02_00.mp3'));
-  await tester.pumpAndSettle();
-  await tester.tap(labeled('Delete'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('OK'));
-  await tester.pumpAndSettle();
-  expect(find.text('Moved to Recently deleted'), findsOneWidget);
+  for (final name in names) {
+    await tester.tap(find.text(name));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(find.text('Moved to Recently deleted'), findsOneWidget);
+  }
   // The Undo toast stays for 6 seconds, above every screen.
   await tester.tap(labeled('Back'));
   await tester.pumpAndSettle();
@@ -138,7 +150,28 @@ Future<TestApp> _deleteOneThenOpenRecentlyDeleted(WidgetTester tester) async {
   await tester.tap(find.text('Recently deleted'));
   await tester.pumpAndSettle();
   expect(labeled('Undo'), findsOneWidget);
-  return t;
+}
+
+/// Holds the listing of Recently deleted while [hold] is set (a slow
+/// folder), so the screen still shows it as it was a moment ago.
+class _SlowTrashStore extends FakeStore {
+  _SlowTrashStore() : super(files: _many(3), free: referenceFreeBytes);
+
+  Completer<void>? hold;
+
+  @override
+  Future<List<TrashedRecording>> listTrash() async {
+    await hold?.future;
+    return super.listTrash();
+  }
+}
+
+/// No message says that something couldn't be restored or deleted.
+void _expectNoFailure() {
+  expect(find.textContaining("Couldn't restore"), findsNothing);
+  expect(find.textContaining("couldn't be restored"), findsNothing);
+  expect(find.textContaining("Couldn't delete"), findsNothing);
+  expect(find.textContaining("couldn't be deleted"), findsNothing);
 }
 
 void main() {
@@ -262,6 +295,100 @@ void main() {
       await tester.pumpAndSettle();
       expect(labeled('Undo'), findsOneWidget);
       await waitOutUndo(tester);
+    });
+  });
+
+  // The Undo toast stays above Recently deleted's questions, and can be
+  // tapped while one is up.
+  group('Recently deleted, after an Undo tapped during its question,', () {
+    testWidgets("doesn't say Restore all failed", (tester) async {
+      final t = await _deleteOneThenOpenRecentlyDeleted(tester);
+      await tester.tap(labeled('Restore all'));
+      await tester.pumpAndSettle();
+      await tester.tap(labeled('Undo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore all').last);
+      await tester.pumpAndSettle();
+      _expectNoFailure();
+      expect(
+        find.textContaining('No recently deleted recordings'),
+        findsOneWidget,
+      );
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(t.controller.files, hasLength(3));
+    });
+
+    testWidgets("doesn't delete forever what Undo put back", (tester) async {
+      final t = await _deleteOneThenOpenRecentlyDeleted(tester);
+      await tester.tap(find.text('2026_09_01_10_02_00.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(labeled('Delete forever'));
+      await tester.pumpAndSettle();
+      await tester.tap(labeled('Undo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      _expectNoFailure();
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(t.store.deletedForGood, isEmpty);
+      expect(t.controller.files, hasLength(3));
+    });
+
+    testWidgets('deletes all of the rest', (tester) async {
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester, files: _many(3), current: null);
+      await _deleteThenOpenRecentlyDeleted(tester, [
+        '2026_09_01_10_02_00.mp3',
+        '2026_09_01_10_01_00.mp3',
+      ]);
+      await tester.tap(labeled('Delete all'));
+      await tester.pumpAndSettle();
+      // Puts back the one deleted last.
+      await tester.tap(labeled('Undo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete all').last);
+      await tester.pumpAndSettle();
+      _expectNoFailure();
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(t.store.deletedForGood, hasLength(1));
+      expect(t.store.deletedForGood.single, endsWith('10_02_00.mp3'));
+      expect(t.controller.files.map((f) => f.name), [
+        '2026_09_01_10_01_00.mp3',
+        '2026_09_01_10_00_00.mp3',
+      ]);
+    });
+
+    testWidgets("doesn't restore what Undo put back before the list "
+        'showed it', (tester) async {
+      useReferenceDevice(tester);
+      final store = _SlowTrashStore();
+      final (app, started) = await _pumpStarting(tester, store);
+      await pumpUntil(tester, started);
+      await tester.pumpAndSettle();
+      await _deleteThenOpenRecentlyDeleted(tester, ['2026_09_01_10_02_00.mp3']);
+      await tester.tap(find.text('2026_09_01_10_02_00.mp3'));
+      await tester.pumpAndSettle();
+      // Listed again after the Undo, slowly: Restore is tapped meanwhile.
+      store.hold = Completer<void>();
+      await tester.tap(labeled('Undo'));
+      await tester.pump();
+      expect(find.text('2026_09_01_10_02_00.mp3'), findsOneWidget);
+      await tester.tap(labeled('Restore'));
+      await tester.pump();
+      store.hold!.complete();
+      store.hold = null;
+      await tester.pumpAndSettle();
+      _expectNoFailure();
+      expect(
+        find.textContaining('No recently deleted recordings'),
+        findsOneWidget,
+      );
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(app.files, hasLength(3));
     });
   });
 
