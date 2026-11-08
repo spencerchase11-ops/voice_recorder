@@ -382,6 +382,12 @@ class FakePlayback extends Playback {
     _position = p;
     notifyListeners();
   }
+
+  /// Headphones unplugged or disconnected.
+  final noisyController = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get becameNoisy => noisyController.stream;
 }
 
 /// The recordings visible in the reference "Recording list" screenshot.

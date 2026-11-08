@@ -97,6 +97,8 @@ class AppController extends ChangeNotifier {
     this.isAndroid = false,
     RecordingInfoCache? info,
     DateTime Function()? clock,
+    Stream<void>? mediaResets,
+    this._configureAudio,
   }) : _clock = clock ?? DateTime.now,
        _info = info ?? RecordingInfoCache(),
        _sortOrder = settings.sortOrder,
@@ -105,6 +107,11 @@ class AppController extends ChangeNotifier {
     settings.addListener(_onSettingsChanged);
     store.addListener(notifyListeners);
     playback.addListener(_onPlaybackChanged);
+    _resetSub = mediaResets?.listen((_) => unawaited(_onMediaReset()));
+    // Unplugged during a call (or an alarm) that paused playback: it mustn't
+    // resume by itself afterwards, out of the loudspeaker. Playing it again
+    // in the app or with the controls clears this.
+    _noisySub = playback.becameNoisy.listen((_) => _held = true);
   }
 
   final Settings settings;
@@ -118,6 +125,12 @@ class AppController extends ChangeNotifier {
   final bool isAndroid;
   final DateTime Function() _clock;
   final RecordingInfoCache _info;
+
+  /// Sets up the audio session again (after a reset of iOS's media
+  /// services).
+  final Future<void> Function()? _configureAudio;
+  StreamSubscription<void>? _resetSub;
+  StreamSubscription<void>? _noisySub;
 
   // ------------------------------------------------------------ state
   bool _recording = false;
@@ -1183,9 +1196,23 @@ class AppController extends ChangeNotifier {
     await playback.stop();
   }
 
-  /// The controls went away while it was paused: it stays paused (it would
-  /// resume by itself after a call otherwise) until played in the app.
+  /// The controls went away while it was paused, or the headphones did: it
+  /// stays paused (it would resume by itself after a call otherwise) until
+  /// played in the app or with the controls.
   bool _held = false;
+
+  /// iOS reset its media services (their daemon restarted): the audio
+  /// session is back to the system's default, which the Ring/Silent switch
+  /// mutes and which stops playing when the app is left, and the player
+  /// made before can't play any more.
+  Future<void> _onMediaReset() async {
+    debugPrint('The media services were reset');
+    final configure = _configureAudio;
+    // A recording sets up the session itself as it restarts its capture.
+    if (configure != null && !_recording) await _safe(configure);
+    // The next play makes a new player; the lock screen controls go.
+    if (_playbackOpen) await _safe(_stopPlayback);
+  }
 
   void _onPlaybackChanged() {
     notifyListeners();
@@ -1294,6 +1321,8 @@ class AppController extends ChangeNotifier {
       case 'play':
         if (!playback.playing) await togglePlay(file);
       case 'pause':
+        // Also iOS saying it paused the player itself (the app went to the
+        // background where it couldn't play): the player doesn't say so.
         if (playback.playing) await _safe(playback.pause);
       case 'toggle':
         await togglePlay(file);
@@ -1312,6 +1341,9 @@ class AppController extends ChangeNotifier {
         _held = true;
         await _safe(native.clearMediaSession);
         if (playback.playing) await _safe(playback.pause);
+      case 'failed':
+        // iOS: the file stopped playing partway (the player doesn't say).
+        await _safe(_stopPlayback);
     }
   }
 
@@ -1695,6 +1727,8 @@ class AppController extends ChangeNotifier {
     _interruptSub?.cancel();
     _endedSub?.cancel();
     _nativeSub?.cancel();
+    _resetSub?.cancel();
+    _noisySub?.cancel();
     _notices.close();
     _launches.close();
     _info.dispose();
