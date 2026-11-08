@@ -526,6 +526,25 @@ void main() {
           await past();
           expect(notices, hasLength(1));
         });
+
+        test('nothing is said once the stop button was tapped, while the '
+            'recording is still being saved', () async {
+          await (await build()).init();
+          final notices = <String>[];
+          app.notices.listen(notices.add);
+          await app.toggleRecord();
+          engine.interruptController.add(true);
+          await Future<void>.delayed(Duration.zero);
+          engine.resumeError = const OtherAudioPlaying();
+          await app.onResume();
+          final saving = engine.stopGate = Completer<void>();
+          final stopping = app.toggleRecord();
+          await past(); // the wait is over while it is saved
+          saving.complete();
+          expect(await stopping, RecordOutcome.stopped);
+          await past();
+          expect(notices, isEmpty);
+        });
       },
     );
 

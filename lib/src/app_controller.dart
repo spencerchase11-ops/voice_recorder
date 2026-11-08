@@ -1128,6 +1128,9 @@ class AppController extends ChangeNotifier {
 
   Future<RecordOutcome> _stop() async {
     _busy = true;
+    // "Tap the stop button" would come too late.
+    _othersNotice?.cancel();
+    _othersNotice = null;
     _ticker?.cancel();
     _spaceTimer?.cancel();
     _stopwatch.stop();

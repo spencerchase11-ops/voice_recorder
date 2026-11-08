@@ -254,8 +254,12 @@ class FakeEngine implements RecorderEngine {
     if (pauseError != null) throw pauseError!;
   }
 
+  /// Makes stop() take a while (iOS finishing an M4A).
+  Completer<void>? stopGate;
+
   @override
   Future<void> stop() async {
+    await stopGate?.future;
     if (stopError != null) throw stopError!;
   }
 

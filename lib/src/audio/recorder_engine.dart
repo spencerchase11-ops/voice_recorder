@@ -642,10 +642,31 @@ class RecordPluginEngine implements RecorderEngine {
         }
       } else {
         // Over without "should resume" (e.g. another app kept the audio):
-        // the recorder stays paused, and nothing resumes it.
-        unawaited(_endIfStuck());
+        // the plugin resumes nothing.
+        unawaited(_overWithoutResume());
       }
     });
+  }
+
+  /// iOS, M4A: an interruption is over without "should resume". A recorder
+  /// the system paused can't go on, so the recording ends (saved). One the
+  /// plugin paused itself, not for the user, can, once the audio session
+  /// can be had: as far as resuming goes it is still held up (another app
+  /// may keep the session), so [resume] asks first, and asks again while
+  /// the app is open. The user's own pause is theirs to resume.
+  Future<void> _overWithoutResume() async {
+    if (!_systemPaused && !_paused) return;
+    if (!await _platformPaused()) {
+      if (_systemPaused) _endedOnItsOwn(CaptureEnd.stopped);
+      return;
+    }
+    // Stopped, resumed or paused by the user meanwhile.
+    if (!_running || _stopping || _endedSent || !_paused || _userPaused) {
+      return;
+    }
+    _systemPaused = false;
+    _sessionInterrupted = true;
+    if (_inForeground()) _askAgainLater();
   }
 
   /// iOS, M4A: ends a recording whose recorder the system paused and the
@@ -962,6 +983,8 @@ class RecordPluginEngine implements RecorderEngine {
         }
         return;
       }
+      // Paused by the user while the app's own resume asked (they resume).
+      if (!byUser && _userPaused) return;
       try {
         await _recorder.resume();
       } catch (e) {
