@@ -252,7 +252,14 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
   private var result: FlutterResult?
   private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
-  /// Set by Cancel; the copy stops after the file it is on.
+  /// Whether the Files picker is open, with nothing picked yet.
+  private var picking = false
+
+  /// The importer that opened the picker last.
+  private static weak var current: RecordingImporter?
+
+  /// Set by Cancel; the copy stops after the file it is on (or before the
+  /// first, when it is still looking for recordings).
   private static let stopLock = NSLock()
   private static var stopRequested = false
 
@@ -274,10 +281,16 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     return stopRequested
   }
 
-  private static func setReading(_ coordinator: NSFileCoordinator?) {
+  /// Makes `coordinator` the read Cancel interrupts. False, and nothing
+  /// changes, when Cancel came first: it found no read to interrupt then,
+  /// and this one could wait minutes for a download from iCloud.
+  @discardableResult
+  private static func setReading(_ coordinator: NSFileCoordinator?) -> Bool {
     stopLock.lock()
+    defer { stopLock.unlock() }
+    if coordinator != nil && stopRequested { return false }
     reading = coordinator
-    stopLock.unlock()
+    return true
   }
 
   /// Shows the Files picker: for a folder (all the recordings in it), or
@@ -303,7 +316,18 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     picker.delegate = self
     // Swiping the sheet down doesn't always count as Cancel.
     picker.presentationController?.delegate = self
+    picking = true
+    Self.current = self
     presenter.present(picker, animated: true)
+  }
+
+  /// The app closed the sheets over it (the "Record" quick action). If the
+  /// Files picker was one, the import ends as if cancelled there: a picker
+  /// closed this way tells its delegate nothing, and the Flutter side would
+  /// wait for an answer for good (and find the picker "busy" next time).
+  static func pickerClosed() {
+    guard let importer = current, importer.picking else { return }
+    importer.finish(nil)
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
@@ -315,6 +339,7 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    picking = false
     guard let destination = destination else {
       finish(nil)
       return
@@ -333,6 +358,7 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
   }
 
   private func finish(_ counts: [String: Int]?) {
+    picking = false
     UIApplication.shared.isIdleTimerDisabled = false
     let r = result
     result = nil
@@ -379,7 +405,10 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     report(0, 0)  // looking
     var items: [Item] = []
     var ignored = 0
+    // Cancel is heard while looking too: walking a big tree (all of iCloud
+    // Drive) and checking what is here already can take minutes.
     for url in urls {
+      if cancelled { break }
       if isFolder(url) {
         let found = files(under: url)
         items += found.items
@@ -396,6 +425,7 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     var skipped = 0
     var todo: [Item] = []
     for item in items {
+      if cancelled { break }
       if item.url.resolvingSymlinksInPath().path.hasPrefix(ours + "/") {
         skipped += 1  // the app's own folder (a folder above it was picked)
       } else if let size = item.size,
@@ -405,6 +435,12 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
       } else {
         todo.append(item)
       }
+    }
+    if cancelled {  // while looking: nothing was copied
+      return [
+        "copied": 0, "skipped": skipped, "failed": 0, "full": 0,
+        "ignored": ignored, "cancelled": 1,
+      ]
     }
     var copied = 0
     var failed = 0
@@ -473,6 +509,7 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     var found: [Item] = []
     var ignored = 0
     for case let item as URL in walk {
+      if cancelled { return (found, ignored) }  // the caller stops
       let name = item.lastPathComponent
       if isFolder(item) {
         if name.hasPrefix(".") || walk.level >= maxDepth { walk.skipDescendants() }
@@ -536,7 +573,7 @@ final class RecordingImporter: NSObject, UIDocumentPickerDelegate,
     var error: NSError?
     // Coordinated, so a file that lives only in iCloud is downloaded first.
     let coordinator = NSFileCoordinator()
-    setReading(coordinator)
+    guard setReading(coordinator) else { return .failed }  // cancelled
     defer { setReading(nil) }
     coordinator.coordinate(readingItemAt: source, options: [], error: &error) { url in
       let fm = FileManager.default
