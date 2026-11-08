@@ -191,7 +191,11 @@ final class NowPlaying {
       (center.skipForwardCommand, "forward"),
       (center.skipBackwardCommand, "rewind"),
       // Headphones send a double press as "next track" and a triple press as
-      // "previous track"; so does a car's steering wheel.
+      // "previous track", not as the skip commands; most cars' next and
+      // previous buttons do the same. This pair stays enabled because a
+      // disabled command gets no events at all. It adds no buttons: while
+      // the skip pair is enabled, the lock screen and Control Center show
+      // its ±10 s buttons instead of next and previous.
       (center.nextTrackCommand, "forward"),
       (center.previousTrackCommand, "rewind"),
     ]
