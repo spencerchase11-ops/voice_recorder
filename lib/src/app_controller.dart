@@ -1454,6 +1454,7 @@ class AppController extends ChangeNotifier {
         continue;
       }
       moved.add(t);
+      _info.move(f, _comesBackAs(t));
       gone.add(f.id);
       _rowQueue.remove(f.id);
       _orderQueue.remove(f.id);
@@ -1523,19 +1524,18 @@ class AppController extends ChangeNotifier {
     return back.length;
   });
 
+  /// What is known about a recording in Recently deleted is kept under
+  /// this: its file under the name a restore gives it, which is
+  /// [TrashedRecording.originalName] (a long name was shortened to fit
+  /// the hidden one, and comes back shortened).
+  static RecordingFile _comesBackAs(TrashedRecording t) =>
+      t.file.copyWith(name: t.originalName);
+
   /// [t] came back as [back]: under another name if its own was taken
   /// meanwhile. What was known about it goes with it (a date that was
   /// kept only here would be lost otherwise).
   void _restored(TrashedRecording t, RecordingFile back) {
-    final before = t.file.copyWith(name: t.originalName);
-    final info = _info[before];
-    if (info == null || _info.contains(back)) return;
-    _info.put(
-      back,
-      info,
-      onlyHere: _info.dateOnlyHere(before),
-      refused: _info.dateRefused(before),
-    );
+    if (!_info.contains(back)) _info.move(_comesBackAs(t), back);
   }
 
   /// Adds [added] to the list (in one sort: an undo may bring back many).
@@ -1598,9 +1598,9 @@ class AppController extends ChangeNotifier {
     final clockRight = !now.isBefore(TrashedRecording.earliest);
     // A clock that was set back, and shows the time again: what was
     // deleted meanwhile was dated too early.
-    final setBack = clockRight ? _setBack(now) : null;
+    final back = clockRight ? settings.clockBack : null;
+    final setBack = back?.rightAt == null ? null : back;
     var retimed = 0;
-    var allRetimed = true;
     for (final t in list) {
       final deleted = t.deletedAt;
       final wrong =
@@ -1610,10 +1610,11 @@ class AppController extends ChangeNotifier {
               deleted.isBefore(setBack.to));
       if (clockRight && wrong) {
         // Deleted while the clock was wrong: its 30 days start now (each
-        // at its own millisecond, so two of the same name stay two).
+        // at its own millisecond, so two of the same name stay two). One
+        // that can't be re-dated is tried again the next time.
         final at = now.add(Duration(milliseconds: retimed++));
         final moved = await _safe<TrashedRecording?>(() => store.retime(t, at));
-        if (moved == null) allRetimed = false;
+        if (moved != null) _info.move(_comesBackAs(t), _comesBackAs(moved));
         items.add(moved ?? t);
       } else if (!clockRight || !t.expired(now)) {
         items.add(t);
@@ -1622,11 +1623,6 @@ class AppController extends ChangeNotifier {
       } else {
         items.add(t);
       }
-    }
-    // Those deleted while it was set back have their 30 days again (one
-    // that couldn't be re-dated is tried again the next time).
-    if (setBack != null && allRetimed) {
-      settings.setClock(now.isAfter(setBack.to) ? now : setBack.to);
     }
     if (purged > 0) unawaited(refreshRemaining());
     items.sort((a, b) {
@@ -1650,30 +1646,36 @@ class AppController extends ChangeNotifier {
   /// right again. A clock that was once far ahead holds nothing up: what
   /// is deleted is dated by the clock as it is, and goes after 30 days by
   /// it.
+  ///
+  /// Once the clock is right again, each listing of Recently deleted gives
+  /// what it finds with those dates its 30 days from then
+  /// ([Settings.clockBack]). That goes on for 30 days, not just until the
+  /// first listing: one may not show them (a folder switched to on
+  /// Android, or one out of reach for now), and by then all that was
+  /// deleted meanwhile has had its 30 days, wherever it is.
   void _noteClock(DateTime now) {
     // Before 2025 the clock is wrong anyway (see _loadTrashNow).
     if (now.isBefore(TrashedRecording.earliest)) return;
     final seen = settings.clockSeen;
-    final since = settings.clockBackSince;
+    var back = settings.clockBack;
     if (seen != null && now.isBefore(seen.subtract(_clockSlack))) {
-      if (since == null || now.isBefore(since)) {
-        settings.setClock(seen, backSince: now);
-      }
-    } else if (since == null && (seen == null || now.isAfter(seen))) {
-      settings.setClock(now);
+      // Set back (again: together with what the last time left to do).
+      final from = back == null || now.isBefore(back.from) ? now : back.from;
+      settings.setClock(seen, back: (from: from, to: seen, rightAt: null));
+      return;
     }
-    // Right again after being set back: the next listing of Recently
-    // deleted deals with what was deleted meanwhile ([_setBack]).
-  }
-
-  /// The deletion times a clock gave while it was set back, once it shows
-  /// the time again. Null while it doesn't, or if it wasn't.
-  ({DateTime from, DateTime to})? _setBack(DateTime now) {
-    final seen = settings.clockSeen;
-    final since = settings.clockBackSince;
-    if (seen == null || since == null) return null;
-    if (now.isBefore(seen.subtract(_clockSlack))) return null;
-    return (from: since, to: seen);
+    if (back != null) {
+      final rightAt = back.rightAt ?? now;
+      back = now.isBefore(rightAt.add(trashRetention))
+          ? (from: back.from, to: back.to, rightAt: rightAt)
+          : null;
+    }
+    // The latest time keeps moving on meanwhile, so that the clock being
+    // set back again is noticed too.
+    settings.setClock(
+      seen == null || now.isAfter(seen) ? now : seen,
+      back: back,
+    );
   }
 
   /// Brings everything in [items] back from Recently deleted. Returns how

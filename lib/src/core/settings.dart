@@ -27,6 +27,9 @@ String formatSpeed(double speed) {
   return '${s}x';
 }
 
+/// See [Settings.clockBack].
+typedef ClockSetBack = ({DateTime from, DateTime to, DateTime? rightAt});
+
 /// Persisted user settings.
 class Settings extends ChangeNotifier {
   Settings(this._prefs)
@@ -66,6 +69,8 @@ class Settings extends ChangeNotifier {
   static const _kNoiseReduction = 'noise_reduction';
   static const _kClockSeen = 'clock_seen_ms';
   static const _kClockBackSince = 'clock_back_since_ms';
+  static const _kClockBackTo = 'clock_back_to_ms';
+  static const _kClockRightAt = 'clock_right_at_ms';
 
   final SharedPreferences _prefs;
 
@@ -171,20 +176,35 @@ class Settings extends ChangeNotifier {
   /// uses it to tell when the clock has been set back.
   DateTime? get clockSeen => _time(_prefs.getInt(_kClockSeen));
 
-  /// While the clock shows an earlier time than [clockSeen] (it was set
-  /// back): the earliest time it has shown since. Null otherwise.
-  DateTime? get clockBackSince => _time(_prefs.getInt(_kClockBackSince));
+  /// After the clock was set back (it showed an earlier time than
+  /// [clockSeen]), the deletion times it may have given meanwhile: from the
+  /// earliest time it showed to the latest it had shown before. [rightAt]
+  /// is when it was first seen right again (null while it isn't). Null if
+  /// it wasn't set back, or once that is over (see
+  /// AppController._noteClock).
+  ClockSetBack? get clockBack {
+    final from = _time(_prefs.getInt(_kClockBackSince));
+    if (from == null) return null;
+    return (
+      from: from,
+      to: _time(_prefs.getInt(_kClockBackTo)) ?? clockSeen ?? from,
+      rightAt: _time(_prefs.getInt(_kClockRightAt)),
+    );
+  }
 
-  /// Remembers what the clock has shown (see [clockSeen]). Not a setting
-  /// anyone sees: nothing is notified.
-  void setClock(DateTime seen, {DateTime? backSince}) {
-    final ms = seen.millisecondsSinceEpoch;
-    if (_prefs.getInt(_kClockSeen) != ms) _prefs.setInt(_kClockSeen, ms);
-    final since = backSince?.millisecondsSinceEpoch;
-    if (_prefs.getInt(_kClockBackSince) == since) return;
-    since == null
-        ? _prefs.remove(_kClockBackSince)
-        : _prefs.setInt(_kClockBackSince, since);
+  /// Remembers what the clock has shown (see [clockSeen] and [clockBack]).
+  /// Not a setting anyone sees: nothing is notified.
+  void setClock(DateTime seen, {ClockSetBack? back}) {
+    _setTime(_kClockSeen, seen);
+    _setTime(_kClockBackSince, back?.from);
+    _setTime(_kClockBackTo, back?.to);
+    _setTime(_kClockRightAt, back?.rightAt);
+  }
+
+  void _setTime(String key, DateTime? t) {
+    final ms = t?.millisecondsSinceEpoch;
+    if (_prefs.getInt(key) == ms) return;
+    ms == null ? _prefs.remove(key) : _prefs.setInt(key, ms);
   }
 
   static DateTime? _time(int? ms) =>
