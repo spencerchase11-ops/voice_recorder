@@ -123,6 +123,54 @@ void main() {
       expect(parseDateText('2999-01-01'), isNull); // in the future
       expect(parseDateText('lunch'), isNull);
     });
+
+    test('a dash in the time is a separator unless an offset follows', () {
+      final at = DateTime(2026, 9, 25, 3, 30, 7);
+      expect(parseDateText('2026-09-25 03:30:07'), at);
+      expect(parseDateText('2026-09-25 03-30-07'), at);
+      // No zone is 30 hours, 7 h 07 min or 13 hours behind UTC: these are
+      // times with mixed separators.
+      expect(parseDateText('2026-09-25 03-30:07'), at);
+      expect(
+        parseDateText('2026-09-25 03-07:07'),
+        DateTime(2026, 9, 25, 3, 7, 7),
+      );
+      expect(
+        parseDateText('2026-09-25 10-13:30'),
+        DateTime(2026, 9, 25, 10, 13, 30),
+      );
+      // Offsets zones use.
+      expect(
+        parseDateText('2026-09-25T03:30-07:00'),
+        DateTime.utc(2026, 9, 25, 10, 30).toLocal(),
+      );
+      expect(
+        parseDateText('2026-09-25T03:30-09:30'),
+        DateTime.utc(2026, 9, 25, 13).toLocal(),
+      );
+      expect(
+        parseDateText('2026-09-25T03-12:00'),
+        DateTime.utc(2026, 9, 25, 15).toLocal(),
+      );
+    });
+
+    test('an offset no time zone has is ignored', () {
+      final local = DateTime(2026, 9, 25, 3, 30, 5);
+      expect(parseDateText('2026-09-25T03:30:05-30:07'), local);
+      expect(parseDateText('2026-09-25T03:30:05-13:00'), local);
+      expect(parseDateText('2026-09-25T03:30:05+15:00'), local);
+      expect(parseDateText('2026-09-25T03:30:05+02:07'), local);
+      expect(parseDateText('2026-09-25T03:30:05+0207'), local);
+      // The furthest ahead (Kiribati), and Nepal's.
+      expect(
+        parseDateText('2026-09-25T03:30:05+14:00'),
+        DateTime.utc(2026, 9, 24, 13, 30, 5).toLocal(),
+      );
+      expect(
+        parseDateText('2026-09-25T03:30:05+05:45'),
+        DateTime.utc(2026, 9, 24, 21, 45, 5).toLocal(),
+      );
+    });
   });
 
   group('MP3', () {
