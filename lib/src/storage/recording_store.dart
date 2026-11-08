@@ -148,6 +148,11 @@ class AndroidRecordingStore extends RecordingStore {
 
   @override
   Future<void> init() async {
+    // A folder picked while Android had ended the app (it may, while the
+    // picker covers it): the platform side kept it, and its permission,
+    // until now.
+    final picked = await _native.takePickedFolder();
+    if (picked != null) _settings.folder = picked;
     final uri = _settings.folder;
     if (uri == null) return;
     _ready = await _native.hasFolderAccess(uri);
@@ -230,9 +235,29 @@ class AndroidRecordingStore extends RecordingStore {
   }
 
   @override
-  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) {
+  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) async {
     final ext = file.extension;
-    return renameTo(file, ext.isEmpty ? newBaseName : '$newBaseName.$ext');
+    final name = ext.isEmpty ? newBaseName : '$newBaseName.$ext';
+    if (name == file.name || name.toLowerCase() != file.name.toLowerCase()) {
+      return renameTo(file, name);
+    }
+    // Only the letter case changes. Internal storage and SD cards ignore
+    // case, so the folder finds the new name taken (by this very file) and
+    // makes it "Meeting (1).mp3". Go through another name first, one that
+    // still shows in the list should the file be left with it.
+    final step = await renameTo(
+      file,
+      ext.isEmpty ? '$newBaseName~' : '$newBaseName~.$ext',
+    );
+    if (step == null) return null;
+    RecordingFile? done;
+    try {
+      done = await renameTo(step, name);
+    } finally {
+      // Refused: the old name goes back.
+      if (done == null) await renameTo(step, file.name);
+    }
+    return done;
   }
 
   @override
