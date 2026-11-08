@@ -12,6 +12,12 @@ Finished items move to HISTORY. Keep this list short and ordered.
      forward 10 s.
    - Optional: Settings > Developer > Reset Media Services (if the menu is there), then play:
      it still plays on Silent and in the background.
+   - M4A (Settings > Recording type): record, take a phone call, and open Voice Recorder
+     during it: the recording stays paused. After the call it keeps going, in the same file.
+   - M4A: record, then play a song in Music. Open Voice Recorder: the song keeps playing, and
+     after a few seconds the app says another app's audio has paused the recording and that
+     stopping saves it. Pause the song with the app still open: within a few seconds the
+     recording ends, saved.
 2. Merge `audit-2026-11-08` into the default branch and push (with the owner's go-ahead).
 3. `flutter build ipa` (1.0.1, build 5); the owner uploads it through Organizer (RUNBOOK 4).
 4. In App Store Connect: version 1.0.1, What's New from `docs/APP_STORE.md` section 5, build
@@ -29,7 +35,8 @@ Finished items move to HISTORY. Keep this list short and ordered.
   the session fails there, the button can still show Pause with no sound. Rare; would need
   `handleInterruptions: false` and handling it in the app.
 - Dates from a 1.0.x cache are kept but never checked against the files: on Android, Store
-  dates doesn't offer a 1.0.x write that failed. Could read each such file once.
+  dates doesn't offer a 1.0.x write that failed (a rename now writes such a date into the
+  file). Could read each such file once.
 - Android saves: an empty hidden `.vr-saving-` copy can be left if the app dies in the few
   milliseconds between creating it and recording it; leftovers are only retried when the same
   name is saved again.

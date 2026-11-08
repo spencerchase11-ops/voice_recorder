@@ -3,6 +3,25 @@
 One entry per decision: context, decision, why. Newest first. Supersede old entries with a
 new one rather than editing them.
 
+## D17 (2026-11-08): an M4A recording held up by other audio stays paused, and the app says so
+
+- **Context:** without CallKit (D15) the app can't tell a call from music. When it is opened
+  during an M4A recording that iOS paused for another app's audio, taking the audio session
+  would cut that audio off, only for the recording to end. Leaving the session alone (D15)
+  meant the recording stayed paused and unsaved with nothing asking again, and an M4A that is
+  never stopped can't be played: if iOS then closed the app, the recording was lost.
+- **Decision:** the app still leaves the session alone while another app plays. It asks with
+  `secondaryAudioShouldBeSilencedHint` (audio this app would cut off; audio that mixes with
+  others doesn't count) instead of `isOtherAudioPlaying`. If that still holds 3 seconds later
+  (a call screen just dismissed may be about to let the recording go on), it tells the user
+  once per interruption that the recording may not be able to go on and that stopping saves
+  it: worded for a call too, which the app can't tell apart. While the app stays open it asks
+  again every 2 seconds: once the session is free, the recording goes on or ends, saved.
+- **Why:** a call must not end the recording (1.0.1's headline fix) and music mustn't be cut
+  off, so the recording can't simply end. Telling the user leaves the choice with them; asking
+  again saves it without them as soon as it can be. The remaining risk: an M4A recording left
+  paused this way, never stopped, is lost if iOS closes the app before the other audio ends.
+
 ## D16 (2026-11-08): the iPhone's folder listing stays on the UI isolate for now
 
 - **Context:** the audit noted that `IosRecordingStore.list()` reads the folder synchronously.
@@ -22,6 +41,7 @@ new one rather than editing them.
   when it is opened during an interrupted M4A recording, it asks
   `AVAudioSession.isOtherAudioPlaying` instead, and a call still refuses the session.
 - **Why:** keeps the app available everywhere without asking the owner to drop a territory.
+- **Later:** D17 changes the question asked, and what happens while another app plays.
 
 ## D14 (2026-11-08): 1.0.1 ships as build 5, with the audit fixes
 

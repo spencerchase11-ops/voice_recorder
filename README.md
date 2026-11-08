@@ -175,7 +175,10 @@ are left, a recording stops and is saved, and a new one won't start.
   without saying so, for example for another app's audio) can't go on in
   the same file: it ends, saved, and the app says so. Returning to the app
   never cuts off another app's music or podcast to find that out; resuming
-  the recording yourself does.
+  the recording yourself does. While that audio plays, the M4A recording
+  stays paused, and the app says that stopping it saves it (an M4A file
+  that isn't stopped can't be played); once the audio is over, with the app
+  open, the recording goes on if it can, or ends, saved.
 - **iPhone, MP3 and WAV:** when iOS breaks the capture (after a call the
   microphone may come back in another format, which stops the recorder's
   audio engine or leaves it silent), the app starts the capture again and
