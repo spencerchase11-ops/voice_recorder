@@ -11,6 +11,11 @@ import 'package:voice_recorder/src/storage/recording_store.dart';
 class _RunningImport extends NativeBridge {
   final answer = Completer<ImportResult?>();
 
+  /// At once, without the platform channel: init() is then done before
+  /// anything is read from the folder.
+  @override
+  Future<String?> deviceKind() async => 'iPhone';
+
   @override
   Future<ImportResult?> importRecordings(
     String destination, {
@@ -195,7 +200,8 @@ void main() {
         // Written to just now: it may be a copy going on.
         await file(dir, '$partial.mp3', age: Duration.zero),
       ];
-      await open('A');
+      final store = await open('A');
+      await store.partialImportsRemoved;
       for (final f in leftovers) {
         expect(f.existsSync(), isFalse, reason: f.path);
       }
@@ -204,16 +210,16 @@ void main() {
       }
     });
 
-    test('are left alone while an import runs', () async {
+    test('are left alone once an import starts', () async {
+      final dir = Directory('${root.path}/A/Documents/Recorders');
+      await dir.create(recursive: true);
+      // An old file's clone has its date: it may be the import's own copy.
+      final copying = await file(dir, '$partial.wav');
       final native = _RunningImport();
       final store = await open('A', native: native);
+      // Start-up doesn't wait for the removal: an import can start first.
       final running = store.importRecordings();
-      // The import's own copy (a clone has the old file's date).
-      final copying = await file(
-        Directory('${root.path}/A/Documents/Recorders'),
-        '$partial.wav',
-      );
-      await store.init(); // as after a recording that couldn't be saved
+      await store.partialImportsRemoved;
       expect(copying.existsSync(), isTrue);
       native.answer.complete(null);
       expect(await running, isNull);

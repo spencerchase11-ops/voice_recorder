@@ -301,7 +301,30 @@ class IosRecordingStore extends RecordingStore {
 
   /// Imports from Files running now (see [importRecordings]).
   int _importing = 0;
-  bool _sweptImports = false;
+
+  /// The removal of what imports cut short left (see [_removePartialImports]),
+  /// started by the first [init].
+  Future<void>? _sweep;
+
+  /// Completes when the start-up removal of partial imports is done.
+  @visibleForTesting
+  Future<void> get partialImportsRemoved => _sweep ?? Future<void>.value();
+
+  /// The end of the folder calls asked for so far (see [_inTurn]).
+  Future<void> _turn = Future<void>.value();
+
+  /// Runs [call] once the folder calls asked for before it are done, as
+  /// Android does them (one at a time, on one thread). A listing is read on
+  /// another isolate and arrives later ([_listFolder]): a delete, rename or
+  /// restore that finished meanwhile is already in the controller's list,
+  /// and the older listing would put the file back, or take it away again.
+  /// In turn, a listing has every change asked for before it and none
+  /// after, and it arrives before any later change does.
+  Future<T> _inTurn<T>(Future<T> Function() call) {
+    final result = _turn.then((_) => call());
+    _turn = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
 
   @override
   String get folderDisplayPath => 'On My $_device/Voice Recorder/Recorders';
@@ -317,10 +340,9 @@ class IosRecordingStore extends RecordingStore {
     final docs = await _documents();
     _dir = Directory('${docs.path}/Recorders');
     await _dir.create(recursive: true);
-    if (!_sweptImports) {
-      _sweptImports = true;
-      await _removePartialImports();
-    }
+    // Not waited for: Record waits for this, and there may be thousands of
+    // recordings to go through.
+    _sweep ??= _removePartialImports();
     try {
       _device = await _native.deviceKind() ?? _device;
     } catch (_) {}
@@ -329,9 +351,10 @@ class IosRecordingStore extends RecordingStore {
   /// Removes what an import cut short left: the app was suspended in the
   /// middle of a copy and then ended by iOS. Hidden, but it can be
   /// gigabytes of WAV, which take space and go into backups. Only at
-  /// start-up, never while an import runs (the file it is copying has such
-  /// a name), and not a file written to in the last ten minutes, which may
-  /// still be a copy going on.
+  /// start-up, and it stops if an import starts meanwhile (the file it is
+  /// copying has such a name). Not a file written to in the last ten
+  /// minutes either, which may still be a copy going on. No listing shows
+  /// these names, so this needn't wait its turn ([_inTurn]).
   Future<void> _removePartialImports() async {
     final recent = DateTime.now().subtract(const Duration(minutes: 10));
     try {
@@ -346,7 +369,11 @@ class IosRecordingStore extends RecordingStore {
           await e.delete();
         } on FileSystemException catch (_) {}
       }
-    } on FileSystemException catch (_) {}
+    } catch (e) {
+      // Nobody waits for this: nothing may escape. The next start tries
+      // again.
+      debugPrint('Could not remove partial imports: $e');
+    }
   }
 
   /// There is no folder picker on iOS; this opens the folder in Files instead.
@@ -383,33 +410,34 @@ class IosRecordingStore extends RecordingStore {
   });
 
   @override
-  Future<List<RecordingFile>> list() async {
+  Future<List<RecordingFile>> list() => _inTurn(() async {
     if (!await _dir.exists()) return const [];
     return _listFolder(_dir.path);
-  }
+  });
 
   @override
-  Future<List<TrashedRecording>> listTrash() async {
+  Future<List<TrashedRecording>> listTrash() => _inTurn(() async {
     if (!await _dir.exists()) return const [];
     return [
       for (final f in await _listFolder(_dir.path, hidden: true))
         ?TrashedRecording.parse(f),
     ];
-  }
+  });
 
   @override
-  Future<RecordingFile?> restore(TrashedRecording t) async {
+  Future<RecordingFile?> restore(TrashedRecording t) => _inTurn(() async {
     final target = _unique(t.originalName);
     return _fromFile(await File(t.file.id).rename(target.path));
-  }
+  });
 
   @override
-  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
-    final target = File('${_dir.path}/$fileName');
-    // A rename would replace a file of that name: refuse.
-    if (await target.exists()) return null;
-    return _fromFile(await File(file.id).rename(target.path));
-  }
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) =>
+      _inTurn(() async {
+        final target = File('${_dir.path}/$fileName');
+        // A rename would replace a file of that name: refuse.
+        if (await target.exists()) return null;
+        return _fromFile(await File(file.id).rename(target.path));
+      });
 
   /// Copies recordings picked in the Files app into the folder (null if the
   /// picker was cancelled).
@@ -422,14 +450,16 @@ class IosRecordingStore extends RecordingStore {
     }
   }
 
+  /// In turn too: after a date is written into a recording, what this
+  /// finds goes into the list, over what a listing read before.
   @override
-  Future<RecordingFile?> find(String id) async {
+  Future<RecordingFile?> find(String id) => _inTurn(() async {
     var f = File(id);
     // iOS moves the app container on updates, so a saved path can go stale:
     // look the name up in the current folder instead.
     if (!await f.exists()) f = File('${_dir.path}/${id.split('/').last}');
     return await f.exists() ? _fromFile(f) : null;
-  }
+  });
 
   File _unique(String fileName) {
     var candidate = File('${_dir.path}/$fileName');
@@ -443,40 +473,38 @@ class IosRecordingStore extends RecordingStore {
   }
 
   @override
-  Future<RecordingFile> save(
-    File source,
-    String fileName,
-    String mimeType,
-  ) async {
-    final target = _unique(fileName);
-    try {
-      await source.rename(target.path);
-    } on FileSystemException {
-      await source.copy(target.path);
-      await source.delete();
-    }
-    return _fromFile(target);
-  }
+  Future<RecordingFile> save(File source, String fileName, String mimeType) =>
+      _inTurn(() async {
+        final target = _unique(fileName);
+        try {
+          await source.rename(target.path);
+        } on FileSystemException {
+          await source.copy(target.path);
+          await source.delete();
+        }
+        return _fromFile(target);
+      });
 
   @override
-  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) async {
-    final ext = file.extension;
-    final name = ext.isEmpty ? newBaseName : '$newBaseName.$ext';
-    if (name == file.name) return file;
-    final target = _unique(name);
-    final renamed = await File(file.id).rename(target.path);
-    return _fromFile(renamed);
-  }
+  Future<RecordingFile?> rename(RecordingFile file, String newBaseName) =>
+      _inTurn(() async {
+        final ext = file.extension;
+        final name = ext.isEmpty ? newBaseName : '$newBaseName.$ext';
+        if (name == file.name) return file;
+        final target = _unique(name);
+        final renamed = await File(file.id).rename(target.path);
+        return _fromFile(renamed);
+      });
 
   @override
-  Future<bool> delete(RecordingFile file) async {
+  Future<bool> delete(RecordingFile file) => _inTurn(() async {
     try {
       await File(file.id).delete();
       return true;
     } on FileSystemException {
       return false;
     }
-  }
+  });
 
   @override
   Future<void> shareAll(List<RecordingFile> files, {Rect? origin}) async {
