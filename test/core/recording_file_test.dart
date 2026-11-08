@@ -50,6 +50,37 @@ void main() {
       );
       expect(f.date, DateTime(2016, 9, 18, 23, 40));
     });
+
+    test('read in another time zone, the name keeps its time', () {
+      // An M4A stores a moment, read back in the phone's current zone; the
+      // name holds the clock time where it was recorded.
+      final named = DateTime(2026, 7, 14, 1, 30);
+      for (final shift in const [
+        Duration(hours: -6), // recorded in Paris, read in New York
+        Duration(hours: 9, minutes: 30), // Darwin
+        Duration(hours: 5, minutes: 45), // Kathmandu
+        Duration(hours: -23), // Auckland to Honolulu
+      ]) {
+        final f = file(
+          '2026_07_14_01_30_00.m4a',
+          recorded: named.add(shift),
+          duration: const Duration(minutes: 5),
+        );
+        expect(f.date, named, reason: '$shift');
+      }
+    });
+
+    test('a stored date off by more than a time zone still wins', () {
+      final named = DateTime(2026, 7, 14, 1, 30);
+      for (final off in const [
+        Duration(hours: -6, seconds: 3), // not a whole quarter of an hour
+        Duration(hours: 6, minutes: 10),
+        Duration(days: 2), // further than any two zones are apart
+      ]) {
+        final f = file('2026_07_14_01_30_00.m4a', recorded: named.add(off));
+        expect(f.date, named.add(off), reason: '$off');
+      }
+    });
   });
 
   group('Recently deleted names', () {

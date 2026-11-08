@@ -30,6 +30,60 @@ List<int> _be32(int v) => [
   v & 0xFF,
 ];
 
+/// Layer III streams for VBR headers: MPEG-1 at 44.1 kHz, stereo, and
+/// MPEG-2 at 22.05 kHz, mono. [b1] and [b3] are header bytes 1 and 3, [side]
+/// the size of the side information, [lengths] frame lengths by bitrate
+/// index.
+typedef _Stream = ({int b1, int b3, int side, Map<int, int> lengths});
+
+const _Stream _mpeg1 = (
+  b1: 0xFB,
+  b3: 0x00,
+  side: 32,
+  lengths: {9: 417, 10: 522, 11: 626}, // 128, 160, 192 kbit/s
+);
+
+const _Stream _mpeg2 = (
+  b1: 0xF3,
+  b3: 0xC0,
+  side: 9,
+  lengths: {4: 104, 8: 208, 10: 313}, // 32, 64, 96 kbit/s
+);
+
+/// What the 1000 frames a VBR header below counts play for: 1152 samples
+/// each at 44.1 kHz (MPEG-1), or 576 at 22.05 kHz (MPEG-2).
+const _thousandFrames = Duration(microseconds: 1000 * 1152 * 1000000 ~/ 44100);
+
+List<int> _frame(_Stream s, int index) => [
+  0xFF,
+  s.b1,
+  index << 4,
+  s.b3,
+  ...List.filled(s.lengths[index]! - 4, 0),
+];
+
+/// The first frame of a VBR stream, with a [tag] header ('Xing' or 'VBRI')
+/// saying the stream has 1000 frames. Xing comes after the side
+/// information, VBRI always 32 bytes after the frame header.
+List<int> _vbrFrame(_Stream s, String tag) {
+  final f = _frame(s, s.lengths.keys.elementAt(1));
+  final at = tag == 'VBRI' ? 36 : 4 + s.side;
+  f.setAll(at, tag.codeUnits);
+  if (tag == 'VBRI') {
+    f.setAll(at + 4, [0, 1]); // version 1
+    f.setAll(at + 14, _be32(1000));
+  } else {
+    f.setAll(at + 4, _be32(1)); // flags: frame count present
+    f.setAll(at + 8, _be32(1000));
+  }
+  return f;
+}
+
+/// The frames after the first, of mixed bitrates.
+List<int> _mixed(_Stream s) => [
+  for (var i = 0; i < 30; i++) ..._frame(s, s.lengths.keys.elementAt(i % 3)),
+];
+
 /// An ID3v2 tag of [version] 2, 3 or 4 holding [frames] (id, text; a null
 /// text makes a frame of size 0). With [plainSizes], v2.4 frame sizes are
 /// written as plain numbers (older iTunes).
@@ -107,6 +161,26 @@ void main() {
 
     test('a single frame, the whole file, is one', () async {
       expect((await _info(_frames(1), 'b.mp3')).duration, isNotNull);
+    });
+
+    test('a Xing header just past the first 4 KB read', () async {
+      // Junk before the audio: the first frame's header is in the first
+      // 4096 bytes read, its Xing header (36 bytes in) runs past them.
+      final bytes = [
+        ...List.filled(4060, 0),
+        ..._vbrFrame(_mpeg1, 'Xing'),
+        ..._mixed(_mpeg1),
+      ];
+      expect((await _info(bytes, 'c.mp3')).duration, _thousandFrames);
+    });
+
+    test('a VBRI header (Fraunhofer encoders) counts the frames', () async {
+      // 32 bytes after the frame header whatever the MPEG version, where a
+      // Xing header would be after the side information.
+      for (final (header, name) in [(_mpeg1, 'd.mp3'), (_mpeg2, 'e.mp3')]) {
+        final bytes = [..._vbrFrame(header, 'VBRI'), ..._mixed(header)];
+        expect((await _info(bytes, name)).duration, _thousandFrames);
+      }
     });
   });
 
@@ -283,6 +357,25 @@ void main() {
       );
       expect(parseDateText('2016-09-18T21'), DateTime(2016, 9, 18, 21));
       expect(parseDateText('2016-09-18T24:00'), isNull);
+    });
+
+    test('a negative offset after the minutes is not the seconds', () {
+      final utc = DateTime.utc(2026, 9, 25, 10, 30).toLocal();
+      expect(parseDateText('2026-09-25T03:30-07:00'), utc);
+      expect(parseDateText('2026-09-25T03:30-0700'), utc);
+      expect(
+        parseDateText('2026-09-25T03-07:00'),
+        DateTime.utc(2026, 9, 25, 10).toLocal(),
+      );
+      // A time written with dashes keeps its minutes and seconds.
+      expect(
+        parseDateText('2026-09-25 03-30-07'),
+        DateTime(2026, 9, 25, 3, 30, 7),
+      );
+      expect(
+        parseDateText('2026-09-25_03-30-07-07:00'),
+        DateTime.utc(2026, 9, 25, 10, 30, 7).toLocal(),
+      );
     });
   });
 
