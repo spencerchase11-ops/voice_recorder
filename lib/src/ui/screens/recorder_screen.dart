@@ -37,6 +37,9 @@ class _RecorderScreenState extends State<RecorderScreen> {
     // The home-screen "Record" shortcut.
     _launches ??= app.launchActions.listen((action) {
       if (!mounted || action != 'record') return;
+      // This also closes a notice on screen, often one that waited while
+      // the app was away: it is shown again.
+      if (_showingNotice) _noticeClosed = true;
       Navigator.of(context).popUntil((route) => route.isFirst);
       if (!app.isRecording && !app.isBusy) toggleRecording(context);
     });
@@ -46,6 +49,9 @@ class _RecorderScreenState extends State<RecorderScreen> {
   final _waiting = <String>[];
   bool _showingNotice = false;
 
+  /// The notice on screen was closed by the "Record" shortcut, unread.
+  bool _noticeClosed = false;
+
   /// Shows what the app did on its own in a dialog (a toast could vanish
   /// unseen), one after another.
   Future<void> _showNotice(String message) async {
@@ -54,11 +60,14 @@ class _RecorderScreenState extends State<RecorderScreen> {
     _showingNotice = true;
     try {
       while (_waiting.isNotEmpty && mounted) {
+        final next = _waiting.removeAt(0);
+        _noticeClosed = false;
         await showMessageDialog(
           context,
           title: 'Voice Recorder',
-          message: _waiting.removeAt(0),
+          message: next,
         );
+        if (_noticeClosed) _waiting.insert(0, next);
       }
     } finally {
       _showingNotice = false;
@@ -273,11 +282,18 @@ class _RecorderBody extends StatelessWidget {
                 left: 0,
                 right: 0,
                 top: remainingTop,
-                child: AText(
-                  'Remaining time: ${formatRemaining(remaining)}',
-                  style: Spec.remainingText,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
+                // Shrinks with a large font size (wrapped, the second line
+                // with the time would be cut off).
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: AText(
+                      'Remaining time: ${formatRemaining(remaining)}',
+                      style: Spec.remainingText,
+                      maxLines: 1,
+                      softWrap: false,
+                    ),
+                  ),
                 ),
               ),
             if (path != null)

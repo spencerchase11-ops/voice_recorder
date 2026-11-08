@@ -82,6 +82,12 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ? message
       : "The folder can't be reached. Choose it again in Settings > Folder.";
 
+  /// The Undo toast of a delete just made stays above this screen. Once
+  /// recordings are restored or deleted forever here, its Undo would find
+  /// them gone and say they couldn't be restored; what it would undo can
+  /// be done here.
+  void _dropUndo() => hideActionToast();
+
   /// Restores the selected recording, or all of them when none is selected.
   Future<void> _restore() => _run(() async {
     final items = _items ?? const <TrashedRecording>[];
@@ -89,6 +95,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
     final app = AppScope.read(context);
     final t = _selectedItem;
     if (t != null) {
+      _dropUndo();
       final restored = await app.restoreDeleted(t);
       if (!mounted) return;
       showToast(
@@ -109,6 +116,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: 'Restore all',
     );
     if (!ok || !mounted) return;
+    _dropUndo();
     var tried = 0;
     final n = await runWithProgress(
       context,
@@ -158,6 +166,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: t == null ? 'Delete all' : 'Delete',
     );
     if (!ok || !mounted) return;
+    _dropUndo();
     var tried = 0;
     final n = await runWithProgress(
       context,
@@ -421,16 +430,22 @@ class _FooterButton extends StatelessWidget {
                 left: 4,
                 right: 4,
                 top: Spec.actionIconCenterY + 17,
-                child: AText(
-                  label,
-                  style: const TextStyle(
-                    fontFamily: Spec.font,
-                    fontSize: 12,
-                    color: _white,
+                bottom: 0,
+                // Shrinks to stay inside the bar with a large font size
+                // (instead of being cut off at the bottom).
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.topCenter,
+                  child: AText(
+                    label,
+                    style: const TextStyle(
+                      fontFamily: Spec.font,
+                      fontSize: 12,
+                      color: _white,
+                    ),
+                    maxLines: 1,
+                    softWrap: false,
                   ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
