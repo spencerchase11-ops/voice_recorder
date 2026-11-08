@@ -105,9 +105,30 @@ class RecordingInfoCache {
     _changed();
   }
 
-  /// Forgets files that are gone, except a date known nowhere else: its
-  /// file may come back as it was (from Recently deleted, or a folder that
-  /// was switched away from), and the date would be lost for good.
+  /// [from] is now [to], the same recording under another name or time
+  /// (e.g. in Recently deleted): what is known about it, and its marks,
+  /// go with it.
+  void move(RecordingFile from, RecordingFile to) {
+    final a = keyOf(from), b = keyOf(to);
+    final info = _map[a];
+    if (a == b || info == null) return;
+    _map
+      ..remove(a)
+      ..[b] = info;
+    for (final marked in [_onlyHere, _refused]) {
+      if (marked.remove(a)) {
+        marked.add(b);
+      } else {
+        marked.remove(b);
+      }
+    }
+    _changed();
+  }
+
+  /// Forgets files that are gone, except what is known nowhere else (see
+  /// [_onlyCopy]): its file may come back as it was (from Recently deleted,
+  /// or a folder that was switched away from), and it would be lost for
+  /// good.
   void retainOnly(Iterable<RecordingFile> files) {
     final keep = {for (final f in files) keyOf(f)};
     final before = _map.length;
@@ -117,11 +138,14 @@ class RecordingInfoCache {
     if (_map.length != before) _changed();
   }
 
-  /// Whether the date in [info] is kept only here: writing it failed, or
-  /// the file can't hold one (it refused, or its format can't, like AAC).
+  /// Whether [info] is known only here: a date whose write failed, or one
+  /// the file can't hold (its format can't, like AAC); and a file that
+  /// refused a date, with or without one (read again, it would be offered
+  /// for storing again, and refuse again).
   bool _onlyCopy(String key, AudioInfo info) {
+    if (_refused.contains(key)) return true;
     if (info.recorded == null) return false;
-    if (_onlyHere.contains(key) || _refused.contains(key)) return true;
+    if (_onlyHere.contains(key)) return true;
     // The name is what comes before "|size|time".
     final last = key.lastIndexOf('|');
     final end = last > 0 ? key.lastIndexOf('|', last - 1) : -1;

@@ -40,6 +40,34 @@ List<int> _mp3WithApe() => [
   ...List.filled(125, 0),
 ];
 
+/// An M4A of [seconds] whose movie header was created at [created].
+List<int> _m4a({required int seconds, required DateTime created}) {
+  List<int> box(String type, List<int> body) {
+    final size = 8 + body.length;
+    return [
+      (size >> 24) & 0xFF,
+      (size >> 16) & 0xFF,
+      (size >> 8) & 0xFF,
+      size & 0xFF,
+      ...type.codeUnits,
+      ...body,
+    ];
+  }
+
+  final mvhd = ByteData(20)
+    ..setUint32(4, created.millisecondsSinceEpoch ~/ 1000 + 2082844800)
+    ..setUint32(12, 1000)
+    ..setUint32(16, seconds * 1000);
+  return [
+    ...box('ftyp', 'M4A isom'.codeUnits),
+    ...box('mdat', List.filled(2000, 1)),
+    ...box(
+      'moov',
+      box('mvhd', [...mvhd.buffer.asUint8List(), ...List.filled(80, 0)]),
+    ),
+  ];
+}
+
 RecordingFile _file(String name, DateTime modified, {int size = 20880}) =>
     RecordingFile(
       id: 'mem://$name',
@@ -47,6 +75,34 @@ RecordingFile _file(String name, DateTime modified, {int size = 20880}) =>
       size: size,
       modified: modified,
     );
+
+/// Like the Android store: Recently deleted lists nothing while the folder
+/// is out of reach (its access was lost).
+class _OutOfReachStore extends FakeStore {
+  _OutOfReachStore(List<RecordingFile> files)
+    : super(files: files, free: 1 << 30);
+
+  @override
+  Future<List<TrashedRecording>> listTrash() async =>
+      ready ? super.listTrash() : const [];
+}
+
+/// A folder that gives a file a new time whenever it is renamed.
+class _RestampingStore extends FakeStore {
+  _RestampingStore(List<RecordingFile> files)
+    : super(files: files, free: 1 << 30);
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
+    final r = await super.renameTo(file, fileName);
+    if (r == null) return null;
+    final stamped = r.copyWith(
+      modified: r.modified.add(const Duration(seconds: 1)),
+    );
+    files[files.indexWhere((f) => f.id == r.id)] = stamped;
+    return stamped;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -100,6 +156,14 @@ void main() {
 
   RecordingFile row(String name) =>
       app.files.singleWhere((f) => f.name == name);
+
+  /// Waits until every recording has been read (Store dates knows then
+  /// what to offer).
+  Future<void> datesKnown() async {
+    for (var i = 0; i < 50 && app.datesToStore == null; i++) {
+      await settle();
+    }
+  }
 
   group('a date kept only in the app', () {
     // AAC can't hold a date: after a rename, the app's memory is the only
@@ -165,11 +229,50 @@ void main() {
       await app.refreshFiles();
       await app.rename(row(f.name), 'lunch');
       expect(row('lunch.mp3').date, recorded);
+      // Not offered here because the app knows its date (this holds without
+      // the refusal being marked, too).
       expect(app.datesToStore, isEmpty);
       await app.delete([row('lunch.mp3')]);
       await app.refreshFiles();
       await app.restoreDeleted((await app.deletedRecordings())!.single);
       expect(row('lunch.mp3').date, recorded);
+      // The mark is what keeps both through Recently deleted: read again,
+      // the file has no date and would be offered (and refuse again).
+      await datesKnown();
+      expect(app.datesToStore, isEmpty);
+    });
+
+    test('a long name, shortened in Recently deleted, keeps it', () async {
+      await build([old, _file('b.mp3', DateTime(2026))]);
+      await app.refreshFiles();
+      // As long as a name typed in the app can be (240 bytes with ".aac").
+      final long = 'a' * 236;
+      await app.rename(row(old.name), long);
+      await app.delete([row('$long.aac')]);
+      await app.refreshFiles();
+      final t = (await app.deletedRecordings())!.single;
+      // The hidden name had no room for all of it: it comes back shorter.
+      expect(t.originalName, '${'a' * 220}.aac');
+      await app.restoreDeleted(t);
+      expect(row(t.originalName).date, recorded);
+    });
+
+    test('a folder that gives renamed files a new time keeps it, also when '
+        'Recently deleted re-dates them', () async {
+      now = DateTime(2026, 10, 1);
+      store = _RestampingStore([old, _file('b.mp3', DateTime(2026))]);
+      await start();
+      await app.refreshFiles();
+      await app.rename(row(old.name), 'lunch');
+      await app.deletedRecordings();
+      now = DateTime(2026, 3, 1); // the clock set back: re-dated later
+      await app.delete([row('lunch.aac')]);
+      now = DateTime(2026, 10, 2);
+      final t = (await app.deletedRecordings())!.single;
+      expect(t.deletedAt, now);
+      await app.refreshFiles();
+      await app.restoreDeleted(t);
+      expect(row('lunch.aac').date, recorded);
     });
 
     test('a file whose date is in it is still forgotten once gone', () {
@@ -194,6 +297,8 @@ void main() {
     final file = File('${dir.path}/recording_info.json')
       ..writeAsStringSync('{"junk": ["2016-05-23T18:14:00.000", 1000]}');
     final cache = RecordingInfoCache(file: () async => file);
+    // Before the folder goes: its save timer would write into it later.
+    addTearDown(cache.dispose);
     await cache.load();
     cache.retainOnly([_file('a.mp3', DateTime(2026))]);
     expect(cache.contains(_file('a.mp3', DateTime(2026))), isFalse);
@@ -270,6 +375,22 @@ void main() {
       expect(app.datesToStore, isEmpty);
     });
 
+    test('a refusal is kept while the file is in Recently deleted', () async {
+      // The app knows no date for it, only that it refuses one.
+      final f = _file('lunch.mp3', DateTime(2016, 5, 23, 18, 44));
+      await build([f, _file('b.mp3', DateTime(2026))]);
+      store.contents[f.id] = _mp3WithApe();
+      await app.refreshFiles();
+      await datesKnown();
+      final r = await app.storeDates(app.datesToStore!);
+      expect(r.refused, ['lunch.mp3']);
+      await app.delete([row('lunch.mp3')]);
+      await app.refreshFiles();
+      await app.restoreDeleted((await app.deletedRecordings())!.single);
+      await datesKnown();
+      expect(app.datesToStore, isEmpty);
+    });
+
     test('a refusal is remembered between launches', () async {
       final dir = await Directory.systemTemp.createTemp('vr_cache');
       addTearDown(() => dir.delete(recursive: true));
@@ -277,8 +398,11 @@ void main() {
       final f = _file('lunch.mp3', DateTime(2016));
       final a = RecordingInfoCache(file: () async => file)
         ..put(f, AudioInfo(recorded: DateTime(2016)), refused: true);
+      // Before the folder goes: a save timer would write into it later.
+      addTearDown(a.dispose);
       await a.save();
       final b = RecordingInfoCache(file: () async => file);
+      addTearDown(b.dispose);
       await b.load();
       expect(b.dateRefused(f), isTrue);
       expect(b.dateOnlyHere(f), isFalse);
@@ -369,6 +493,127 @@ void main() {
       now = DateTime(2026, 11, 1, 12);
       expect(await app.deletedRecordings(), isEmpty);
     });
+
+    /// Deletes memo.mp3 while the clock is set back to March; the clock is
+    /// right again from October 2nd.
+    Future<void> deletedWhileSetBack() async {
+      now = DateTime(2026, 10, 1);
+      await start();
+      await app.refreshFiles();
+      await app.deletedRecordings();
+      now = DateTime(2026, 3, 1);
+      await app.delete([row('memo.mp3')]);
+      now = DateTime(2026, 10, 2);
+    }
+
+    /// Android: another folder is chosen, and its Recently deleted listed.
+    /// Returns what was in the first one.
+    List<RecordingFile> switchFolder() {
+      final here = [...store.files];
+      store.files
+        ..clear()
+        ..add(_file('elsewhere.mp3', DateTime(2026)));
+      return here;
+    }
+
+    test("another folder's Recently deleted doesn't end it", () async {
+      store = FakeStore(files: [memo, other], free: 1 << 30);
+      await deletedWhileSetBack();
+      final here = switchFolder();
+      expect(await app.deletedRecordings(), isEmpty);
+      now = DateTime(2026, 10, 20);
+      store.files
+        ..clear()
+        ..addAll(here);
+      final items = (await app.deletedRecordings())!;
+      expect(items.single.daysLeft(now), 30);
+      expect(store.deletedForGood, isEmpty);
+    });
+
+    test('nor a listing while the folder is out of reach', () async {
+      store = _OutOfReachStore([memo, other]);
+      await deletedWhileSetBack();
+      store.ready = false;
+      expect(await app.deletedRecordings(), isEmpty);
+      store.ready = true;
+      final items = (await app.deletedRecordings())!;
+      expect(items.single.daysLeft(now), 30);
+      expect(store.deletedForGood, isEmpty);
+    });
+
+    test('30 days after the clock was right, what is left goes by its date '
+        '(its 30 days are over, wherever it was deleted)', () async {
+      // That the wait above ends: this held before it, too.
+      store = FakeStore(files: [memo, other], free: 1 << 30);
+      await deletedWhileSetBack();
+      final here = switchFolder();
+      await app.deletedRecordings();
+      now = DateTime(2026, 11, 2);
+      await app.deletedRecordings();
+      store.files
+        ..clear()
+        ..addAll(here);
+      expect(await app.deletedRecordings(), isEmpty);
+      expect(store.deletedForGood, [
+        '.vr-deleted-${DateTime(2026, 3, 1).millisecondsSinceEpoch}-memo.mp3',
+      ]);
+    });
+
+    test("one that can't be re-dated doesn't keep the clock being set back "
+        'again from being noticed', () async {
+      final early = _file(
+        TrashedRecording.hiddenName('early.mp3', DateTime(2024)),
+        DateTime(2024),
+      );
+      store = FakeStore(files: [memo, other, early], free: 1 << 30)
+        // The folder won't take its new name: it stays dated 2024.
+        ..alterName = (name) =>
+            name != early.name && name.endsWith('-early.mp3')
+            ? name.substring(1)
+            : name;
+      await deletedWhileSetBack();
+      await app.deletedRecordings();
+      now = DateTime(2026, 12, 1);
+      await app.deletedRecordings();
+      now = DateTime(2026, 11, 15); // set back again, by two weeks
+      await app.delete([row('b.mp3')]);
+      now = DateTime(2026, 12, 2);
+      final items = (await app.deletedRecordings())!;
+      expect(items.map((t) => t.originalName), ['b.mp3', 'early.mp3']);
+      expect(items.first.daysLeft(now), 30);
+    });
+  });
+
+  test('renaming an M4A read in another time zone keeps the time in its '
+      'name', () async {
+    final named = DateTime(2026, 7, 14, 1, 30);
+    final f = _file('2026_07_14_01_30_00.m4a', DateTime(2026, 7, 14, 1, 40));
+    await build([f, _file('b.mp3', DateTime(2026))]);
+    // Its movie header holds the moment it was recorded, which reads 6
+    // hours earlier in the zone the phone is in now.
+    store.contents[f.id] = _m4a(
+      seconds: 600,
+      created: named.subtract(const Duration(hours: 6)),
+    );
+    await app.refreshFiles();
+    await datesKnown();
+    expect(row(f.name).date, named);
+    final renamed = await app.rename(row(f.name), 'Meeting');
+    expect(renamed!.date, named);
+    expect(row('Meeting.m4a').date, named);
+    // Read again from the file, with nothing cached: the name's time was
+    // written into it (as a moment in this zone).
+    final info = await readAudioInfo(
+      MemoryBytes(store.contents['mem://Meeting.m4a']!),
+      'Meeting.m4a',
+    );
+    expect(info.recorded, named);
+    await start(restart: true);
+    await app.refreshFiles();
+    for (var i = 0; i < 50 && row('Meeting.m4a').recorded == null; i++) {
+      await settle();
+    }
+    expect(row('Meeting.m4a').date, named);
   });
 
   group('the WAV size limit', () {
