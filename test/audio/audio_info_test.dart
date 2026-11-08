@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_recorder/src/audio/audio_info.dart';
 import 'package:voice_recorder/src/audio/wav_writer.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
 
 import '../support/fakes.dart';
 
@@ -277,6 +278,23 @@ void main() {
         expect(info.duration, const Duration(seconds: 90));
         expect(info.recorded, DateTime(2026, 9, 25, 4));
       }
+    });
+
+    test('read in another time zone, the name keeps its date', () async {
+      // Recorded at 01:30 in Paris and stamped with that moment (23:30 UTC):
+      // read in New York, the moment is 19:30 the day before.
+      const name = '2026_07_14_01_30_00.m4a';
+      final named = DateTime(2026, 7, 14, 1, 30);
+      final bytes = m4a(
+        created: _mp4Time(named.subtract(const Duration(hours: 6))),
+      );
+      final f = RecordingFile(
+        id: name,
+        name: name,
+        size: bytes.length,
+        modified: DateTime(2026, 11),
+      );
+      expect(f.withInfo(await _info(bytes, name)).date, named);
     });
 
     test('an unset creation time is no date', () async {

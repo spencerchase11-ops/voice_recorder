@@ -188,9 +188,12 @@ String _isoLocal(DateTime t) =>
     '${t.year.toString().padLeft(4, '0')}-${_two(t.month)}-${_two(t.day)}'
     'T${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}';
 
+// The parts of the time may be separated by '-' too (`03-30-05`), but not
+// by one that starts an offset (`03:30-07:00`, `03:30-0700`).
 final _dateText = RegExp(
   r'^\s*(\d{4})[-:/.](\d{1,2})[-:/.](\d{1,2})'
-  r'(?:[ T_](\d{1,2})(?:[-:._](\d{2})(?:[-:._](\d{2})(?:[.,]\d+)?)?)?)?'
+  r'(?:[ T_](\d{1,2})(?:(?:[:._]|-(?!\d{2}:?\d{2}\b))(\d{2})'
+  r'(?:(?:[:._]|-(?!\d{2}:?\d{2}\b))(\d{2})(?:[.,]\d+)?)?)?)?'
   r'\s*(Z|[+-]\d{2}(?::?\d{2})?)?',
 );
 
@@ -600,6 +603,12 @@ Future<Duration?> _mp3Duration(ByteAccess a, int start, int end) async {
   // The first frame usually follows the tag directly; look further if not.
   for (final window in const [4096, 65536]) {
     final buf = await a.read(start, math.min(window, end - start));
+    // [count] bytes at [offset] in the frames: from [buf], or from the file
+    // for a frame that starts near the end of it.
+    Future<Uint8List> bytesAt(int offset, int count) async =>
+        offset + count <= buf.length
+        ? Uint8List.sublistView(buf, offset, offset + count)
+        : await a.read(start + offset, count);
     for (var i = 0; i + 4 <= buf.length; i++) {
       final f = _frameAt(buf, i);
       if (f == null) continue;
@@ -607,26 +616,30 @@ Future<Duration?> _mp3Duration(ByteAccess a, int start, int end) async {
       // followed by a frame like it; the last frame reaches the end.
       final next = i + f.length;
       if (next < end - start) {
-        final h = next + 4 <= buf.length
-            ? Uint8List.sublistView(buf, next, next + 4)
-            : await a.read(start + next, 4);
-        final g = _frameAt(h, 0);
+        final g = _frameAt(await bytesAt(next, 4), 0);
         if (g == null || g.version != f.version || g.rateIndex != f.rateIndex) {
           continue;
         }
       }
+      Duration framesTime(int frames) =>
+          Duration(microseconds: frames * f.samples * 1000000 ~/ f.sampleRate);
       // A Xing/Info header (VBR, or CBR from some encoders) counts frames.
       final side = f.version == 3 ? (f.mono ? 17 : 32) : (f.mono ? 9 : 17);
       final x = i + 4 + side;
-      if (x + 12 <= buf.length) {
-        final tag = _ascii(buf, x, x + 4);
-        if (tag == 'Xing' || tag == 'Info') {
-          if ((_u32be(buf, x + 4) & 1) != 0) {
-            final frames = _u32be(buf, x + 8);
-            return Duration(
-              microseconds: frames * f.samples * 1000000 ~/ f.sampleRate,
-            );
-          }
+      if (x + 12 <= end - start) {
+        final h = await bytesAt(x, 12);
+        final tag = _ascii(h, 0, 4);
+        if (h.length == 12 && (tag == 'Xing' || tag == 'Info')) {
+          if ((_u32be(h, 4) & 1) != 0) return framesTime(_u32be(h, 8));
+        }
+      }
+      // So does a VBRI header (Fraunhofer encoders), always 32 bytes after
+      // the frame header; its frame count is 14 bytes in.
+      final v = i + 4 + 32;
+      if (v + 18 <= end - start) {
+        final h = await bytesAt(v, 18);
+        if (h.length == 18 && _ascii(h, 0, 4) == 'VBRI') {
+          return framesTime(_u32be(h, 14));
         }
       }
       // Constant bitrate: the size tells the time.
@@ -881,6 +894,9 @@ Future<AudioInfo> _mp4Info(ByteAccess a) async {
   final length = v1 ? _u64be(b, 24) : _u32be(b, 16);
   DateTime? recorded;
   if (created > _mp4EpochOffset) {
+    // A moment (UTC), read in the phone's current time zone. Unlike a name
+    // or an MP3/WAV tag it moves with a change of zone: recordingDate keeps
+    // a timestamp name's time then, and a renamed M4A follows the zone.
     final t = DateTime.fromMillisecondsSinceEpoch(
       (created - _mp4EpochOffset) * 1000,
     );

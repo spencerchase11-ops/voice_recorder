@@ -94,12 +94,22 @@ class RecordingFile {
 /// don't, the stored date wins (the name may have been typed), except that
 /// some recorders (Android's M4A encoder, used by the original app) store
 /// when the recording ended: a name up to the recording's [length] earlier
-/// holds its start.
+/// holds its start. And an M4A stores a moment, read in the phone's current
+/// time zone, while the name holds the clock time where it was recorded:
+/// read after a change of zone, the two are a zone shift apart, and the
+/// name is kept, in step with MP3 and WAV tags (clock time too).
 DateTime? recordingDate({DateTime? stored, DateTime? named, Duration? length}) {
   if (stored == null || named == null) return stored ?? named;
   final end = named.add((length ?? Duration.zero) + const Duration(minutes: 1));
-  return stored.isBefore(named) || stored.isAfter(end) ? stored : named;
+  if (!stored.isBefore(named) && !stored.isAfter(end)) return named;
+  return _zoneShift(stored.difference(named)) ? named : stored;
 }
+
+/// Whether [d] is what two time zones can be apart: whole quarters of an
+/// hour, up to 26 hours (UTC+14 to UTC-12).
+bool _zoneShift(Duration d) =>
+    d.abs() <= const Duration(hours: 26) &&
+    d.inMicroseconds % const Duration(minutes: 15).inMicroseconds == 0;
 
 /// How long Recently deleted keeps a recording.
 const trashRetention = Duration(days: 30);
