@@ -37,6 +37,10 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
   /// The controller's trash version shown last.
   int? _shown;
 
+  /// The trash version [_items] was listed at. (A listing takes a moment:
+  /// [_shown] can be newer than what is on screen.)
+  int? _listedAt;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -50,9 +54,12 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    final items = await AppScope.read(context).deletedRecordings();
+    final app = AppScope.read(context);
+    final version = app.trashVersion;
+    final items = await app.deletedRecordings();
     if (!mounted) return;
     setState(() {
+      _listedAt = version;
       _failed = items == null;
       _items = items ?? const [];
       if (!_items!.any((t) => t.file.id == _selected)) _selected = null;
@@ -88,15 +95,45 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
   /// be done here.
   void _dropUndo() => hideActionToast();
 
+  /// What of [targets], taken from the list as listed at [listedAt], is
+  /// still in Recently deleted. That toast's Undo can be tapped while a
+  /// question here is up, or just before the list shows what it did.
+  /// Acting on what it put back would fail and say so, or, in a folder
+  /// where a file keeps its id when renamed, delete forever the recording
+  /// Undo put back. Null if Recently deleted can't be read.
+  Future<List<TrashedRecording>?> _stillDeleted(
+    List<TrashedRecording> targets,
+    int? listedAt,
+  ) async {
+    final app = AppScope.read(context);
+    if (app.trashVersion == listedAt) return targets;
+    final now = await app.deletedRecordings();
+    if (now == null) return null;
+    final ids = {for (final t in targets) t.file.id};
+    return [
+      for (final t in now)
+        if (ids.contains(t.file.id)) t,
+    ];
+  }
+
   /// Restores the selected recording, or all of them when none is selected.
   Future<void> _restore() => _run(() async {
     final items = _items ?? const <TrashedRecording>[];
     if (items.isEmpty) return;
+    final listedAt = _listedAt;
     final app = AppScope.read(context);
     final t = _selectedItem;
     if (t != null) {
+      final still = await _stillDeleted([t], listedAt);
+      if (!mounted) return;
+      if (still == null) {
+        showToast(context, _problem("Couldn't restore the recording"));
+        return;
+      }
+      // Gone meanwhile (Undo put it back): nothing left to do.
+      if (still.isEmpty) return;
       _dropUndo();
-      final restored = await app.restoreDeleted(t);
+      final restored = await app.restoreDeleted(still.single);
       if (!mounted) return;
       showToast(
         context,
@@ -116,23 +153,31 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: 'Restore all',
     );
     if (!ok || !mounted) return;
+    final todo = await _stillDeleted(items, listedAt);
+    if (!mounted) return;
+    if (todo == null) {
+      showToast(context, _problem("Couldn't restore the recordings"));
+      return;
+    }
+    // All gone meanwhile (Undo put them back): nothing left to do.
+    if (todo.isEmpty) return;
     _dropUndo();
     var tried = 0;
     final n = await runWithProgress(
       context,
       title: 'Restoring',
-      total: items.length,
+      total: todo.length,
       label: (s) =>
           'Restoring ${formatCount(s.done)} of ${formatCount(s.total)} '
           'recordings…',
       job: (onProgress, cancelled) => app.restoreAll(
-        items,
+        todo,
         onProgress: (done, total) => onProgress(tried = done, total),
         cancelled: cancelled,
       ),
     );
     if (!mounted) return;
-    final stopped = tried < items.length;
+    final stopped = tried < todo.length;
     if (n == 0 && stopped) return; // cancelled before any
     showToast(
       context,
@@ -149,9 +194,15 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
   Future<void> _deleteForever() => _run(() async {
     final items = _items ?? const <TrashedRecording>[];
     if (items.isEmpty) return;
+    final listedAt = _listedAt;
     final app = AppScope.read(context);
     final t = _selectedItem;
-    final targets = t == null ? items : [t];
+    final asked = t == null ? items : [t];
+    String failed(int count) => _problem(
+      count == 1
+          ? "Couldn't delete the recording"
+          : "Couldn't delete the recordings",
+    );
     final ok = await showConfirmDialog(
       context,
       title: t == null ? 'Empty Recently deleted' : 'Delete forever',
@@ -166,6 +217,14 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
       ok: t == null ? 'Delete all' : 'Delete',
     );
     if (!ok || !mounted) return;
+    final targets = await _stillDeleted(asked, listedAt);
+    if (!mounted) return;
+    if (targets == null) {
+      showToast(context, failed(asked.length));
+      return;
+    }
+    // All gone meanwhile (Undo put them back): nothing left to do.
+    if (targets.isEmpty) return;
     _dropUndo();
     var tried = 0;
     final n = await runWithProgress(
@@ -193,14 +252,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
         );
       }
     } else if (n == 0) {
-      showToast(
-        context,
-        _problem(
-          targets.length == 1
-              ? "Couldn't delete the recording"
-              : "Couldn't delete the recordings",
-        ),
-      );
+      showToast(context, failed(targets.length));
     } else if (n < tried) {
       final left = tried - n;
       showToast(
