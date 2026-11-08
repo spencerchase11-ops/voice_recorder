@@ -299,12 +299,6 @@ class NativeBridge {
   Future<void> resetAudioSampleRate() =>
       _channel.invokeMethod<void>('resetAudioSampleRate');
 
-  /// iOS: whether a call (phone, FaceTime, or an app's through CallKit) is
-  /// in progress. Unlike taking the audio session to find out, this cuts
-  /// off no other app's audio.
-  Future<bool> callInProgress() async =>
-      (await _channel.invokeMethod<bool>('callInProgress'))!;
-
   /// iOS: keeps [path] (a folder) out of iCloud and computer backups.
   Future<void> excludeFromBackup(String path) =>
       _channel.invokeMethod<void>('excludeFromBackup', {'path': path});

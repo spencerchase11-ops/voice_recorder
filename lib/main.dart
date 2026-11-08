@@ -33,7 +33,7 @@ Future<void> main() async {
   final controller = AppController(
     settings: settings,
     store: store,
-    engine: RecordPluginEngine(callInProgress: native.callInProgress),
+    engine: RecordPluginEngine(),
     playback: JustAudioPlayback(),
     // iOS: a reset of the media services undoes the audio session's setup.
     mediaResets: Platform.isIOS

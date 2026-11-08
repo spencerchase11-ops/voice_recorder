@@ -789,7 +789,9 @@ class AppController extends ChangeNotifier {
     // app took the audio session) leaves the recording paused until now.
     if (_recording && _interrupted && !_paused) {
       try {
-        await engine.resume();
+        // The app's own resume (iPhone: it leaves the audio session to
+        // another app that plays, see RecordPluginEngine.resume).
+        await engine.resume(byUser: false);
       } catch (e) {
         // Still in use (a call goes on): it stays paused, and resumes when
         // the call ends or on the next return to the app.
@@ -1452,6 +1454,10 @@ class AppController extends ChangeNotifier {
     clean = fitFileName(clean, ext);
     if (clean.isEmpty || clean == file.baseName) return file;
     if (playback.fileId == file.id) await _stopPlayback();
+    // A date from 1.0.x's cache that _keepDate leaves alone (it matches)
+    // may still be the only copy: it stays marked so.
+    final cachedDate = _info[file]?.recorded;
+    final unsure = _info.dateMayBeOnlyHere(file) && cachedDate != null;
     // The date in the old name goes with it: keep it inside the file.
     final kept = await _keepDate(file);
     final renamed = await _safe(() => store.rename(file, clean));
@@ -1462,7 +1468,13 @@ class AppController extends ChangeNotifier {
     );
     // A date the file doesn't hold is marked, so it is kept (and a failed
     // write is tried again by Store dates or the next rename).
-    _info.put(renamed, info, onlyHere: kept.failed, refused: kept.refused);
+    _info.put(
+      renamed,
+      info,
+      onlyHere: kept.failed,
+      refused: kept.refused,
+      mayBeOnlyHere: unsure && !kept.failed && kept.date == cachedDate,
+    );
     final shown = renamed.withInfo(info);
     if (_current?.id == file.id) {
       _current = shown;

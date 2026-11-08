@@ -268,9 +268,14 @@ class FakeEngine implements RecorderEngine {
   @override
   Stream<CaptureEnd> get ended => endedController.stream;
 
+  /// What the last [resume] was told: false when the app resumed on its
+  /// own (on being opened again).
+  bool? lastResumeByUser;
+
   @override
-  Future<void> resume() async {
+  Future<void> resume({bool byUser = true}) async {
     resumes++;
+    lastResumeByUser = byUser;
     if (resumeError != null) throw resumeError!;
   }
 

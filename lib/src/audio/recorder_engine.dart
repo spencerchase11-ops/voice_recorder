@@ -34,8 +34,9 @@ abstract class RecorderEngine {
   Future<void> pause();
 
   /// Resumes a capture paused by [pause] or by the system (see
-  /// [interrupted]).
-  Future<void> resume();
+  /// [interrupted]). [byUser] is false when the app does it on its own, on
+  /// being opened again (AppController.onResume).
+  Future<void> resume({bool byUser = true});
 
   /// Input level between 0 (silence) and 1 (full scale), about 10 per second.
   Stream<double> get levels;
@@ -111,15 +112,14 @@ Uint8List downmixToMono(Uint8List stereo) {
 /// iOS, M4A: the plugin can't resume a recorder the system paused for an
 /// interruption unless the interruption ends with "should resume", and
 /// starting it again would replace the file. Such a recording ends (saved)
-/// once the interruption is over without that, or soon after the app is
-/// opened with no call going on if no end comes meanwhile. While a call has
-/// the audio session, nothing is resumed.
+/// once the interruption is over without that, or, if no end comes, soon
+/// after the app gets the audio session again: when it is opened while no
+/// other app plays, or when the user resumes. While a call has the audio
+/// session, nothing is resumed.
 class RecordPluginEngine implements RecorderEngine {
   /// The streams stand in for the audio session's, the durations for the
-  /// real ones, and [activateSession] for taking the audio session (tests).
-  /// [callInProgress] tells whether a call is in progress without taking
-  /// the audio session (iOS: AppDelegate.swift); without it, or when it
-  /// fails, the audio session is taken to find out.
+  /// real ones, [activateSession] for taking the audio session and
+  /// [otherAudioPlaying] for asking whether another app plays (tests).
   RecordPluginEngine({
     bool? isAndroid,
     this._sessionInterruptions,
@@ -137,11 +137,13 @@ class RecordPluginEngine implements RecorderEngine {
     this._routeCheck = const Duration(seconds: 1),
     bool Function()? inForeground,
     Future<bool> Function()? activateSession,
-    this._callInProgress,
+    Future<bool> Function()? otherAudioPlaying,
   }) : _recorder = AudioRecorder(),
        _isAndroid = isAndroid ?? Platform.isAndroid,
        _inForeground = inForeground ?? _appInForeground,
-       _activateSession = activateSession ?? _activateAudioSession;
+       _activateSession = activateSession ?? _activateAudioSession,
+       _otherAudioPlaying =
+           otherAudioPlaying ?? (() => AVAudioSession().isOtherAudioPlaying);
 
   static bool _appInForeground() {
     final state = WidgetsBinding.instance.lifecycleState;
@@ -164,19 +166,18 @@ class RecordPluginEngine implements RecorderEngine {
   /// a call.
   final Future<bool> Function() _activateSession;
 
-  /// Whether a call (phone, FaceTime, or an app's through CallKit) is in
-  /// progress, asked without taking the audio session (iOS).
-  final Future<bool> Function()? _callInProgress;
+  /// Whether another app plays audio (iOS), asked without taking the audio
+  /// session.
+  final Future<bool> Function() _otherAudioPlaying;
 
-  /// [_callInProgress]'s answer; null when there is none.
-  Future<bool?> _callGoesOn() async {
-    final check = _callInProgress;
-    if (check == null) return null;
+  /// [_otherAudioPlaying]'s answer; true when it can't tell, so the audio
+  /// session is left alone.
+  Future<bool> _othersPlay() async {
     try {
-      return await check();
+      return await _otherAudioPlaying();
     } catch (e) {
-      debugPrint('Could not tell whether a call is in progress: $e');
-      return null;
+      debugPrint('Could not tell whether another app plays: $e');
+      return true;
     }
   }
 
@@ -828,7 +829,7 @@ class RecordPluginEngine implements RecorderEngine {
   }
 
   @override
-  Future<void> resume() async {
+  Future<void> resume({bool byUser = true}) async {
     if (!_running || _stopping) return;
     final wasUserPaused = _userPaused;
     _userPaused = false;
@@ -847,15 +848,22 @@ class RecordPluginEngine implements RecorderEngine {
         // refusing), and the timer would run over nothing. It stays paused:
         // the call's end may resume it, or the next return to the app.
         //
-        // The plugin's resume needs the audio session: it is taken for that,
-        // which a call refuses. A recorder the system paused isn't resumed
-        // here (see below), so for it a call is looked for without taking
-        // the session: that would only cut off another app's audio (music,
-        // a web call) until the recording ends.
-        final call = _systemPaused && !await _platformPaused()
-            ? await _callGoesOn()
-            : null;
-        final free = call == null ? await _activateSession() : !call;
+        // The audio session is taken to find out, which a call refuses.
+        // Opened again (not the user), the app leaves it alone while another
+        // app plays (music, a podcast, a web call): taking it would cut that
+        // off, only for this recording to end (see below). The
+        // interruption's end, a later return to the app, or the user
+        // decides then.
+        if (!byUser) {
+          final othersPlay = await _othersPlay();
+          // Stopped, ended, or resumed by the call's end, meanwhile.
+          if (!_running || _stopping || _endedSent || !_paused) return;
+          if (othersPlay) {
+            if (wasUserPaused) _userPaused = true;
+            return;
+          }
+        }
+        final free = await _activateSession();
         // Stopped, ended, or resumed by the call's end, meanwhile.
         if (!_running || _stopping || _endedSent || !_paused) return;
         if (!free) {
@@ -869,7 +877,7 @@ class RecordPluginEngine implements RecorderEngine {
         // doesn't resume (see [_systemPaused]).
         if (!_running || _stopping || _endedSent || !_systemPaused) return;
         if (_sessionInterrupted) {
-          // No call has the audio session, but the interruption's end hasn't
+          // The audio session is free, but the interruption's end hasn't
           // arrived. The interrupter may only just have let go (a call
           // screen dismissed): an end with "should resume" may be on its
           // way, and the plugin resumes the recorder then. Without one

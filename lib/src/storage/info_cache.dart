@@ -113,24 +113,34 @@ class RecordingInfoCache {
   /// known only here, and storing one isn't offered again.
   bool dateRefused(RecordingFile f) => _refused.contains(keyOf(f));
 
+  /// Whether [f]'s date came from 1.0.x's cache, which didn't mark a date
+  /// the file doesn't hold: it may be the only copy (see [_mayBeOnlyHere]).
+  bool dateMayBeOnlyHere(RecordingFile f) => _mayBeOnlyHere.contains(keyOf(f));
+
   /// Remembers [info] for [f]; [onlyHere] marks a date the file doesn't
   /// hold (see [dateOnlyHere]), [refused] a file that can't hold one (see
-  /// [dateRefused]).
+  /// [dateRefused]), [mayBeOnlyHere] one that may not (see
+  /// [dateMayBeOnlyHere]).
   void put(
     RecordingFile f,
     AudioInfo info, {
     bool onlyHere = false,
     bool refused = false,
+    bool mayBeOnlyHere = false,
   }) {
     final key = keyOf(f);
     if (_map[key] == info &&
         _onlyHere.contains(key) == onlyHere &&
         _refused.contains(key) == refused &&
-        !_mayBeOnlyHere.contains(key)) {
+        _mayBeOnlyHere.contains(key) == mayBeOnlyHere) {
       return;
     }
     _map[key] = info;
-    _mayBeOnlyHere.remove(key);
+    if (mayBeOnlyHere) {
+      _mayBeOnlyHere.add(key);
+    } else {
+      _mayBeOnlyHere.remove(key);
+    }
     if (onlyHere) {
       _onlyHere.add(key);
     } else {

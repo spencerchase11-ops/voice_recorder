@@ -1,5 +1,4 @@
 import AVFoundation
-import CallKit
 import Flutter
 import MediaPlayer
 import UIKit
@@ -71,12 +70,6 @@ final class VoiceRecorderNative: NSObject, FlutterPlugin {
       try? session.setPreferredSampleRate(48000)
       try? session.setActive(false, options: .notifyOthersOnDeactivation)
       result(nil)
-    case "callInProgress":
-      // Whether a call (phone, FaceTime, or an app's through CallKit) is in
-      // progress, which keeps the audio session from this app. Asked here
-      // instead of trying to take the session, which would cut off other
-      // apps' audio (music, a podcast) when no call has it.
-      result(CXCallObserver().calls.contains { !$0.hasEnded })
     case "excludeFromBackup":
       // A recording in progress (possibly gigabytes of WAV) stays out of
       // iCloud and computer backups.

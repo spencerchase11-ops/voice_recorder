@@ -433,6 +433,14 @@ void main() {
         expect(app.litSegments, 1);
         await app.onResume();
         expect(engine.resumes, 1);
+        // The app's own resume: on iPhone it mustn't take the audio session
+        // from another app that plays (RecordPluginEngine.resume).
+        expect(engine.lastResumeByUser, isFalse);
+        // The user's pause and resume are the user's.
+        expect(await app.togglePauseRecording(), isTrue);
+        expect(await app.togglePauseRecording(), isTrue);
+        expect(engine.resumes, 2);
+        expect(engine.lastResumeByUser, isTrue);
         await app.toggleRecord();
       },
     );

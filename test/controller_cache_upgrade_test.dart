@@ -125,4 +125,28 @@ void main() {
       expect(row('lunch.mp3').date, recorded);
     },
   );
+
+  test('so does one renamed again in this build', () async {
+    final f = _file('lunch.mp3', DateTime(2016, 5, 23, 18, 44));
+    final recorded = DateTime(2016, 5, 23, 18, 14);
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: recorded, duration: const Duration(seconds: 1)),
+    );
+    store = FakeStore(
+      files: [f, _file('b.mp3', DateTime(2026))],
+      free: 1 << 30,
+    );
+    store.contents[f.id] = _mp3();
+    await start();
+    await app.refreshFiles();
+    // The cached date matches what _keepDate finds, so nothing is written:
+    // the file still has no date inside.
+    final renamed = await app.rename(row('lunch.mp3'), 'team lunch');
+    expect(renamed!.date, recorded);
+    await app.delete([row('team lunch.mp3')]);
+    await app.refreshFiles();
+    await app.restoreDeleted((await app.deletedRecordings())!.single);
+    expect(row('team lunch.mp3').date, recorded);
+  });
 }

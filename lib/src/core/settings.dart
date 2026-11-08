@@ -179,9 +179,10 @@ class Settings extends ChangeNotifier {
   /// After the clock was set back (it showed an earlier time than
   /// [clockSeen]), the deletion times it may have given meanwhile: from the
   /// earliest time it showed to the latest it had shown before. [rightAt]
-  /// is when it was first seen right again (null while it isn't). Null if
-  /// it wasn't set back, or once that is over (see
-  /// AppController._noteClock).
+  /// is when it was last seen right again: null until then, and kept when
+  /// the clock goes back again while the window runs (see
+  /// AppController._noteClock). Null if it wasn't set back, or once that is
+  /// over.
   ClockSetBack? get clockBack {
     final from = _time(_prefs.getInt(_kClockBackSince));
     if (from == null) return null;
