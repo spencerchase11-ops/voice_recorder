@@ -15,8 +15,9 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
   (some duplicates), 6 rejected. Fixed in 7 groups, each reviewed independently, merged into
   the branch `audit-2026-11-08` (`55aab3c` to `8c4928c`), then a polish round on the reviews'
   remaining points (to `c4b5be2`), a final review of the whole change (6 more issues, fixed in
-  `1a59737`, `842fbc5`, `fb0640c`), and `0074d84` (no CallKit, D15). Two more reviews of
-  that last change gave `9e619c9` and `89bb46d` (D17), merged from `fix/others-playing`.
+  `1a59737`, `842fbc5`, `fb0640c`), and `0074d84` (no CallKit, D15). Three more reviews of
+  that last change gave `9e619c9`, `89bb46d` and `7becad0` (D17), merged from
+  `fix/others-playing`.
 - **Playback (iOS):** the session is set up again before every play and after a media-services
   reset (which also unloads the dead player); a launch that can't set it up still opens; a
   refused session says "audio busy" instead of "Can't play this recording"; a pause iOS makes
@@ -52,7 +53,7 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
   rest.
 - **Lesson:** `git add -A test` also adds `test/golden/failures/` (6 MB of images from the
   golden tests that fail on the Mac); it is in `.gitignore` now.
-- Tests on the Mac: 420 pass, 6 skipped, and the 2 known golden tests fail (RUNBOOK 2).
+- Tests on the Mac: 425 pass, 6 skipped, and the 2 known golden tests fail (RUNBOOK 2).
   `flutter build ios --simulator` and `flutter build apk --debug` build. On the simulator,
   playback went on after Home.
 
