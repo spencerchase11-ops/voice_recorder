@@ -166,6 +166,49 @@ class _SlowTrashStore extends FakeStore {
   }
 }
 
+/// A folder whose files keep their id through a rename (the id isn't the
+/// path), whose calls run one at a time in order (like NativePlugin's io
+/// executor), and whose renames wait while [hold] is set (a network
+/// folder).
+class _KeepIdSerialStore extends FakeStore {
+  _KeepIdSerialStore() : super(files: _many(3), free: referenceFreeBytes);
+
+  Completer<void>? hold;
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> _serial<T>(Future<T> Function() op) {
+    final c = Completer<T>();
+    _tail = _tail.then((_) async {
+      try {
+        c.complete(await op());
+      } catch (e, s) {
+        c.completeError(e, s);
+      }
+    });
+    return c.future;
+  }
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) {
+    final h = hold;
+    return _serial(() async {
+      await h?.future;
+      final i = files.indexWhere((f) => f.id == file.id);
+      if (i < 0) return null;
+      return files[i] = files[i].copyWith(name: fileName);
+    });
+  }
+
+  @override
+  Future<bool> delete(RecordingFile file) => _serial(() async {
+    final i = files.indexWhere((f) => f.id == file.id);
+    if (i < 0) return false;
+    deletedForGood.add(files[i].name);
+    files.removeAt(i);
+    return true;
+  });
+}
+
 /// No message says that something couldn't be restored or deleted.
 void _expectNoFailure() {
   expect(find.textContaining("Couldn't restore"), findsNothing);
@@ -388,6 +431,103 @@ void main() {
       );
       await waitOutUndo(tester);
       _expectNoFailure();
+      expect(app.files, hasLength(3));
+    });
+  });
+
+  // A few recordings are put back without a progress dialog: the question
+  // can be answered while Undo is still renaming them.
+  group('Recently deleted, answered while Undo still puts recordings '
+      'back,', () {
+    /// Opens Recently deleted after deleting [names], selects [select] (if
+    /// given) and taps [question]; taps Undo with its rename held, then
+    /// [answer]. The rename goes on after that.
+    Future<(AppController, _KeepIdSerialStore)> answerDuringUndo(
+      WidgetTester tester, {
+      required List<String> names,
+      String? select,
+      required String question,
+      required String answer,
+    }) async {
+      useReferenceDevice(tester);
+      final store = _KeepIdSerialStore();
+      final (app, started) = await _pumpStarting(tester, store);
+      await pumpUntil(tester, started);
+      await tester.pumpAndSettle();
+      await _deleteThenOpenRecentlyDeleted(tester, names);
+      if (select != null) {
+        await tester.tap(find.text(select));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(labeled(question));
+      await tester.pumpAndSettle();
+      store.hold = Completer<void>();
+      await tester.tap(labeled('Undo'));
+      await tester.pump();
+      await tester.tap(find.text(answer).last);
+      await tester.pump();
+      await tester.pump();
+      final held = store.hold!;
+      store.hold = null;
+      held.complete();
+      await tester.pumpAndSettle();
+      _expectNoFailure();
+      return (app, store);
+    }
+
+    testWidgets("Delete forever doesn't delete the recording it puts "
+        'back', (tester) async {
+      final (app, store) = await answerDuringUndo(
+        tester,
+        names: ['2026_09_01_10_02_00.mp3'],
+        select: '2026_09_01_10_02_00.mp3',
+        question: 'Delete forever',
+        answer: 'Delete',
+      );
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(store.deletedForGood, isEmpty);
+      expect(store.files.map((f) => f.name), [
+        '2026_09_01_10_00_00.mp3',
+        '2026_09_01_10_01_00.mp3',
+        '2026_09_01_10_02_00.mp3',
+      ]);
+      expect(app.files, hasLength(3));
+    });
+
+    testWidgets('Delete all deletes only the rest', (tester) async {
+      final (app, store) = await answerDuringUndo(
+        tester,
+        // An older one in Recently deleted, then the one Undo is for.
+        names: ['2026_09_01_10_00_00.mp3', '2026_09_01_10_02_00.mp3'],
+        question: 'Delete all',
+        answer: 'Delete all',
+      );
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(store.deletedForGood.single, endsWith('-2026_09_01_10_00_00.mp3'));
+      expect(store.files.map((f) => f.name), [
+        '2026_09_01_10_01_00.mp3',
+        '2026_09_01_10_02_00.mp3',
+      ]);
+      expect(app.files, hasLength(2));
+    });
+
+    testWidgets('Restore all restores only the rest', (tester) async {
+      final (app, store) = await answerDuringUndo(
+        tester,
+        names: ['2026_09_01_10_00_00.mp3', '2026_09_01_10_02_00.mp3'],
+        question: 'Restore all',
+        answer: 'Restore all',
+      );
+      expect(find.text('Restored 1 recording'), findsOneWidget);
+      await waitOutUndo(tester);
+      _expectNoFailure();
+      expect(store.files.map((f) => f.name).toSet(), {
+        '2026_09_01_10_00_00.mp3',
+        '2026_09_01_10_01_00.mp3',
+        '2026_09_01_10_02_00.mp3',
+      });
       expect(app.files, hasLength(3));
     });
   });

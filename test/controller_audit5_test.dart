@@ -1,5 +1,6 @@
 // The fifth audit: dates that must never be lost, and Recently deleted
 // that must never empty itself early.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -101,6 +102,22 @@ class _RestampingStore extends FakeStore {
     );
     files[files.indexWhere((f) => f.id == r.id)] = stamped;
     return stamped;
+  }
+}
+
+/// A folder whose files keep their id when renamed (the id isn't the
+/// path), whose renames wait while [hold] is set (a network folder).
+class _KeepIdStore extends FakeStore {
+  _KeepIdStore(List<RecordingFile> files) : super(files: files, free: 1 << 30);
+
+  Completer<void>? hold;
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) async {
+    await hold?.future;
+    final i = files.indexWhere((f) => f.id == file.id);
+    if (i < 0) return null;
+    return files[i] = files[i].copyWith(name: fileName);
   }
 }
 
@@ -581,6 +598,137 @@ void main() {
       final items = (await app.deletedRecordings())!;
       expect(items.map((t) => t.originalName), ['b.mp3', 'early.mp3']);
       expect(items.first.daysLeft(now), 30);
+    });
+
+    test('set back again while it waits, by a little: it waits on until '
+        'the clock is right', () async {
+      store = FakeStore(files: [memo, other], free: 1 << 30);
+      await deletedWhileSetBack();
+      final here = switchFolder();
+      await app.deletedRecordings(); // the clock is right: its 30 days run
+      now = DateTime(2026, 10, 9, 10);
+      await app.deletedRecordings();
+      now = DateTime(2026, 10, 9, 8); // two hours back
+      store.files
+        ..clear()
+        ..addAll(here);
+      final held = (await app.deletedRecordings())!;
+      expect(store.deletedForGood, isEmpty);
+      // Nor re-dated (renamed) at each listing by a clock that is behind.
+      expect(held.single.deletedAt, DateTime(2026, 3, 1));
+      now = DateTime(2026, 10, 9, 10, 30); // right again
+      final items = (await app.deletedRecordings())!;
+      expect(items.single.daysLeft(now), 30);
+      expect(store.deletedForGood, isEmpty);
+    });
+
+    test('set back again by months: what is deleted then gets its 30 days '
+        'from when the clock is right, however late', () async {
+      store = FakeStore(files: [memo, other], free: 1 << 30);
+      await deletedWhileSetBack();
+      await app.deletedRecordings();
+      now = DateTime(2026, 10, 9);
+      await app.deletedRecordings();
+      now = DateTime(2026, 6, 1);
+      await app.delete([row('b.mp3')]);
+      final here = switchFolder();
+      now = DateTime(2026, 12, 1); // right again, more than 30 days on
+      await app.deletedRecordings();
+      store.files
+        ..clear()
+        ..addAll(here);
+      now = DateTime(2026, 12, 20);
+      final items = (await app.deletedRecordings())!;
+      expect(items.map((t) => t.originalName), contains('b.mp3'));
+      expect(store.deletedForGood, isEmpty);
+    });
+
+    test(
+      're-dated on return to the app, an open screen lists it again',
+      () async {
+        now = DateTime(2026, 10, 1);
+        await build([memo, other]);
+        await app.refreshFiles();
+        await app.deletedRecordings();
+        now = DateTime(2026, 3, 1);
+        await app.delete([row('memo.mp3')]);
+        final shown = (await app.deletedRecordings())!; // the screen's list
+        final v = app.trashVersion;
+        now = DateTime(2026, 10, 2); // corrected while the app was away
+        await app.onResume();
+        await settle();
+        expect(app.trashVersion, isNot(v));
+        // Restoring from the old list (another id now) says it again.
+        final w = app.trashVersion;
+        expect(await app.restoreDeleted(shown.single), isNull);
+        expect(app.trashVersion, isNot(w));
+        final items = (await app.deletedRecordings())!;
+        expect(await app.restoreDeleted(items.single), isNotNull);
+        expect(row('memo.mp3'), isNotNull);
+      },
+    );
+  });
+
+  group('Recently deleted, while an Undo still puts recordings back,', () {
+    late _KeepIdStore keep;
+    late DeletedRecordings deleted;
+    late List<TrashedRecording> listed;
+
+    /// a.mp3 and b.mp3 deleted and listed; renames wait from now on.
+    Future<void> undoComing() async {
+      store = keep = _KeepIdStore([
+        _file('a.mp3', now),
+        _file('b.mp3', now),
+        _file('c.mp3', now),
+      ]);
+      await start();
+      await app.refreshFiles();
+      deleted = await app.delete([row('a.mp3'), row('b.mp3')]);
+      listed = (await app.deletedRecordings())!;
+      keep.hold = Completer<void>();
+    }
+
+    test("Delete forever doesn't delete what it puts back", () async {
+      await undoComing();
+      final undo = app.undoDelete(deleted);
+      final gone = app.deleteForever(listed);
+      keep.hold!.complete();
+      expect(await undo, 2);
+      expect(await gone, 0);
+      expect(store.deletedForGood, isEmpty);
+      expect(store.files.map((f) => f.name), ['a.mp3', 'b.mp3', 'c.mp3']);
+    });
+
+    test("Restore doesn't rename what it puts back", () async {
+      await undoComing();
+      final notices = <String>[];
+      app.notices.listen(notices.add);
+      final undo = app.undoDelete(deleted);
+      final one = app.restoreDeleted(listed.first);
+      final all = app.restoreAll(listed);
+      keep.hold!.complete();
+      expect(await undo, 2);
+      expect(await one, isNull);
+      expect(await all, 0);
+      await settle();
+      expect(notices, isEmpty);
+      expect(store.files.map((f) => f.name), ['a.mp3', 'b.mp3', 'c.mp3']);
+      expect(app.files.map((f) => f.name).toSet(), {'a.mp3', 'b.mp3', 'c.mp3'});
+    });
+
+    test("one that fails doesn't stop those after it", () async {
+      await undoComing();
+      final failing = app.restoreAll(
+        listed,
+        onProgress: (_, _) => throw StateError('x'),
+      );
+      // Asked for while it still runs.
+      final next = app.deletedRecordings();
+      final rest = app.restoreAll(listed);
+      keep.hold!.complete();
+      await expectLater(failing, throwsStateError);
+      expect(await next, hasLength(1));
+      expect(await rest, 1); // b.mp3 (a.mp3 is back)
     });
   });
 
