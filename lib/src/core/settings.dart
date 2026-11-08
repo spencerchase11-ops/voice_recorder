@@ -64,6 +64,8 @@ class Settings extends ChangeNotifier {
   static const _kSpeed = 'playback_speed';
   static const _kLockScreen = 'lock_screen_controls';
   static const _kNoiseReduction = 'noise_reduction';
+  static const _kClockSeen = 'clock_seen_ms';
+  static const _kClockBackSince = 'clock_back_since_ms';
 
   final SharedPreferences _prefs;
 
@@ -164,6 +166,29 @@ class Settings extends ChangeNotifier {
     _prefs.setInt(_kLastDuration, _lastDurationMs);
     notifyListeners();
   }
+
+  /// The latest time the phone's clock has shown the app. Recently deleted
+  /// uses it to tell when the clock has been set back.
+  DateTime? get clockSeen => _time(_prefs.getInt(_kClockSeen));
+
+  /// While the clock shows an earlier time than [clockSeen] (it was set
+  /// back): the earliest time it has shown since. Null otherwise.
+  DateTime? get clockBackSince => _time(_prefs.getInt(_kClockBackSince));
+
+  /// Remembers what the clock has shown (see [clockSeen]). Not a setting
+  /// anyone sees: nothing is notified.
+  void setClock(DateTime seen, {DateTime? backSince}) {
+    final ms = seen.millisecondsSinceEpoch;
+    if (_prefs.getInt(_kClockSeen) != ms) _prefs.setInt(_kClockSeen, ms);
+    final since = backSince?.millisecondsSinceEpoch;
+    if (_prefs.getInt(_kClockBackSince) == since) return;
+    since == null
+        ? _prefs.remove(_kClockBackSince)
+        : _prefs.setInt(_kClockBackSince, since);
+  }
+
+  static DateTime? _time(int? ms) =>
+      ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
 
   static T _enumByName<T extends Enum>(
     List<T> values,

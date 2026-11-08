@@ -603,6 +603,8 @@ class AppController extends ChangeNotifier {
       if (_unreadable.contains(RecordingInfoCache.keyOf(f))) continue;
       final info = _info[f];
       if (info == null) return null;
+      // It refused one before (it would refuse again).
+      if (_info.dateRefused(f)) continue;
       // A length means the file could be read (it can take a date). A date
       // whose write failed before is tried again.
       if ((info.recorded == null && info.duration != null) ||
@@ -656,6 +658,12 @@ class AppController extends ChangeNotifier {
         stored++;
       } else if (stoppedAt == null) {
         refused.add(file.name);
+        // Not offered again: the file can't take one as it is.
+        _info.put(
+          file,
+          _info[file] ?? AudioInfo(duration: duration),
+          refused: true,
+        );
       }
       done++;
       onProgress?.call(done, files.length);
@@ -688,9 +696,13 @@ class AppController extends ChangeNotifier {
   }
 
   /// Makes sure [file] carries its recording date inside before its name
-  /// changes (the name may be the only place it is written). Returns it.
-  /// Formats that can't hold it (and damaged files) keep it in the cache.
-  Future<DateTime> _keepDate(RecordingFile file) async {
+  /// changes (the name may be the only place it is written). Returns it,
+  /// and where it is kept if not in the file: [failed], the write failed
+  /// (it is tried again later); [refused], the file can't hold it (its
+  /// format, or tags it would hide). The cache is then its only copy.
+  Future<({DateTime? date, bool failed, bool refused})> _keepDate(
+    RecordingFile file,
+  ) async {
     var info = _info[file];
     if (info == null) {
       info = await _safe(() => _readInfo(file));
@@ -702,17 +714,24 @@ class AppController extends ChangeNotifier {
       named: file.nameDate,
       length: info?.duration,
     );
+    // On iPhone a file's time is when it was copied there, not a recording
+    // date: neither the file nor the cache may keep it as one (it would
+    // stick, and hide a date typed into a later name).
+    if (named == null && !store.fileTimesAreDates) {
+      return (date: null, failed: false, refused: false);
+    }
     final date = named ?? file.modified;
     if (known != null && date == known && !_info.dateOnlyHere(file)) {
-      return known;
+      return (date: known, failed: false, refused: _info.dateRefused(file));
     }
-    // On iPhone a file's time is when it was copied there, not a recording
-    // date: writing it into the file would make a wrong date stick.
-    if (named == null && !store.fileTimesAreDates) return date;
-    if (canStoreRecordedDate(file.name)) {
-      await _safe(() => _writeDate(file, date));
+    try {
+      final ok =
+          canStoreRecordedDate(file.name) && await _writeDate(file, date);
+      return (date: date, failed: false, refused: !ok);
+    } catch (e) {
+      debugPrint('Could not store the date of ${file.name}: $e');
+      return (date: date, failed: true, refused: false);
     }
-    return date;
   }
 
   /// Re-checks what may have changed while the app was in the background:
@@ -933,9 +952,11 @@ class AppController extends ChangeNotifier {
           CaptureEnd.writeFailed =>
             "The recording stopped: it couldn't be written. Is the storage "
                 'full?',
+          // The limit is in bytes: lower qualities last longer.
           CaptureEnd.sizeLimit =>
             "The recording stopped: WAV recordings can't be longer than "
-                'about 13 hours.',
+                'about ${maxWavDataBytes ~/ profile.bytesPerSecond ~/ 3600} '
+                'hours at this quality.',
         }),
       );
       _ticker = Timer.periodic(
@@ -1384,14 +1405,16 @@ class AppController extends ChangeNotifier {
     if (clean.isEmpty || clean == file.baseName) return file;
     if (playback.fileId == file.id) await _stopPlayback();
     // The date in the old name goes with it: keep it inside the file.
-    final recorded = await _keepDate(file);
+    final kept = await _keepDate(file);
     final renamed = await _safe(() => store.rename(file, clean));
     if (renamed == null) return null;
     final info = AudioInfo(
-      recorded: recorded,
+      recorded: kept.date,
       duration: file.duration ?? _info[file]?.duration,
     );
-    _info.put(renamed, info);
+    // A date the file doesn't hold is marked, so it is kept (and a failed
+    // write is tried again by Store dates or the next rename).
+    _info.put(renamed, info, onlyHere: kept.failed, refused: kept.refused);
     final shown = renamed.withInfo(info);
     if (_current?.id == file.id) {
       _current = shown;
@@ -1413,6 +1436,9 @@ class AppController extends ChangeNotifier {
       await _stopPlayback();
     }
     final now = _clock();
+    // Dated by this clock even if it was set back: Recently deleted gives
+    // them their 30 days again once it is right (see _loadTrashNow).
+    _noteClock(now);
     final moved = <TrashedRecording>[];
     final gone = <String>{};
     var failed = 0;
@@ -1461,6 +1487,7 @@ class AppController extends ChangeNotifier {
       done++;
       onProgress?.call(done, deleted.items.length);
       if (f == null) continue;
+      _restored(t, f);
       back.add(f);
       final cur = deleted.current;
       if (cur != null && cur.name == t.originalName && _current == null) {
@@ -1495,6 +1522,21 @@ class AppController extends ChangeNotifier {
     _trashChanged();
     return back.length;
   });
+
+  /// [t] came back as [back]: under another name if its own was taken
+  /// meanwhile. What was known about it goes with it (a date that was
+  /// kept only here would be lost otherwise).
+  void _restored(TrashedRecording t, RecordingFile back) {
+    final before = t.file.copyWith(name: t.originalName);
+    final info = _info[before];
+    if (info == null || _info.contains(back)) return;
+    _info.put(
+      back,
+      info,
+      onlyHere: _info.dateOnlyHere(before),
+      refused: _info.dateRefused(before),
+    );
+  }
 
   /// Adds [added] to the list (in one sort: an undo may bring back many).
   void _addFiles(List<RecordingFile> added) {
@@ -1548,20 +1590,31 @@ class AppController extends ChangeNotifier {
     if (list == null) return null;
     final now = _clock();
     _lastPurge = now;
+    _noteClock(now);
     final items = <TrashedRecording>[];
     var purged = 0;
     // A clock set before this app existed is wrong: nothing is dated by
     // it, nor deleted for good.
     final clockRight = !now.isBefore(TrashedRecording.earliest);
+    // A clock that was set back, and shows the time again: what was
+    // deleted meanwhile was dated too early.
+    final setBack = clockRight ? _setBack(now) : null;
     var retimed = 0;
+    var allRetimed = true;
     for (final t in list) {
-      if (clockRight && t.deletedAt.isBefore(TrashedRecording.earliest)) {
+      final deleted = t.deletedAt;
+      final wrong =
+          deleted.isBefore(TrashedRecording.earliest) ||
+          (setBack != null &&
+              !deleted.isBefore(setBack.from) &&
+              deleted.isBefore(setBack.to));
+      if (clockRight && wrong) {
         // Deleted while the clock was wrong: its 30 days start now (each
         // at its own millisecond, so two of the same name stay two).
         final at = now.add(Duration(milliseconds: retimed++));
-        items.add(
-          await _safe<TrashedRecording?>(() => store.retime(t, at)) ?? t,
-        );
+        final moved = await _safe<TrashedRecording?>(() => store.retime(t, at));
+        if (moved == null) allRetimed = false;
+        items.add(moved ?? t);
       } else if (!clockRight || !t.expired(now)) {
         items.add(t);
       } else if (await _safe(() => store.delete(t.file)) ?? false) {
@@ -1569,6 +1622,11 @@ class AppController extends ChangeNotifier {
       } else {
         items.add(t);
       }
+    }
+    // Those deleted while it was set back have their 30 days again (one
+    // that couldn't be re-dated is tried again the next time).
+    if (setBack != null && allRetimed) {
+      settings.setClock(now.isAfter(setBack.to) ? now : setBack.to);
     }
     if (purged > 0) unawaited(refreshRemaining());
     items.sort((a, b) {
@@ -1580,6 +1638,42 @@ class AppController extends ChangeNotifier {
             );
     });
     return (items: items, purged: purged);
+  }
+
+  /// How far the clock may go back without counting as set back (network
+  /// time corrects it by far less).
+  static const _clockSlack = Duration(hours: 1);
+
+  /// Remembers [now], the clock's time, so that a clock set back (by hand,
+  /// or a phone that lost its time) is noticed: what is deleted while it
+  /// is gets an early date, and would go for good early once the clock is
+  /// right again. A clock that was once far ahead holds nothing up: what
+  /// is deleted is dated by the clock as it is, and goes after 30 days by
+  /// it.
+  void _noteClock(DateTime now) {
+    // Before 2025 the clock is wrong anyway (see _loadTrashNow).
+    if (now.isBefore(TrashedRecording.earliest)) return;
+    final seen = settings.clockSeen;
+    final since = settings.clockBackSince;
+    if (seen != null && now.isBefore(seen.subtract(_clockSlack))) {
+      if (since == null || now.isBefore(since)) {
+        settings.setClock(seen, backSince: now);
+      }
+    } else if (since == null && (seen == null || now.isAfter(seen))) {
+      settings.setClock(now);
+    }
+    // Right again after being set back: the next listing of Recently
+    // deleted deals with what was deleted meanwhile ([_setBack]).
+  }
+
+  /// The deletion times a clock gave while it was set back, once it shows
+  /// the time again. Null while it doesn't, or if it wasn't.
+  ({DateTime from, DateTime to})? _setBack(DateTime now) {
+    final seen = settings.clockSeen;
+    final since = settings.clockBackSince;
+    if (seen == null || since == null) return null;
+    if (now.isBefore(seen.subtract(_clockSlack))) return null;
+    return (from: since, to: seen);
   }
 
   /// Brings everything in [items] back from Recently deleted. Returns how
@@ -1594,7 +1688,10 @@ class AppController extends ChangeNotifier {
     for (final t in items) {
       if (cancelled?.call() ?? false) break;
       final f = await _safe(() => store.restore(t));
-      if (f != null) back.add(f);
+      if (f != null) {
+        _restored(t, f);
+        back.add(f);
+      }
       done++;
       onProgress?.call(done, items.length);
     }
@@ -1607,6 +1704,7 @@ class AppController extends ChangeNotifier {
   Future<RecordingFile?> restoreDeleted(TrashedRecording t) async {
     final f = await _safe(() => store.restore(t));
     if (f != null) {
+      _restored(t, f);
       _addFiles([f]);
       _trashChanged();
     }

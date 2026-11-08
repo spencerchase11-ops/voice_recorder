@@ -23,6 +23,9 @@ class RecordingInfoCache {
   /// Files whose date is known only here: writing it into the file failed,
   /// after the write had changed the file's time (see [dateOnlyHere]).
   final _onlyHere = <String>{};
+
+  /// Files that can't take a date inside (see [dateRefused]).
+  final _refused = <String>{};
   Timer? _saveTimer;
   bool _dirty = false;
 
@@ -44,6 +47,7 @@ class RecordingInfoCache {
         if (k is! String || v is! List || v.length < 2) return;
         final r = v[0], d = v[1];
         if (v.length > 2 && v[2] == 1) _onlyHere.add(k);
+        if (v.length > 2 && v[2] == 2) _refused.add(k);
         _map[k] = AudioInfo(
           recorded: switch (r) {
             final String t => DateTime.tryParse(t),
@@ -67,27 +71,61 @@ class RecordingInfoCache {
   /// failed): it should be written again.
   bool dateOnlyHere(RecordingFile f) => _onlyHere.contains(keyOf(f));
 
+  /// Whether [f] can't take a date inside (writing one was refused, e.g.
+  /// because it would hide tags another program added): a date for it is
+  /// known only here, and storing one isn't offered again.
+  bool dateRefused(RecordingFile f) => _refused.contains(keyOf(f));
+
   /// Remembers [info] for [f]; [onlyHere] marks a date the file doesn't
-  /// hold (see [dateOnlyHere]).
-  void put(RecordingFile f, AudioInfo info, {bool onlyHere = false}) {
+  /// hold (see [dateOnlyHere]), [refused] a file that can't hold one (see
+  /// [dateRefused]).
+  void put(
+    RecordingFile f,
+    AudioInfo info, {
+    bool onlyHere = false,
+    bool refused = false,
+  }) {
     final key = keyOf(f);
-    if (_map[key] == info && _onlyHere.contains(key) == onlyHere) return;
+    if (_map[key] == info &&
+        _onlyHere.contains(key) == onlyHere &&
+        _refused.contains(key) == refused) {
+      return;
+    }
     _map[key] = info;
     if (onlyHere) {
       _onlyHere.add(key);
     } else {
       _onlyHere.remove(key);
     }
+    if (refused) {
+      _refused.add(key);
+    } else {
+      _refused.remove(key);
+    }
     _changed();
   }
 
-  /// Forgets files that are gone.
+  /// Forgets files that are gone, except a date known nowhere else: its
+  /// file may come back as it was (from Recently deleted, or a folder that
+  /// was switched away from), and the date would be lost for good.
   void retainOnly(Iterable<RecordingFile> files) {
     final keep = {for (final f in files) keyOf(f)};
     final before = _map.length;
-    _map.removeWhere((k, _) => !keep.contains(k));
-    _onlyHere.removeWhere((k) => !keep.contains(k));
+    _map.removeWhere((k, info) => !keep.contains(k) && !_onlyCopy(k, info));
+    _onlyHere.removeWhere((k) => !_map.containsKey(k));
+    _refused.removeWhere((k) => !_map.containsKey(k));
     if (_map.length != before) _changed();
+  }
+
+  /// Whether the date in [info] is kept only here: writing it failed, or
+  /// the file can't hold one (it refused, or its format can't, like AAC).
+  bool _onlyCopy(String key, AudioInfo info) {
+    if (info.recorded == null) return false;
+    if (_onlyHere.contains(key) || _refused.contains(key)) return true;
+    // The name is what comes before "|size|time".
+    final last = key.lastIndexOf('|');
+    final end = last > 0 ? key.lastIndexOf('|', last - 1) : -1;
+    return end > 0 && !canStoreRecordedDate(key.substring(0, end));
   }
 
   void _changed() {
@@ -114,7 +152,7 @@ class RecordingInfoCache {
           // Local clock time without a zone: `2026-09-25T10:00:00.000`.
           e.value.recorded?.toLocal().toIso8601String(),
           e.value.duration?.inMilliseconds,
-          if (_onlyHere.contains(e.key)) 1,
+          if (_onlyHere.contains(e.key)) 1 else if (_refused.contains(e.key)) 2,
         ],
     };
     try {
