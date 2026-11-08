@@ -117,6 +117,12 @@ class NativeBridge {
   Future<String?> pickFolder({String? initialPath}) =>
       _channel.invokeMethod<String>('pickFolder', {'initialPath': initialPath});
 
+  /// A folder picked while the app wasn't running (Android ended it while
+  /// the picker was open, then started it again with the choice), once;
+  /// null otherwise. Its permission is already kept.
+  Future<String?> takePickedFolder() =>
+      _channel.invokeMethod<String>('takePickedFolder');
+
   Future<bool> hasFolderAccess(String treeUri) async =>
       await _channel.invokeMethod<bool>('hasFolderAccess', {
         'treeUri': treeUri,

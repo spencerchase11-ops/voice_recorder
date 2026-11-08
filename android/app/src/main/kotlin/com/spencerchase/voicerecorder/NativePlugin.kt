@@ -192,6 +192,10 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                 result.success(launchAction)
                 launchAction = null
             }
+            "takePickedFolder" -> {
+                result.success(pickedFolder)
+                pickedFolder = null
+            }
             "storageSpace" -> background(result) { storageSpace(call.argument("location")) }
             "openAppSettings" -> {
                 try {
@@ -274,16 +278,20 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != REQUEST_PICK_FOLDER) return false
-        val result = pendingPick ?: return true
+        // Null when Android ended the app's process while the picker was
+        // open, and started it again to deliver the choice. The grant only
+        // lasts as long as this activity, so the folder is kept now anyway,
+        // for the Dart side to take ([pickedFolder]).
+        val result = pendingPick
         pendingPick = null
         val tree = data?.data
         if (resultCode != Activity.RESULT_OK || tree == null) {
-            result.success(null)
+            result?.success(null)
             return true
         }
         val rw = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         if ((data?.flags ?: 0) and rw != rw) {
-            result.error("read_only", "Recordings can't be saved in that folder", null)
+            result?.error("read_only", "Recordings can't be saved in that folder", null)
             return true
         }
         try {
@@ -297,9 +305,9 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                     )
                 }
             }
-            result.success(tree.toString())
+            if (result != null) result.success(tree.toString()) else pickedFolder = tree.toString()
         } catch (e: SecurityException) {
-            result.error("no_permission", e.message, null)
+            result?.error("no_permission", e.message, null)
         }
         return true
     }
@@ -465,9 +473,11 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     }
 
     /**
-     * Whether [uri] (a document inside a granted folder) is known to be gone:
-     * its folder is no longer granted, or the folder is readable but the
-     * document isn't. False when the folder itself can't be reached.
+     * Whether [uri] (a document in a granted folder: recordings are always
+     * directly in it) is known to be gone: its folder is no longer granted,
+     * or the folder's files can be listed and it isn't among them. False
+     * when the folder can't be reached, or the document is still there
+     * (e.g. a delete the folder refused).
      */
     private fun isGone(uri: Uri): Boolean {
         val treeId = try {
@@ -475,14 +485,29 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         } catch (e: IllegalArgumentException) {
             return true
         }
+        val docId = try {
+            DocumentsContract.getDocumentId(uri)
+        } catch (e: IllegalArgumentException) {
+            return true
+        }
         val authority = uri.authority ?: return true
         val tree = DocumentsContract.buildTreeDocumentUri(authority, treeId)
         val granted = context.contentResolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission }
         if (!granted) return true
-        val root = DocumentsContract.buildDocumentUriUsingTree(tree, treeId)
+        try {
+            context.contentResolver.query(uri, arrayOf(Document.COLUMN_DOCUMENT_ID), null, null, null)
+                ?.use { if (it.moveToFirst()) return false }
+        } catch (e: Exception) {
+            // Providers throw for a deleted document too: look for it in the folder.
+        }
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId)
         return try {
-            context.contentResolver.query(root, arrayOf(Document.COLUMN_DOCUMENT_ID), null, null, null)
-                ?.use { it.moveToFirst() } ?: false
+            context.contentResolver.query(children, arrayOf(Document.COLUMN_DOCUMENT_ID), null, null, null)
+                ?.use { c ->
+                    var found = false
+                    while (!found && c.moveToNext()) found = c.getString(0) == docId
+                    !found
+                } ?: false
         } catch (e: Exception) {
             false
         }
@@ -491,21 +516,40 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     private fun delete(uri: Uri): Boolean = try {
         DocumentsContract.deleteDocument(context.contentResolver, uri)
     } catch (e: Exception) {
-        // Already deleted (e.g. in a file manager) counts as deleted.
+        // Already deleted (e.g. in a file manager) counts as deleted. One
+        // still there was refused (an SD card gone read-only, a cloud drive
+        // offline): Dart hears so and keeps it listed.
         if (isGone(uri)) true else throw e
     }
 
     // ------------------------------------------------------------ writes
+    /**
+     * Copies a finished recording into the folder. The copy is made under a
+     * hidden name (out of the list, like Recently deleted) and gets the real
+     * one only once complete, so a copy cut off by the app or the phone
+     * dying never passes for the recording. The source stays until this
+     * returns, and is saved again on the next launch.
+     */
     private fun importFile(tree: Uri, sourcePath: String, displayName: String, mimeType: String): Map<String, Any?>? {
+        val resolver = context.contentResolver
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val source = File(sourcePath)
         // Use the MIME type Android associates with the extension so the
         // provider keeps our file name unchanged.
         val ext = displayName.substringAfterLast('.', "").lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: mimeType
-        val target = DocumentsContract.createDocument(context.contentResolver, parent, mime, displayName)
+        val record = File(File(context.noBackupFilesDir, "unfinished"), displayName)
+        removeUnfinishedCopy(record, source.length())
+        val target = DocumentsContract.createDocument(resolver, parent, mime, SAVING_PREFIX + displayName)
             ?: throw IllegalStateException("Could not create $displayName")
         try {
-            FileInputStream(File(sourcePath)).use { input ->
+            record.parentFile?.mkdirs()
+            record.writeText(target.toString())
+        } catch (e: IOException) {
+            // The phone may be full: only a later clean-up is lost.
+        }
+        val saved = try {
+            FileInputStream(source).use { input ->
                 val output = context.contentResolver.openOutputStream(target, "w")
                     ?: throw IllegalStateException("Could not open $displayName")
                 output.use {
@@ -519,15 +563,46 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
                     }
                 }
             }
+            // A name in use gets a " (1)" from the provider, as before.
+            DocumentsContract.renameDocument(resolver, target, displayName)
+                ?: throw IllegalStateException("Could not name $displayName")
         } catch (e: Exception) {
             try {
-                DocumentsContract.deleteDocument(context.contentResolver, target)
+                if (DocumentsContract.deleteDocument(resolver, target)) record.delete()
             } catch (cleanup: Exception) {
                 e.addSuppressed(cleanup)
             }
             throw e
         }
-        return stat(target)
+        record.delete()
+        return stat(saved)
+    }
+
+    /**
+     * Deletes the partial copy that an earlier save of the same recording
+     * left when the app or the phone died during it ([record] names that
+     * document). Only that document, only while it still has the hidden name,
+     * and only if it is no larger than the recording, which is about to be
+     * copied again in full.
+     */
+    private fun removeUnfinishedCopy(record: File, sourceLength: Long) {
+        if (!record.exists()) return
+        try {
+            val left = Uri.parse(record.readText())
+            val m = stat(left)
+            val name = m?.get("name") as? String
+            val size = m?.get("size") as? Long
+            if (m == null || name?.startsWith(SAVING_PREFIX) != true) {
+                // Gone, or it got its real name after all.
+                record.delete()
+            } else if (size != null && size <= sourceLength &&
+                DocumentsContract.deleteDocument(context.contentResolver, left)
+            ) {
+                record.delete()
+            }
+        } catch (e: Exception) {
+            // The folder can't be reached now: the next save tries again.
+        }
     }
 
     private fun share(uris: List<Uri>, mimeType: String) {
@@ -600,6 +675,13 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
         /** What a home-screen shortcut opened the app for, until the Dart side asks. */
         @Volatile
         var launchAction: String? = null
+
+        /** A folder picked with no one waiting for it (see onActivityResult), until the Dart side asks. */
+        @Volatile
+        private var pickedFolder: String? = null
+
+        /** Name start of a recording being copied into the folder; renamed once complete. */
+        private const val SAVING_PREFIX = ".vr-saving-"
 
         /**
          * Reports a notification, lock-screen or headset button to the Dart
