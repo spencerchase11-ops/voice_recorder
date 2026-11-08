@@ -97,15 +97,17 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
 
   /// What of [targets], taken from the list as listed at [listedAt], is
   /// still in Recently deleted. That toast's Undo can be tapped while a
-  /// question here is up, or just before the list shows what it did.
-  /// Acting on what it put back would fail and say so, or, in a folder
-  /// where a file keeps its id when renamed, delete forever the recording
-  /// Undo put back. Null if Recently deleted can't be read.
+  /// question here is up, or just before the list shows what it did, and
+  /// a few recordings are put back without a progress dialog: it is
+  /// waited for. Acting on what it put back would fail and say so (the
+  /// controller leaves alone what is no longer there). Null if Recently
+  /// deleted can't be read.
   Future<List<TrashedRecording>?> _stillDeleted(
     List<TrashedRecording> targets,
     int? listedAt,
   ) async {
     final app = AppScope.read(context);
+    await app.trashIdle;
     if (app.trashVersion == listedAt) return targets;
     final now = await app.deletedRecordings();
     if (now == null) return null;

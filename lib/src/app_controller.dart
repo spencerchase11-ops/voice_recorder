@@ -314,6 +314,54 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Runs [job] once the trash jobs asked for before it are done: undoing a
+  /// delete, restoring, deleting forever and listing (which purges and
+  /// re-dates) go one at a time, in the order asked. Two at once would deal
+  /// with the same files: Delete forever, confirmed while the toast's Undo
+  /// still puts recordings back, would delete them. A job never waits for
+  /// another one (it would wait for itself), and one that fails doesn't
+  /// stop those after it.
+  Future<T> _trashJob<T>(Future<T> Function() job) {
+    final previous = _trashQueue;
+    final next = () async {
+      if (previous != null) {
+        try {
+          await previous;
+        } catch (_) {}
+      }
+      return job();
+    }();
+    _trashQueue = next;
+    next.whenComplete(() {
+      if (identical(_trashQueue, next)) _trashQueue = null;
+    }).ignore();
+    return next;
+  }
+
+  Future<Object?>? _trashQueue;
+
+  /// Done once what was asked of Recently deleted so far is (an Undo from
+  /// the toast may still be putting recordings back). Not for a trash job
+  /// itself, which would wait for itself.
+  Future<void> get trashIdle async {
+    final last = _trashQueue;
+    if (last == null) return;
+    try {
+      await last;
+    } catch (_) {}
+  }
+
+  /// Whether Recently deleted still holds a recording, by a listing made
+  /// now, by id and hidden name (a folder may keep a file's id when it is
+  /// renamed: the id alone could be a recording put back meanwhile). For
+  /// trash jobs, during which nothing else changes it. Nothing if it can't
+  /// be listed.
+  Future<bool Function(TrashedRecording)> _inTrashNow() async {
+    final list = await _safe(store.listTrash) ?? const <TrashedRecording>[];
+    final there = {for (final t in list) (t.file.id, t.file.name)};
+    return (t) => there.contains((t.file.id, t.file.name));
+  }
+
   /// Runs a job on [count] recordings with the screen kept on when it's
   /// long: the phone going to sleep would pause it.
   Future<T> _awake<T>(int count, Future<T> Function() job) async {
@@ -1475,11 +1523,19 @@ class AppController extends ChangeNotifier {
 
   /// Puts back what [deleted] moved to Recently deleted. Returns how many
   /// came back; the others stay in Recently deleted, and the user is told.
+  /// A restore or Delete forever asked for meanwhile waits for it (see
+  /// [_trashJob]).
   Future<int> undoDelete(
     DeletedRecordings deleted, {
     Progress? onProgress,
     Cancelled? cancelled,
-  }) => _awake(deleted.items.length, () async {
+  }) => _trashJob(() => _undoDelete(deleted, onProgress, cancelled));
+
+  Future<int> _undoDelete(
+    DeletedRecordings deleted,
+    Progress? onProgress,
+    Cancelled? cancelled,
+  ) => _awake(deleted.items.length, () async {
     final back = <RecordingFile>[];
     var done = 0;
     for (final t in deleted.items) {
@@ -1563,28 +1619,14 @@ class AppController extends ChangeNotifier {
 
   /// Lists Recently deleted: deletes for good what has been there for 30
   /// days (and says how many), and gives what was deleted while the phone's
-  /// clock was wrong its 30 days from now. One listing at a time (two at
-  /// once would both deal with the same files).
-  Future<({List<TrashedRecording> items, int purged})?> _loadTrash() {
-    final previous = _trashLoad;
-    final next = () async {
-      if (previous != null) {
-        try {
-          await previous;
-        } catch (_) {}
-      }
-      return _loadTrashNow();
-    }();
-    _trashLoad = next;
-    next.whenComplete(() {
-      if (identical(_trashLoad, next)) _trashLoad = null;
-    }).ignore();
-    return next;
-  }
+  /// clock was wrong its 30 days from now (and says how many). A trash job
+  /// (see [_trashJob]): two listings at once would both deal with the same
+  /// files.
+  Future<({List<TrashedRecording> items, int purged, int redated})?>
+  _loadTrash() => _trashJob(_loadTrashNow);
 
-  Future<({List<TrashedRecording> items, int purged})?>? _trashLoad;
-
-  Future<({List<TrashedRecording> items, int purged})?> _loadTrashNow() async {
+  Future<({List<TrashedRecording> items, int purged, int redated})?>
+  _loadTrashNow() async {
     await _ready();
     final list = await _safe(store.listTrash);
     if (list == null) return null;
@@ -1600,23 +1642,33 @@ class AppController extends ChangeNotifier {
     // deleted meanwhile was dated too early.
     final back = clockRight ? settings.clockBack : null;
     final setBack = back?.rightAt == null ? null : back;
+    // Set back again while that goes on, and still behind the time it has
+    // shown: by it, what was dated early would look due. It is kept as it
+    // is until the clock is right again (see _noteClock).
+    final seen = settings.clockSeen;
+    final behind = seen != null && now.isBefore(seen.subtract(_clockSlack));
     var retimed = 0;
+    var redated = 0;
     for (final t in list) {
       final deleted = t.deletedAt;
-      final wrong =
-          deleted.isBefore(TrashedRecording.earliest) ||
-          (setBack != null &&
-              !deleted.isBefore(setBack.from) &&
-              deleted.isBefore(setBack.to));
-      if (clockRight && wrong) {
+      final early =
+          setBack != null &&
+          !deleted.isBefore(setBack.from) &&
+          deleted.isBefore(setBack.to);
+      final held = behind && early;
+      final wrong = deleted.isBefore(TrashedRecording.earliest) || early;
+      if (clockRight && wrong && !held) {
         // Deleted while the clock was wrong: its 30 days start now (each
         // at its own millisecond, so two of the same name stay two). One
         // that can't be re-dated is tried again the next time.
         final at = now.add(Duration(milliseconds: retimed++));
         final moved = await _safe<TrashedRecording?>(() => store.retime(t, at));
-        if (moved != null) _info.move(_comesBackAs(t), _comesBackAs(moved));
+        if (moved != null) {
+          redated++;
+          _info.move(_comesBackAs(t), _comesBackAs(moved));
+        }
         items.add(moved ?? t);
-      } else if (!clockRight || !t.expired(now)) {
+      } else if (!clockRight || held || !t.expired(now)) {
         items.add(t);
       } else if (await _safe(() => store.delete(t.file)) ?? false) {
         purged++;
@@ -1633,7 +1685,7 @@ class AppController extends ChangeNotifier {
               b.originalName.toLowerCase(),
             );
     });
-    return (items: items, purged: purged);
+    return (items: items, purged: purged, redated: redated);
   }
 
   /// How far the clock may go back without counting as set back (network
@@ -1653,6 +1705,12 @@ class AppController extends ChangeNotifier {
   /// first listing: one may not show them (a folder switched to on
   /// Android, or one out of reach for now), and by then all that was
   /// deleted meanwhile has had its 30 days, wherever it is.
+  ///
+  /// Set back again during those 30 days, they aren't over: [rightAt] is
+  /// kept, and what is in Recently deleted with those dates is kept as it
+  /// is while the clock is behind (by it, it would look due). Once the
+  /// clock is right again, the 30 days start again, over what it dated
+  /// early both times.
   void _noteClock(DateTime now) {
     // Before 2025 the clock is wrong anyway (see _loadTrashNow).
     if (now.isBefore(TrashedRecording.earliest)) return;
@@ -1661,11 +1719,17 @@ class AppController extends ChangeNotifier {
     if (seen != null && now.isBefore(seen.subtract(_clockSlack))) {
       // Set back (again: together with what the last time left to do).
       final from = back == null || now.isBefore(back.from) ? now : back.from;
-      settings.setClock(seen, back: (from: from, to: seen, rightAt: null));
+      settings.setClock(
+        seen,
+        back: (from: from, to: seen, rightAt: back?.rightAt),
+      );
       return;
     }
     if (back != null) {
-      final rightAt = back.rightAt ?? now;
+      // Right again for the first time since it was set back: the clock
+      // hasn't gone past the time it showed before.
+      final again = seen == null || !seen.isAfter(back.to);
+      final rightAt = again ? now : back.rightAt ?? now;
       back = now.isBefore(rightAt.add(trashRetention))
           ? (from: back.from, to: back.to, rightAt: rightAt)
           : null;
@@ -1679,69 +1743,96 @@ class AppController extends ChangeNotifier {
   }
 
   /// Brings everything in [items] back from Recently deleted. Returns how
-  /// many came back.
+  /// many came back. What is no longer there (an Undo put it back first)
+  /// is left alone, and the screens list it again.
   Future<int> restoreAll(
     List<TrashedRecording> items, {
     Progress? onProgress,
     Cancelled? cancelled,
-  }) => _awake(items.length, () async {
-    final back = <RecordingFile>[];
-    var done = 0;
-    for (final t in items) {
-      if (cancelled?.call() ?? false) break;
-      final f = await _safe(() => store.restore(t));
-      if (f != null) {
-        _restored(t, f);
-        back.add(f);
+  }) => _trashJob(
+    () => _awake(items.length, () async {
+      final there = await _inTrashNow();
+      final back = <RecordingFile>[];
+      var gone = false;
+      var done = 0;
+      for (final t in items) {
+        if (cancelled?.call() ?? false) break;
+        final still = there(t);
+        if (!still) gone = true;
+        final f = still ? await _safe(() => store.restore(t)) : null;
+        if (f != null) {
+          _restored(t, f);
+          back.add(f);
+        }
+        done++;
+        onProgress?.call(done, items.length);
       }
-      done++;
-      onProgress?.call(done, items.length);
-    }
-    _addFiles(back);
-    if (back.isNotEmpty) _trashChanged();
-    return back.length;
-  });
+      _addFiles(back);
+      if (back.isNotEmpty || gone) _trashChanged();
+      return back.length;
+    }),
+  );
 
-  /// Brings a recording back from Recently deleted.
-  Future<RecordingFile?> restoreDeleted(TrashedRecording t) async {
-    final f = await _safe(() => store.restore(t));
-    if (f != null) {
-      _restored(t, f);
-      _addFiles([f]);
-      _trashChanged();
-    }
-    return f;
-  }
+  /// Brings a recording back from Recently deleted (null if it no longer
+  /// is there, like [restoreAll]).
+  Future<RecordingFile?> restoreDeleted(TrashedRecording t) =>
+      _trashJob(() async {
+        if (!(await _inTrashNow())(t)) {
+          _trashChanged();
+          return null;
+        }
+        final f = await _safe(() => store.restore(t));
+        if (f != null) {
+          _restored(t, f);
+          _addFiles([f]);
+          _trashChanged();
+        }
+        return f;
+      });
 
   /// Deletes recordings from Recently deleted for good. Returns how many.
+  /// Only what is still there: one an Undo put back first may have kept its
+  /// id, and would be deleted as it is in the list now.
   Future<int> deleteForever(
     List<TrashedRecording> items, {
     Progress? onProgress,
     Cancelled? cancelled,
-  }) => _awake(items.length, () async {
-    var n = 0;
-    var done = 0;
-    for (final t in items) {
-      if (cancelled?.call() ?? false) break;
-      if (await _safe(() => store.delete(t.file)) ?? false) n++;
-      done++;
-      onProgress?.call(done, items.length);
-    }
-    if (n > 0) _trashChanged();
-    unawaited(refreshRemaining());
-    return n;
-  });
+  }) => _trashJob(
+    () => _awake(items.length, () async {
+      final there = await _inTrashNow();
+      var n = 0;
+      var gone = false;
+      var done = 0;
+      for (final t in items) {
+        if (cancelled?.call() ?? false) break;
+        if (!there(t)) {
+          gone = true;
+        } else if (await _safe(() => store.delete(t.file)) ?? false) {
+          n++;
+        }
+        done++;
+        onProgress?.call(done, items.length);
+      }
+      if (n > 0 || gone) _trashChanged();
+      unawaited(refreshRemaining());
+      return n;
+    }),
+  );
 
   /// When Recently deleted was last cleared of expired recordings.
   DateTime? _lastPurge;
   static const _purgeEvery = Duration(hours: 6);
 
-  /// Deletes what has been in Recently deleted for 30 days. (A screen that
-  /// lists it purges it itself, and isn't told again.)
+  /// Deletes what has been in Recently deleted for 30 days, and re-dates
+  /// what was deleted while the clock was wrong: an open screen lists it
+  /// again (a re-dated recording has another id). A screen that lists it
+  /// does both itself, and isn't told again.
   Future<void> _purgeTrash() async {
     if (!store.isReady) return;
     final trash = await _loadTrash();
-    if (trash != null && trash.purged > 0) _trashChanged();
+    if (trash != null && (trash.purged > 0 || trash.redated > 0)) {
+      _trashChanged();
+    }
   }
 
   /// Opens the share sheet with [files] (at most [maxShareCount]). False if
