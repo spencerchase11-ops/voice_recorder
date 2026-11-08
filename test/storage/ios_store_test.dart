@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
@@ -132,36 +131,6 @@ void main() {
     watch.stop();
     expect(files, hasLength(2500));
     expect(watch.elapsed, lessThan(const Duration(seconds: 3)));
-  });
-
-  test('lists 2,500 recordings without stalling the UI isolate', () async {
-    final store = await open('A');
-    final dir = Directory('${root.path}/A/Documents/Recorders');
-    for (var i = 0; i < 2500; i++) {
-      File('${dir.path}/2016_01_01_00_00_${'$i'.padLeft(4, '0')}.mp3')
-          .writeAsBytesSync(const [1, 2, 3]);
-    }
-    // The longest this isolate went without running a 1 ms timer, as a
-    // share of the whole listing: about all of it when the listing runs
-    // here. The best of three, so a busy machine doesn't decide it.
-    var best = double.infinity;
-    for (var run = 0; run < 3; run++) {
-      final sinceTick = Stopwatch()..start();
-      var longest = 0;
-      final ticks = Timer.periodic(const Duration(milliseconds: 1), (_) {
-        longest = math.max(longest, sinceTick.elapsedMicroseconds);
-        sinceTick.reset();
-      });
-      final watch = Stopwatch()..start();
-      final files = await store.list();
-      final took = watch.elapsedMicroseconds;
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      ticks.cancel();
-      // In the folder's own order, as before.
-      expect(files.map((f) => f.id), [for (final f in dir.listSync()) f.path]);
-      best = math.min(best, longest / took);
-    }
-    expect(best, lessThan(0.5));
   });
 
   group('copies an import cut short', () {
