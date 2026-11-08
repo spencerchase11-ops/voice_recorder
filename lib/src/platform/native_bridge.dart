@@ -12,12 +12,16 @@ sealed class NativeEvent {
 }
 
 /// A button on the lock screen, in the playback notification, on
-/// headphones or in the car was pressed.
+/// headphones or in the car was pressed, or (iOS) the system stopped the
+/// player by itself.
 class MediaButton extends NativeEvent {
   const MediaButton(this.action, {this.position});
 
   /// play, pause, toggle, seek, forward, rewind, stop or dismiss (the
-  /// notification was swiped away).
+  /// notification was swiped away). On iOS, pause also comes from iOS
+  /// stopping the player itself (the app went to the background where it
+  /// may not play, or a play couldn't start). iOS only: failed, the file
+  /// stopped playing partway.
   final String action;
 
   /// Target of a seek.

@@ -77,9 +77,11 @@ Future<void> configureAtLaunch([
   }
 }
 
-/// Errors nothing caught are logged (to the device's console) and the app
-/// carries on. Flutter's own (a widget that failed to build) are still
-/// presented as before.
+/// Errors Flutter reports itself (a build, layout or paint that failed) are
+/// presented as before. Any other error nothing caught, such as a future
+/// that failed with no one awaiting it, is logged with a 'Voice Recorder:'
+/// tag and marked handled. This only records the error: whatever it
+/// interrupted stays undone.
 @visibleForTesting
 void logUncaughtErrors() {
   FlutterError.onError = (details) => FlutterError.presentError(details);
