@@ -188,19 +188,28 @@ String _isoLocal(DateTime t) =>
     '${t.year.toString().padLeft(4, '0')}-${_two(t.month)}-${_two(t.day)}'
     'T${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}';
 
+// Only offsets that time zones use, so that other text is not read as one:
+// whole quarters of an hour, from 12 hours behind UTC to 14 ahead.
+const _hoursBehind = '(?:0\\d|1[0-2])', _hoursAhead = '(?:0\\d|1[0-4])';
+const _quarter = '(?:[03]0|[14]5)';
+
 // The parts of the time may be separated by '-' too (`03-30-05`), but not
-// by one that starts an offset (`03:30-07:00`, `03:30-0700`).
+// by one that starts an offset (`03:30-07:00`, `03:30-0700`). `03-30:07` is
+// 03:30:07, as no zone is 30 hours behind.
+const _timeSep = '(?:[:._]|-(?!$_hoursBehind:?$_quarter(?![:\\d])))';
+
 final _dateText = RegExp(
   r'^\s*(\d{4})[-:/.](\d{1,2})[-:/.](\d{1,2})'
-  r'(?:[ T_](\d{1,2})(?:(?:[:._]|-(?!\d{2}:?\d{2}\b))(\d{2})'
-  r'(?:(?:[:._]|-(?!\d{2}:?\d{2}\b))(\d{2})(?:[.,]\d+)?)?)?)?'
-  r'\s*(Z|[+-]\d{2}(?::?\d{2})?)?',
+  '(?:[ T_](\\d{1,2})(?:$_timeSep(\\d{2})'
+  '(?:$_timeSep(\\d{2})(?:[.,]\\d+)?)?)?)?'
+  // An offset is read whole or not at all: `+02:07` is not `+02`.
+  '\\s*(Z|(?:\\+$_hoursAhead|-$_hoursBehind)(?::?$_quarter)?(?![:\\d]))?',
 );
 
 /// A full date (at least year, month and day) written in a tag, e.g.
 /// `2026-09-25T03:30:00`, `2026-09-25 03:30`, `2026:09:25`. Local time unless
-/// it ends in `Z` or an offset such as `+02:00`. Null for partial dates such
-/// as a bare year.
+/// it ends in `Z` or an offset such as `+02:00` (one a time zone could have;
+/// any other is ignored). Null for partial dates such as a bare year.
 DateTime? parseDateText(String s) {
   final m = _dateText.firstMatch(s);
   if (m == null) return null;

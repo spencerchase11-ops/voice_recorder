@@ -53,13 +53,14 @@ void main() {
 
     test('read in another time zone, the name keeps its time', () {
       // An M4A stores a moment, read back in the phone's current zone; the
-      // name holds the clock time where it was recorded.
+      // name holds the clock time where it was recorded. Each shift is from
+      // the zone it was recorded in to the one it is read in, on 14 July.
       final named = DateTime(2026, 7, 14, 1, 30);
       for (final shift in const [
-        Duration(hours: -6), // recorded in Paris, read in New York
-        Duration(hours: 9, minutes: 30), // Darwin
-        Duration(hours: 5, minutes: 45), // Kathmandu
-        Duration(hours: -23), // Auckland to Honolulu
+        Duration(hours: -6), // Paris (UTC+2) to New York (UTC-4)
+        Duration(hours: 9, minutes: 30), // Reykjavik (UTC) to Darwin
+        Duration(hours: 5, minutes: 45), // Reykjavik (UTC) to Kathmandu
+        Duration(hours: -23), // Auckland (UTC+12) to Pago Pago (UTC-11)
       ]) {
         final f = file(
           '2026_07_14_01_30_00.m4a',
