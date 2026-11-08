@@ -79,14 +79,13 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     _app = AppScope.read(context);
     if (!_loaded) {
       _loaded = true;
-      _app.refreshFiles();
       // Android: until a folder is chosen there is nothing to list, and old
-      // recordings would look lost. Ask for it (this also refreshes the list).
-      if (!_app.store.isReady) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) showChooseFolderDialog(context);
-        });
-      }
+      // recordings would look lost. Ask for it (this also refreshes the list),
+      // but only once the app has started: until then the folder chosen
+      // earlier isn't known yet (refreshFiles waits for that).
+      _app.refreshFiles().then((_) {
+        if (mounted && !_app.store.isReady) showChooseFolderDialog(context);
+      });
     }
   }
 
@@ -780,9 +779,10 @@ class _SeekSectionState extends State<_SeekSection> {
   /// Where the thumb is while the user drags it (0..1).
   double? _drag;
 
-  /// The controls react to a tap, not to a recording in progress.
+  /// The controls react to a tap, not to a recording in progress (also while
+  /// it starts or is being saved, like the play button).
   bool _blocked(AppController app) {
-    if (!app.isRecording) return false;
+    if (!app.isRecording && !app.isBusy) return false;
     showToast(context, "Can't play while recording");
     return true;
   }
