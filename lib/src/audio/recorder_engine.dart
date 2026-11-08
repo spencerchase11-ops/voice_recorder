@@ -305,8 +305,8 @@ class RecordPluginEngine implements RecorderEngine {
   Timer? _routeTimer;
 
   /// iOS, M4A: the app was opened while the audio session couldn't be had
-  /// for a recorder the system paused (see [_askAgainLater]); [_asking]
-  /// while one of its resumes is under way.
+  /// for an interrupted recording (see [_askAgainLater]); [_asking] while
+  /// one of its resumes is under way.
   Timer? _askTimer;
   bool _asking = false;
 
@@ -657,14 +657,15 @@ class RecordPluginEngine implements RecorderEngine {
   }
 
   /// iOS, M4A: the app was opened while it couldn't have the audio session
-  /// for a recorder the system paused (another app plays, or a call has
-  /// it), and the interruption's end may never come. While the app stays
-  /// open, [resume] asks again now and then: once the session is free, the
-  /// recording ends (saved) as on opening the app then. Any interruption
+  /// for an interrupted recording (another app plays, or a call has it),
+  /// and the interruption's end may never come. While the app stays open,
+  /// [resume] asks again now and then: once the session is free, the
+  /// recording goes on (a pause the plugin made) or ends, saved (a recorder
+  /// the system paused), as on opening the app then. Any interruption
   /// event, the user's pause or resume, leaving the app or the end of the
   /// recording stops it.
   void _askAgainLater() {
-    if (!_systemPaused) return;
+    if (!_sessionInterrupted || !_paused) return;
     _askTimer ??= Timer.periodic(_resumeCheck, (_) {
       if (!_running ||
           _stopping ||
@@ -672,7 +673,6 @@ class RecordPluginEngine implements RecorderEngine {
           !_paused ||
           _userPaused ||
           !_sessionInterrupted ||
-          !_systemPaused ||
           // The wait after the session was had decides.
           _resumeTimer != null ||
           !_inForeground()) {

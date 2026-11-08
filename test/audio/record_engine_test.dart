@@ -1145,6 +1145,30 @@ void main() {
       expect(ends, isEmpty);
     });
 
+    test(
+      "M4A: one record_ios paused itself for another app's audio goes on once "
+      'nothing plays, with the app still open',
+      () async {
+        await engine.start(m4aBest, '${dir.path}/m12g.m4a');
+        calls.add(began());
+        platform.emit(RecordState.pause); // record_ios paused it this time
+        await settle(10);
+        othersPlay = true;
+        await expectLater(
+          engine.resume(byUser: false),
+          throwsA(isA<OtherAudioPlaying>()),
+        );
+        await settle(200);
+        expect(platform.resumes, 0);
+        othersPlay = false;
+        await eventually(() => platform.resumes == 1);
+        expect(platform.state, RecordState.record);
+        expect(interruptions.last, isFalse);
+        expect(ends, isEmpty);
+        await engine.stop();
+      },
+    );
+
     test('M4A: opened during a call that ends without saying so, with the app '
         'still open it ends after the wait', () async {
       await engine.start(m4aBest, '${dir.path}/m12f.m4a');

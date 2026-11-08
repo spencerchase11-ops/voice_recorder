@@ -37,6 +37,7 @@ void main() {
     },
     bool ready = true,
     bool isAndroid = false,
+    Duration othersNoticeDelay = const Duration(milliseconds: 30),
   }) async {
     SharedPreferences.setMockInitialValues(prefs);
     settings = await Settings.load();
@@ -57,6 +58,7 @@ void main() {
       workDir: () async => work,
       isAndroid: isAndroid,
       clock: () => DateTime(2026, 9, 23, 19, 14, 5),
+      othersNoticeDelay: othersNoticeDelay,
     );
     addTearDown(app.dispose);
     return app;
@@ -445,44 +447,87 @@ void main() {
       },
     );
 
-    test("iPhone: opened while another app's audio holds the recording up, it "
-        'says once that stopping saves it', () async {
-      await (await build()).init();
-      final notices = <String>[];
-      app.notices.listen(notices.add);
-      await app.toggleRecord();
-      engine.interruptController.add(true);
-      await Future<void>.delayed(Duration.zero);
-      engine.resumeError = const OtherAudioPlaying();
-      await app.onResume();
-      await Future<void>.delayed(Duration.zero);
-      expect(notices, [
-        'The recording is paused while another app plays audio. Tap the '
-            'stop button to save it.',
-      ]);
-      expect(app.isRecording, isTrue);
-      await app.onResume(); // the same interruption: said already
-      await Future<void>.delayed(Duration.zero);
-      expect(notices, hasLength(1));
-      // Resumed, then interrupted again: said again.
-      engine.interruptController
-        ..add(false)
-        ..add(true);
-      await Future<void>.delayed(Duration.zero);
-      await app.onResume();
-      await Future<void>.delayed(Duration.zero);
-      expect(notices, hasLength(2));
-      // Any other reason (a call has the audio session) says nothing.
-      engine.resumeError = StateError('The audio session is in use');
-      engine.interruptController
-        ..add(false)
-        ..add(true);
-      await Future<void>.delayed(Duration.zero);
-      await app.onResume();
-      await Future<void>.delayed(Duration.zero);
-      expect(notices, hasLength(2));
-      expect(await app.toggleRecord(), RecordOutcome.stopped);
-    });
+    group(
+      "iPhone: opened while another app's audio holds the recording up",
+      () {
+        const told =
+            "Another app's audio has paused the recording, and it may not be "
+            'able to go on. To save it, tap the stop button.';
+        Future<void> past() =>
+            Future<void>.delayed(const Duration(milliseconds: 80));
+
+        test('it says once, a moment later, that stopping saves it', () async {
+          await (await build()).init();
+          final notices = <String>[];
+          app.notices.listen(notices.add);
+          await app.toggleRecord();
+          engine.interruptController.add(true);
+          await Future<void>.delayed(Duration.zero);
+          engine.resumeError = const OtherAudioPlaying();
+          await app.onResume();
+          await past();
+          expect(notices, [told]);
+          expect(app.isRecording, isTrue);
+          await app.onResume(); // the same interruption: said already
+          await past();
+          expect(notices, hasLength(1));
+          // Resumed, then interrupted again: said again.
+          engine.interruptController
+            ..add(false)
+            ..add(true);
+          await Future<void>.delayed(Duration.zero);
+          await app.onResume();
+          await past();
+          expect(notices, hasLength(2));
+          // Any other reason (a call has the audio session) says nothing.
+          engine.resumeError = StateError('The audio session is in use');
+          engine.interruptController
+            ..add(false)
+            ..add(true);
+          await Future<void>.delayed(Duration.zero);
+          await app.onResume();
+          await past();
+          expect(notices, hasLength(2));
+          expect(await app.toggleRecord(), RecordOutcome.stopped);
+        });
+
+        test('nothing is said if it goes on meanwhile (a call screen just '
+            'dismissed), is stopped, or the app is left', () async {
+          await (await build()).init();
+          final notices = <String>[];
+          app.notices.listen(notices.add);
+          await app.toggleRecord();
+          engine.interruptController.add(true);
+          await Future<void>.delayed(Duration.zero);
+          engine.resumeError = const OtherAudioPlaying();
+          await app.onResume();
+          engine.interruptController.add(false); // the end said "resume"
+          await past();
+          expect(notices, isEmpty);
+
+          engine.interruptController.add(true);
+          await Future<void>.delayed(Duration.zero);
+          await app.onResume();
+          app.setForeground(false);
+          await past();
+          app.setForeground(true);
+          await Future<void>.delayed(Duration.zero);
+          expect(notices, isEmpty);
+          await app.onResume(); // back: said now
+          await past();
+          expect(notices, [told]);
+
+          engine.interruptController
+            ..add(false)
+            ..add(true);
+          await Future<void>.delayed(Duration.zero);
+          await app.onResume();
+          expect(await app.toggleRecord(), RecordOutcome.stopped);
+          await past();
+          expect(notices, hasLength(1));
+        });
+      },
+    );
 
     test(
       'storage failing mid-recording stops it with an explanation',

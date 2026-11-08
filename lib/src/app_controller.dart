@@ -99,6 +99,7 @@ class AppController extends ChangeNotifier {
     DateTime Function()? clock,
     Stream<void>? mediaResets,
     this._configureAudio,
+    this._othersNoticeDelay = const Duration(seconds: 3),
   }) : _clock = clock ?? DateTime.now,
        _info = info ?? RecordingInfoCache(),
        _sortOrder = settings.sortOrder,
@@ -129,6 +130,11 @@ class AppController extends ChangeNotifier {
   /// Sets up the audio session again (after a reset of iOS's media
   /// services).
   final Future<void> Function()? _configureAudio;
+
+  /// How long another app's audio must still hold the recording up before
+  /// the user is told (see [onResume]).
+  final Duration _othersNoticeDelay;
+  Timer? _othersNotice;
   StreamSubscription<void>? _resetSub;
   StreamSubscription<void>? _noisySub;
 
@@ -774,13 +780,16 @@ class AppController extends ChangeNotifier {
     }
     final date = named ?? file.modified;
     // A cached date is in the file too, unless it is marked as known only
-    // here, or came from 1.0.x's cache, which didn't mark one the file
-    // doesn't hold: that one is written (nothing changes if it is there).
-    if (known != null &&
-        date == known &&
-        !_info.dateOnlyHere(file) &&
-        !_info.dateMayBeOnlyHere(file)) {
-      return (date: known, failed: false, refused: _info.dateRefused(file));
+    // here. One from 1.0.x's cache, which didn't mark that, may be the only
+    // copy: the file is read to find out. A date it holds is left alone
+    // (written again, an M4A's moment would move to this time zone).
+    if (known != null && date == known && !_info.dateOnlyHere(file)) {
+      final inFile =
+          !_info.dateMayBeOnlyHere(file) ||
+          (await _safe(() => _readInfo(file)))?.recorded != null;
+      if (inFile) {
+        return (date: known, failed: false, refused: _info.dateRefused(file));
+      }
     }
     try {
       final ok =
@@ -803,14 +812,22 @@ class AppController extends ChangeNotifier {
         // another app that plays, see RecordPluginEngine.resume).
         await engine.resume(byUser: false);
       } on OtherAudioPlaying {
-        // iPhone, M4A: the recording can't go on until that is over, and
-        // would be lost if the app were closed meanwhile.
-        if (_recording && !_toldOthersPlay) {
-          _toldOthersPlay = true;
-          _notify(
-            'The recording is paused while another app plays audio. Tap the '
-            'stop button to save it.',
-          );
+        // iPhone, M4A: it may never go on (only an end that says so resumes
+        // it, and a call's end does), and it would be lost if the app were
+        // closed meanwhile. Told only if it still holds a moment later: a
+        // call screen or Siri just dismissed may be about to let it go on.
+        if (!_toldOthersPlay) {
+          _othersNotice ??= Timer(_othersNoticeDelay, () {
+            _othersNotice = null;
+            if (_disposed || !_recording || !_interrupted || _paused) return;
+            // Left meanwhile: the next return tells.
+            if (!_inForeground || _toldOthersPlay) return;
+            _toldOthersPlay = true;
+            _notify(
+              "Another app's audio has paused the recording, and it may not "
+              'be able to go on. To save it, tap the stop button.',
+            );
+          });
         }
       } catch (e) {
         // Still in use (a call goes on): it stays paused, and resumes when
@@ -1002,6 +1019,8 @@ class AppController extends ChangeNotifier {
       _paused = false;
       _interrupted = false;
       _toldOthersPlay = false;
+      _othersNotice?.cancel();
+      _othersNotice = null;
       _level = 0;
       _stopwatch
         ..reset()
@@ -1013,7 +1032,12 @@ class AppController extends ChangeNotifier {
       });
       _interruptSub = engine.interrupted.listen((paused) {
         _interrupted = paused;
-        if (!paused) _toldOthersPlay = false;
+        if (!paused) {
+          // Over: a notice still waiting is no longer true.
+          _toldOthersPlay = false;
+          _othersNotice?.cancel();
+          _othersNotice = null;
+        }
         if (paused) _level = 0;
         _updateStopwatch();
         notifyListeners();
@@ -1479,7 +1503,10 @@ class AppController extends ChangeNotifier {
     // The date in the old name goes with it: keep it inside the file.
     final kept = await _keepDate(file);
     final renamed = await _safe(() => store.rename(file, clean));
-    if (renamed == null) return null;
+    if (renamed == null) {
+      await _afterFailedRename(file, kept);
+      return null;
+    }
     final info = AudioInfo(
       recorded: kept.date,
       duration: file.duration ?? _info[file]?.duration,
@@ -1498,6 +1525,29 @@ class AppController extends ChangeNotifier {
     _files = _sorted([for (final f in _files) f.id == file.id ? shown : f]);
     notifyListeners();
     return shown;
+  }
+
+  /// [file]'s rename failed after [_keepDate], whose write changes the
+  /// file's time (also one that failed and was undone): what the cache
+  /// knows goes with the file as it is now, as after a rename. Under the
+  /// old time it would match nothing, and a date known only there would be
+  /// lost from view.
+  Future<void> _afterFailedRename(
+    RecordingFile file,
+    ({DateTime? date, bool failed, bool refused}) kept,
+  ) async {
+    final now = await _safe(() => store.find(file.id));
+    if (now == null ||
+        RecordingInfoCache.keyOf(now) == RecordingInfoCache.keyOf(file)) {
+      return;
+    }
+    final info = AudioInfo(
+      recorded: kept.date,
+      duration: file.duration ?? _info[file]?.duration,
+    );
+    _info.move(file, now);
+    _info.put(now, info, onlyHere: kept.failed, refused: kept.refused);
+    _replaceFiles({file.id: now.withInfo(info)});
   }
 
   /// Moves [files] to Recently deleted. [DeletedRecordings] undoes it.
@@ -1940,6 +1990,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _ticker?.cancel();
+    _othersNotice?.cancel();
     _spaceTimer?.cancel();
     _levelSub?.cancel();
     _interruptSub?.cancel();

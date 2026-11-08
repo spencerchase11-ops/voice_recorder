@@ -26,6 +26,95 @@ List<int> _mp3([int count = 40]) => [
   ],
 ];
 
+/// An M4A whose movie header was created at [created].
+List<int> _m4a(DateTime created) {
+  List<int> box(String type, List<int> body) {
+    final size = 8 + body.length;
+    return [
+      (size >> 24) & 0xFF,
+      (size >> 16) & 0xFF,
+      (size >> 8) & 0xFF,
+      size & 0xFF,
+      ...type.codeUnits,
+      ...body,
+    ];
+  }
+
+  final mvhd = ByteData(20)
+    ..setUint32(4, created.millisecondsSinceEpoch ~/ 1000 + 2082844800)
+    ..setUint32(12, 1000)
+    ..setUint32(16, 1000);
+  return [
+    ...box('ftyp', 'M4A isom'.codeUnits),
+    ...box('mdat', List.filled(2000, 1)),
+    ...box(
+      'moov',
+      box('mvhd', [...mvhd.buffer.asUint8List(), ...List.filled(80, 0)]),
+    ),
+  ];
+}
+
+/// Like the real stores: writing to a file (or cutting it back) changes its
+/// time, even when the write fails, and a rename keeps the file as it is.
+class _TouchingStore extends FakeStore {
+  _TouchingStore({super.files, super.free});
+
+  var _tick = 0;
+
+  void _touch(String id) {
+    final i = files.indexWhere((f) => f.id == id);
+    if (i < 0) return;
+    files[i] = files[i].copyWith(
+      modified: DateTime(2026, 11, 8, 12, 0, ++_tick),
+      size: contents[id]?.length ?? files[i].size,
+    );
+  }
+
+  @override
+  Future<ByteAccess> openBytes(RecordingFile file, {bool write = false}) async {
+    final a = await super.openBytes(file, write: write);
+    return write ? _Touching(a, () => _touch(file.id)) : a;
+  }
+
+  @override
+  Future<RecordingFile?> renameTo(RecordingFile file, String fileName) =>
+      super.renameTo(
+        files.firstWhere((f) => f.id == file.id, orElse: () => file),
+        fileName,
+      );
+}
+
+class _Touching implements ByteAccess {
+  _Touching(this._a, this._touch);
+
+  final ByteAccess _a;
+  final void Function() _touch;
+
+  @override
+  Future<int> length() => _a.length();
+
+  @override
+  Future<Uint8List> read(int offset, int count) => _a.read(offset, count);
+
+  @override
+  Future<void> write(int offset, List<int> bytes) async {
+    try {
+      await _a.write(offset, bytes);
+    } finally {
+      _touch();
+    }
+  }
+
+  @override
+  Future<void> truncate(int length) async {
+    await _a.truncate(length);
+    _touch();
+  }
+
+  @override
+  Future<void> close() => _a.close();
+}
+
 RecordingFile _file(String name, DateTime modified) => RecordingFile(
   id: 'mem://$name',
   name: name,
@@ -202,6 +291,53 @@ void main() {
     expect(renamed!.date, recorded);
     expect(await inside(renamed), isNull);
     expect(app.datesToStore!.map((f) => f.name), ['team lunch.mp3']);
+  });
+
+  test("renamed, an M4A's own moment stays as it is, though 1.0.x cached its "
+      'clock time somewhere else (another time zone)', () async {
+    final moment = DateTime.utc(2026, 6, 1, 14);
+    final f = _file('lunch.m4a', DateTime(2026, 6, 1, 15));
+    // What 1.0.x showed, cached where the clock read otherwise.
+    final cached = moment.toLocal().add(const Duration(hours: 5));
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: cached, duration: const Duration(seconds: 1)),
+    );
+    store = FakeStore(files: [f], free: 1 << 30);
+    store.contents[f.id] = _m4a(moment);
+    await start();
+    await app.refreshFiles();
+    final renamed = await app.rename(row(f.name), 'team lunch');
+    expect(renamed!.date, cached);
+    expect(await inside(renamed), moment.toLocal());
+  });
+
+  test('a rename that fails after writing the date failed keeps the date '
+      'shown', () async {
+    final f = _file('lunch.mp3', DateTime(2016, 5, 23, 18, 44));
+    final recorded = DateTime(2016, 5, 23, 18, 14);
+    await cachedBy10(
+      f,
+      AudioInfo(recorded: recorded, duration: const Duration(seconds: 1)),
+    );
+    store = _TouchingStore(files: [f], free: 1 << 30);
+    store.contents[f.id] = _mp3();
+    store.roomFor[f.id] = 0; // the storage is full
+    await start();
+    await app.refreshFiles();
+    store.failRenames = true;
+    expect(await app.rename(row('lunch.mp3'), 'team lunch'), isNull);
+    expect(row('lunch.mp3').date, recorded);
+    await app.refreshFiles();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(row('lunch.mp3').date, recorded);
+    // Tried again, with room now: the date goes into the file.
+    store
+      ..failRenames = false
+      ..roomFor.clear();
+    final renamed = await app.rename(row('lunch.mp3'), 'team lunch');
+    expect(renamed!.date, recorded);
+    expect(await inside(renamed), recorded);
   });
 
   test('renamed again and again, the cache keeps it under its current name '
