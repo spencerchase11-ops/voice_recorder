@@ -18,6 +18,9 @@ import android.os.StatFs
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.Settings
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -60,6 +63,12 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
     /** Documents opened for random access, by handle. Only used on [io]. */
     private val documents = HashMap<Int, OpenDocument>()
     private var nextHandle = 1
+
+    /**
+     * Folders found this run to create files but not rename them, where a
+     * hidden copy would only be made to be deleted again. Only used on [io].
+     */
+    private val noRename = HashSet<String>()
 
     private val activity: Activity? get() = binding?.activity
 
@@ -527,81 +536,227 @@ class NativePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandl
      * Copies a finished recording into the folder. The copy is made under a
      * hidden name (out of the list, like Recently deleted) and gets the real
      * one only once complete, so a copy cut off by the app or the phone
-     * dying never passes for the recording. The source stays until this
-     * returns, and is saved again on the next launch.
+     * dying never passes for the recording. A folder that can't rename files
+     * gets it under the real name from the start, as before. The source
+     * stays until this returns, and is saved again on the next launch.
      */
     private fun importFile(tree: Uri, sourcePath: String, displayName: String, mimeType: String): Map<String, Any?>? {
-        val resolver = context.contentResolver
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val source = File(sourcePath)
         // Use the MIME type Android associates with the extension so the
         // provider keeps our file name unchanged.
         val ext = displayName.substringAfterLast('.', "").lowercase()
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: mimeType
-        val record = File(File(context.noBackupFilesDir, "unfinished"), displayName)
-        removeUnfinishedCopy(record, source.length())
+        val records = File(File(context.noBackupFilesDir, "unfinished"), displayName)
+        removeUnfinishedCopies(records, source.length())
+        val hidden = if (tree.toString() in noRename) null else saveHidden(tree, parent, mime, displayName, source, records)
+        val saved = hidden ?: saveDirectly(parent, mime, displayName, source)
+        // The recording is in the folder now, in full: copies that earlier
+        // saves of it left are of no use any more, whatever their size.
+        removeUnfinishedCopies(records, Long.MAX_VALUE)
+        return stat(saved)
+    }
+
+    /**
+     * Saves through a hidden copy, renamed once complete. Null when the
+     * recording should be saved under its real name instead: the folder
+     * can't rename files, or the copy couldn't be recorded. The hidden copy
+     * is deleted again then; one the folder won't delete stays in [records].
+     */
+    private fun saveHidden(
+        tree: Uri,
+        parent: Uri,
+        mime: String,
+        displayName: String,
+        source: File,
+        records: File,
+    ): Uri? {
+        val resolver = context.contentResolver
         val target = DocumentsContract.createDocument(resolver, parent, mime, SAVING_PREFIX + displayName)
             ?: throw IllegalStateException("Could not create $displayName")
         try {
-            record.parentFile?.mkdirs()
-            record.writeText(target.toString())
+            // Added to the copies earlier saves couldn't remove, never in
+            // place of them, so none is lost track of.
+            writeRecords(records, readRecords(records) + target.toString())
         } catch (e: IOException) {
-            // The phone may be full: only a later clean-up is lost.
+            // Unrecorded, a copy cut off later would stay hidden in the folder
+            // for good. Internal storage is likely full, which is all the more
+            // reason to move the recording out of it.
+            try {
+                delete(target)
+            } catch (cleanup: Exception) {
+                // Nothing was copied into it yet: only an empty file is left.
+            }
+            return null
         }
         val saved = try {
-            FileInputStream(source).use { input ->
-                val output = context.contentResolver.openOutputStream(target, "w")
-                    ?: throw IllegalStateException("Could not open $displayName")
-                output.use {
-                    input.copyTo(it, 256 * 1024)
-                    it.flush()
-                    // The source is deleted as soon as we return: make sure the copy is on
-                    // disk. Best effort; not every provider's descriptor supports it.
-                    try {
-                        (it as? FileOutputStream)?.fd?.sync()
-                    } catch (e: IOException) {
-                    }
+            if (canRename(target)) {
+                copy(source, target, displayName)
+                try {
+                    // A name in use gets a " (1)" from the provider, as before.
+                    // Null on Android 7, which reports every refusal that way.
+                    DocumentsContract.renameDocument(resolver, target, displayName)
+                } catch (e: UnsupportedOperationException) {
+                    // It said it could, but can't after all.
+                    null
                 }
+            } else {
+                null
             }
-            // A name in use gets a " (1)" from the provider, as before.
-            DocumentsContract.renameDocument(resolver, target, displayName)
-                ?: throw IllegalStateException("Could not name $displayName")
+        } catch (e: Exception) {
+            discard(records, target, e)
+            throw e
+        }
+        if (saved != null) {
+            dropRecord(records, target)
+            return saved
+        }
+        // The folder can create files but not rename them (e.g. a phone or a
+        // camera over USB). The source is still there in full, so the hidden
+        // copy can go.
+        noRename.add(tree.toString())
+        discard(records, target, null)
+        return null
+    }
+
+    /**
+     * Saves the way it was done before hidden copies, under the real name
+     * from the start: for a folder that can't rename files, or when a hidden
+     * copy couldn't be recorded. A name in use gets a " (1)" from the
+     * provider, so no other file is written over.
+     */
+    private fun saveDirectly(parent: Uri, mime: String, displayName: String, source: File): Uri {
+        val target = DocumentsContract.createDocument(context.contentResolver, parent, mime, displayName)
+            ?: throw IllegalStateException("Could not create $displayName")
+        try {
+            copy(source, target, displayName)
         } catch (e: Exception) {
             try {
-                if (DocumentsContract.deleteDocument(resolver, target)) record.delete()
+                DocumentsContract.deleteDocument(context.contentResolver, target)
             } catch (cleanup: Exception) {
                 e.addSuppressed(cleanup)
             }
             throw e
         }
-        record.delete()
-        return stat(saved)
+        return target
+    }
+
+    /** Copies all of [source] into [target], which is new and empty. */
+    private fun copy(source: File, target: Uri, displayName: String) {
+        FileInputStream(source).use { input ->
+            val output = context.contentResolver.openOutputStream(target, "w")
+                ?: throw IllegalStateException("Could not open $displayName")
+            output.use {
+                input.copyTo(it, 256 * 1024)
+                it.flush()
+                // The source is deleted as soon as we return: make sure the copy is on
+                // disk. Best effort; not every provider's descriptor supports it.
+                try {
+                    (it as? FileOutputStream)?.fd?.sync()
+                } catch (e: IOException) {
+                }
+            }
+        }
+    }
+
+    /** Whether the folder says it can rename [doc]; true when it doesn't say. */
+    private fun canRename(doc: Uri): Boolean = try {
+        context.contentResolver.query(doc, arrayOf(Document.COLUMN_FLAGS), null, null, null)?.use { c ->
+            !c.moveToFirst() || c.isNull(0) || (c.getInt(0) and Document.FLAG_SUPPORTS_RENAME) != 0
+        } ?: true
+    } catch (e: Exception) {
+        true
     }
 
     /**
-     * Deletes the partial copy that an earlier save of the same recording
-     * left when the app or the phone died during it ([record] names that
-     * document). Only that document, only while it still has the hidden name,
-     * and only if it is no larger than the recording, which is about to be
-     * copied again in full.
+     * Deletes [target], a hidden copy that won't be finished, and its record.
+     * The record stays if the folder won't delete it, for a later save to
+     * try again.
      */
-    private fun removeUnfinishedCopy(record: File, sourceLength: Long) {
-        if (!record.exists()) return
+    private fun discard(records: File, target: Uri, error: Exception?) {
         try {
-            val left = Uri.parse(record.readText())
-            val m = stat(left)
-            val name = m?.get("name") as? String
-            val size = m?.get("size") as? Long
-            if (m == null || name?.startsWith(SAVING_PREFIX) != true) {
-                // Gone, or it got its real name after all.
-                record.delete()
-            } else if (size != null && size <= sourceLength &&
-                DocumentsContract.deleteDocument(context.contentResolver, left)
-            ) {
-                record.delete()
-            }
+            if (delete(target)) dropRecord(records, target)
+        } catch (cleanup: Exception) {
+            error?.addSuppressed(cleanup)
+        }
+    }
+
+    /**
+     * Deletes the partial copies that earlier saves of the same recording
+     * left when the app or the phone died during them ([records] names those
+     * documents). Only those documents, only while they still have the hidden
+     * name, and only if no larger than [limit]: before a save, the length of
+     * the recording, which is about to be copied again in full. One that
+     * can't be checked or deleted now keeps its record, for the next save.
+     */
+    private fun removeUnfinishedCopies(records: File, limit: Long) {
+        try {
+            val docs = readRecords(records)
+            if (docs.isEmpty()) return
+            val kept = docs.filterNot { removeUnfinishedCopy(Uri.parse(it), limit) }
+            if (kept.size < docs.size) writeRecords(records, kept)
         } catch (e: Exception) {
-            // The folder can't be reached now: the next save tries again.
+            // The list can't be read or written now: it stays as it was.
+            // Records of copies deleted meanwhile are dropped next time.
+        }
+    }
+
+    /** Whether [doc] is gone now (see [removeUnfinishedCopies]). */
+    private fun removeUnfinishedCopy(doc: Uri, limit: Long): Boolean = try {
+        val m = stat(doc)
+        val name = m?.get("name") as? String
+        val size = m?.get("size") as? Long
+        when {
+            // Gone, or it got its real name after all.
+            m == null || name?.startsWith(SAVING_PREFIX) != true -> true
+            size != null && size <= limit -> delete(doc)
+            else -> false
+        }
+    } catch (e: Exception) {
+        // The folder can't be reached now.
+        false
+    }
+
+    private fun dropRecord(records: File, doc: Uri) {
+        try {
+            writeRecords(records, readRecords(records).filter { it != doc.toString() })
+        } catch (e: IOException) {
+            // Left in, it is dropped at the next clean-up: its document is
+            // gone by then, or has its real name.
+        }
+    }
+
+    /** The documents in [records], one per line: copies that were never finished. */
+    private fun readRecords(records: File): List<String> =
+        if (records.exists()) records.readLines().filter { it.isNotBlank() } else emptyList()
+
+    /**
+     * Replaces [records] with [docs] in one step, on disk before it returns,
+     * so a power cut leaves the old list or the new one, never part of one.
+     */
+    private fun writeRecords(records: File, docs: List<String>) {
+        if (docs.isEmpty()) {
+            if (records.exists() && !records.delete()) throw IOException("Could not delete $records")
+            return
+        }
+        val dir = records.parentFile ?: throw IOException("No folder for $records")
+        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("Could not make $dir")
+        val temp = File(dir, records.name + ".new")
+        FileOutputStream(temp).use {
+            it.write(docs.joinToString("\n", postfix = "\n").toByteArray())
+            it.fd.sync()
+        }
+        if (!temp.renameTo(records)) throw IOException("Could not write $records")
+        // The rename only survives a power cut once the folder is synced too.
+        // Best effort.
+        try {
+            val fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+            try {
+                Os.fsync(fd)
+            } finally {
+                Os.close(fd)
+            }
+        } catch (e: ErrnoException) {
         }
     }
 
