@@ -21,7 +21,18 @@ class _FakeRecordPlatform extends RecordPlatform {
   var pauses = 0;
   var resumes = 0;
 
-  void emit(RecordState s) => _states.add(s);
+  /// The plugin's state as it last reported it (record_ios: m_state).
+  var state = RecordState.stop;
+
+  void emit(RecordState s) {
+    state = s;
+    _states.add(s);
+  }
+
+  /// iOS has paused the M4A recorder for an interruption: record_ios's pause
+  /// does nothing then (its recorder isn't recording), so its state stays
+  /// "record".
+  var systemPaused = false;
 
   @override
   Future<void> create(String recorderId) async {}
@@ -30,7 +41,12 @@ class _FakeRecordPlatform extends RecordPlatform {
     String recorderId,
     RecordConfig config, {
     required String path,
-  }) async {}
+  }) async {
+    // Not reported here: the tests follow the timer from the first
+    // interruption on.
+    recording = true;
+    state = RecordState.record;
+  }
 
   /// Whether the platform recorder runs (record_ios: its state isn't "stop").
   var recording = false;
@@ -87,6 +103,7 @@ class _FakeRecordPlatform extends RecordPlatform {
   Future<void> pause(String recorderId) async {
     pauses++;
     if (pauseError != null) throw pauseError!;
+    if (systemPaused) return;
     emit(RecordState.pause);
   }
 
@@ -95,8 +112,9 @@ class _FakeRecordPlatform extends RecordPlatform {
   @override
   Future<void> resume(String recorderId) async {
     resumes++;
-    // record_ios ignores a resume when it isn't paused (e.g. stopped).
-    if (!recording) return;
+    // record_ios ignores a resume when it isn't paused (e.g. stopped, or
+    // paused by the system without it noticing).
+    if (!recording || state != RecordState.pause) return;
     if (resumeError != null) throw resumeError!;
     emit(RecordState.record);
   }
@@ -104,7 +122,8 @@ class _FakeRecordPlatform extends RecordPlatform {
   @override
   Future<bool> isRecording(String recorderId) async => recording;
   @override
-  Future<bool> isPaused(String recorderId) async => false;
+  Future<bool> isPaused(String recorderId) async =>
+      recording && state == RecordState.pause;
   @override
   Future<bool> hasPermission(String recorderId, {bool request = true}) async =>
       true;
@@ -305,6 +324,21 @@ void main() {
     },
   );
 
+  test('the level meter shows about 10 levels a second', () async {
+    final levels = <double>[];
+    engine.levels.listen(levels.add);
+    await engine.start(wavBest, '${dir.path}/l.wav');
+    for (var i = 0; i < 5; i++) {
+      platform.bytes!.add(_tone(441));
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(levels, hasLength(1)); // the first at once, then held back
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await feed(_tone(441));
+    expect(levels, hasLength(2));
+    await engine.stop();
+  });
+
   test('noise reduction reaches the platform', () async {
     await engine.start(wavBest, '${dir.path}/n.wav', noiseReduction: true);
     expect(platform.config!.noiseSuppress, isTrue); // Android
@@ -353,6 +387,9 @@ void main() {
     late List<bool> interruptions;
     late bool foreground;
 
+    /// Whether the audio session can be had (not during a call).
+    late bool sessionFree;
+
     RecordPluginEngine iosEngine({
       List<Duration> restartDelays = const [
         Duration(milliseconds: 20),
@@ -370,6 +407,7 @@ void main() {
         resumeCheck: resumeCheck,
         routeCheck: const Duration(milliseconds: 50),
         inForeground: () => foreground,
+        activateSession: () async => sessionFree,
       );
       ends = [];
       e.ended.listen(ends.add);
@@ -380,6 +418,7 @@ void main() {
 
     setUp(() {
       foreground = true;
+      sessionFree = true;
       calls = StreamController<AudioInterruptionEvent>.broadcast();
       routes = StreamController<void>.broadcast();
       resets = StreamController<void>.broadcast();
@@ -731,6 +770,82 @@ void main() {
       );
       await settle(500);
       expect(ends, isEmpty);
+    });
+
+    final m4aBest = RecordingProfile.of(
+      RecordingType.m4a,
+      RecordingQuality.best,
+    );
+
+    test('M4A: an interruption over without "should resume" ends the '
+        'recording, saved', () async {
+      await engine.start(m4aBest, '${dir.path}/m1.m4a');
+      // iOS pauses the recorder for it; record_ios doesn't notice.
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      expect(interruptions, [true]);
+      // Over: record_ios only resumes the recorder on "should resume", and
+      // its own resume does nothing now (its state never left "record").
+      calls.add(over());
+      await settle(10);
+      expect(ends, [CaptureEnd.stopped]);
+      // Back in the app: AppController.onResume changes nothing.
+      await engine.resume();
+      await settle(10);
+      expect(ends, [CaptureEnd.stopped]);
+      await engine.stop();
+    });
+
+    test('M4A: an interruption that never says it ended ends the recording '
+        'once the app has the audio session again', () async {
+      await engine.start(m4aBest, '${dir.path}/m2.m4a');
+      platform.systemPaused = true;
+      calls.add(began()); // another app's audio; no end ever comes
+      await settle(10);
+      expect(ends, isEmpty);
+      // Back in the app: AppController.onResume resumes it.
+      await engine.resume();
+      await settle(10);
+      expect(ends, [CaptureEnd.stopped]);
+      await engine.stop();
+    });
+
+    test("M4A: opened during a call, it stays paused; the call's end "
+        'resumes it', () async {
+      await engine.start(m4aBest, '${dir.path}/m3.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      sessionFree = false; // the call has the audio session
+      await expectLater(engine.resume(), throwsStateError);
+      await settle(10);
+      expect(ends, isEmpty);
+      expect(interruptions, [true]);
+      // The call ends: record_ios resumes the recorder itself.
+      platform.systemPaused = false;
+      calls.add(over(resume: true));
+      await settle(10);
+      expect(interruptions, [true, false]);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test('M4A: one the user paused before an interruption resumes as '
+        'usual after it', () async {
+      await engine.start(m4aBest, '${dir.path}/m4.m4a');
+      await engine.pause(); // record_ios's own pause, which it can resume
+      platform.systemPaused = true;
+      calls.add(began());
+      calls.add(over());
+      await settle(10);
+      expect(ends, isEmpty);
+      await engine.resume();
+      await settle(10);
+      expect(platform.state, RecordState.record);
+      expect(interruptions, [false]);
+      expect(ends, isEmpty);
+      await engine.stop();
     });
 
     test('M4A is not started again (it would replace the file)', () async {
