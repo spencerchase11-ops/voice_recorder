@@ -111,8 +111,9 @@ Uint8List downmixToMono(Uint8List stereo) {
 /// iOS, M4A: the plugin can't resume a recorder the system paused for an
 /// interruption unless the interruption ends with "should resume", and
 /// starting it again would replace the file. Such a recording ends (saved)
-/// once the interruption is over without that, or once the app is opened
-/// with the audio session free again.
+/// once the interruption is over without that, or soon after the app is
+/// opened with the audio session free again if no end comes meanwhile.
+/// While a call has the audio session, nothing is resumed.
 class RecordPluginEngine implements RecorderEngine {
   /// The streams stand in for the audio session's, the durations for the
   /// real ones, and [activateSession] for taking the audio session (tests).
@@ -193,7 +194,7 @@ class RecordPluginEngine implements RecorderEngine {
   /// a moment (the stall clock is also reset by the plugin's state events).
   int _chunks = 0;
 
-  /// Between a successful start and the end of [stop].
+  /// Between a successful start and the end of [stop] (or [dispose]).
   bool _running = false;
   bool _stopping = false;
 
@@ -219,7 +220,9 @@ class RecordPluginEngine implements RecorderEngine {
   /// Waits between attempts to start capture again.
   final List<Duration> _restartDelays;
 
-  /// How long after an interruption ends the capture must be flowing again.
+  /// How long after an interruption ends the capture must be flowing again
+  /// (MP3 and WAV), and how long its end may still take once the audio
+  /// session is free again (M4A).
   final Duration _resumeCheck;
 
   /// How long after a route change (or a reset) audio must be arriving.
@@ -256,8 +259,9 @@ class RecordPluginEngine implements RecorderEngine {
   /// interruption ends with "should resume"; nothing else can.
   bool _systemPaused = false;
 
-  /// Checks after an interruption's end and after a route change; they
-  /// belong to one recording.
+  /// Checks after an interruption's end and after a route change, and the
+  /// wait for an interruption's end (M4A, see [resume]); they belong to one
+  /// recording.
   Timer? _resumeTimer;
   Timer? _routeTimer;
 
@@ -554,9 +558,10 @@ class RecordPluginEngine implements RecorderEngine {
     _sessionSub = events.listen((e) {
       if (!_running || _stopping) return;
       _sessionInterrupted = e.begin;
+      // This event decides now, or (a new interruption) its end will.
+      _resumeTimer?.cancel();
+      _resumeTimer = null;
       if (_restartable != null) {
-        _resumeTimer?.cancel();
-        _resumeTimer = null;
         if (e.begin) return;
         final chunks = _chunks;
         _resumeTimer = Timer(_resumeCheck, () {
@@ -815,19 +820,38 @@ class RecordPluginEngine implements RecorderEngine {
       if (!_paused || _userPaused || _recovery != null) return;
     }
     if (_restartable == null) {
-      if (!_isAndroid && _systemPaused && !await _platformPaused()) {
-        // iOS: a recorder the system paused, which the plugin's resume
-        // doesn't resume (see [_systemPaused]). While a call still has the
-        // audio session, its end may: until then it stays paused. Once the
-        // session is free again (an interruption iOS never said was over,
-        // e.g. another app's audio), the recording can't go on.
-        if (_sessionInterrupted && !await _activateSession()) {
-          // Stopped, or resumed by the call's end, meanwhile.
-          if (!_running || _stopping || !_systemPaused) return;
+      if (!_isAndroid && _sessionInterrupted) {
+        // iOS: while a call has the audio session, the recorder can't record
+        // again, whoever paused it. Even the plugin's resume of its own
+        // pause would report "recording" (record_ios ignores the recorder
+        // refusing), and the timer would run over nothing. It stays paused:
+        // the call's end may resume it, or the next return to the app.
+        final free = await _activateSession();
+        // Stopped, ended, or resumed by the call's end, meanwhile.
+        if (!_running || _stopping || _endedSent || !_paused) return;
+        if (!free) {
           _userPaused = wasUserPaused;
           throw StateError('The audio session is in use');
         }
-        if (_systemPaused) _endedOnItsOwn(CaptureEnd.stopped);
+      }
+      if (!_isAndroid && _systemPaused && !await _platformPaused()) {
+        // iOS: a recorder the system paused, which the plugin's resume
+        // doesn't resume (see [_systemPaused]).
+        if (!_running || _stopping || _endedSent || !_systemPaused) return;
+        if (_sessionInterrupted) {
+          // The audio session is free, but the interruption's end hasn't
+          // arrived. The interrupter may only just have let go (a call
+          // screen dismissed): an end with "should resume" may be on its
+          // way, and the plugin resumes the recorder then. Without one
+          // (another app's audio, which iOS may never say is over), the
+          // recording can't go on.
+          _resumeTimer ??= Timer(_resumeCheck, () {
+            _resumeTimer = null;
+            unawaited(_endIfStuck());
+          });
+        } else {
+          _endedOnItsOwn(CaptureEnd.stopped);
+        }
         return;
       }
       try {
@@ -941,6 +965,10 @@ class RecordPluginEngine implements RecorderEngine {
 
   @override
   Future<void> dispose() async {
+    // Whatever is still under way (a check, or a resume waiting for the
+    // platform) must find the recording over: the streams are closed below,
+    // and nothing may be reported after that.
+    _running = false;
     _watchdog?.cancel();
     _cancelChecks();
     await _sessionSub?.cancel();

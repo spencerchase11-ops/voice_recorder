@@ -121,9 +121,18 @@ class _FakeRecordPlatform extends RecordPlatform {
 
   @override
   Future<bool> isRecording(String recorderId) async => recording;
+
+  /// Holds the next isPaused until completed.
+  Completer<void>? pausedGate;
+
   @override
-  Future<bool> isPaused(String recorderId) async =>
-      recording && state == RecordState.pause;
+  Future<bool> isPaused(String recorderId) async {
+    final gate = pausedGate;
+    pausedGate = null;
+    await gate?.future;
+    return recording && state == RecordState.pause;
+  }
+
   @override
   Future<bool> hasPermission(String recorderId, {bool request = true}) async =>
       true;
@@ -390,6 +399,10 @@ void main() {
     /// Whether the audio session can be had (not during a call).
     late bool sessionFree;
 
+    /// Holds the next attempt to take the audio session until completed,
+    /// with its result.
+    Completer<bool>? sessionGate;
+
     RecordPluginEngine iosEngine({
       List<Duration> restartDelays = const [
         Duration(milliseconds: 20),
@@ -407,7 +420,11 @@ void main() {
         resumeCheck: resumeCheck,
         routeCheck: const Duration(milliseconds: 50),
         inForeground: () => foreground,
-        activateSession: () async => sessionFree,
+        activateSession: () {
+          final gate = sessionGate;
+          sessionGate = null;
+          return gate?.future ?? Future.value(sessionFree);
+        },
       );
       ends = [];
       e.ended.listen(ends.add);
@@ -419,6 +436,7 @@ void main() {
     setUp(() {
       foreground = true;
       sessionFree = true;
+      sessionGate = null;
       calls = StreamController<AudioInterruptionEvent>.broadcast();
       routes = StreamController<void>.broadcast();
       resets = StreamController<void>.broadcast();
@@ -778,7 +796,7 @@ void main() {
     );
 
     test('M4A: an interruption over without "should resume" ends the '
-        'recording, saved', () async {
+        'recording', () async {
       await engine.start(m4aBest, '${dir.path}/m1.m4a');
       // iOS pauses the recorder for it; record_ios doesn't notice.
       platform.systemPaused = true;
@@ -798,18 +816,65 @@ void main() {
     });
 
     test('M4A: an interruption that never says it ended ends the recording '
-        'once the app has the audio session again', () async {
+        'a moment after the app has the audio session again', () async {
+      engine = iosEngine(resumeCheck: const Duration(milliseconds: 300));
       await engine.start(m4aBest, '${dir.path}/m2.m4a');
       platform.systemPaused = true;
       calls.add(began()); // another app's audio; no end ever comes
       await settle(10);
       expect(ends, isEmpty);
-      // Back in the app: AppController.onResume resumes it.
+      // Back in the app: AppController.onResume resumes it. The end may
+      // still be on its way (see the next test), so not at once.
       await engine.resume();
       await settle(10);
+      expect(ends, isEmpty);
+      await eventually(() => ends.isNotEmpty);
       expect(ends, [CaptureEnd.stopped]);
       await engine.stop();
     });
+
+    test('M4A: an end with "should resume" that arrives just after the app '
+        'took the audio session again resumes the recording', () async {
+      engine = iosEngine(resumeCheck: const Duration(milliseconds: 300));
+      await engine.start(m4aBest, '${dir.path}/m5.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      // The call screen is dismissed: the app is back, with the audio
+      // session free, before the call's end reaches it.
+      await engine.resume();
+      await settle(10);
+      // record_ios resumes the recorder.
+      platform.systemPaused = false;
+      calls.add(over(resume: true));
+      await settle(400); // past the wait
+      expect(ends, isEmpty);
+      expect(interruptions, [true, false]);
+      await engine.stop();
+    });
+
+    test(
+      'M4A: a new interruption during that wait is waited out instead',
+      () async {
+        engine = iosEngine(resumeCheck: const Duration(milliseconds: 300));
+        await engine.start(m4aBest, '${dir.path}/m10.m4a');
+        platform.systemPaused = true;
+        calls.add(began()); // another app's audio; no end ever comes
+        await settle(10);
+        await engine.resume(); // the audio session is free: the wait begins
+        await settle(10);
+        calls.add(began()); // a call
+        await settle(400); // past the wait
+        expect(ends, isEmpty);
+        // The call's end resumes the recorder.
+        platform.systemPaused = false;
+        calls.add(over(resume: true));
+        await settle(10);
+        expect(interruptions.last, isFalse);
+        expect(ends, isEmpty);
+        await engine.stop();
+      },
+    );
 
     test("M4A: opened during a call, it stays paused; the call's end "
         'resumes it', () async {
@@ -846,6 +911,94 @@ void main() {
       expect(interruptions, [false]);
       expect(ends, isEmpty);
       await engine.stop();
+    });
+
+    test('M4A: one the user paused stays paused when resumed during a '
+        'call', () async {
+      await engine.start(m4aBest, '${dir.path}/m6.m4a');
+      await engine.pause(); // record_ios's own pause
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      sessionFree = false; // the call has the audio session
+      // record_ios's resume would report "recording" though its recorder
+      // can't record during the call.
+      await expectLater(engine.resume(), throwsStateError);
+      expect(platform.resumes, 0);
+      expect(platform.state, RecordState.pause);
+      // The call ends, to be resumed: record_ios resumes its recorder
+      // itself, and the user's pause still holds.
+      platform.systemPaused = false;
+      sessionFree = true;
+      platform.emit(RecordState.record);
+      calls.add(over(resume: true));
+      await settle(10);
+      expect(platform.state, RecordState.pause);
+      expect(interruptions, isEmpty);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test('M4A: one the plugin paused itself for a call stays paused when '
+        'resumed during it', () async {
+      await engine.start(m4aBest, '${dir.path}/m11.m4a');
+      calls.add(began());
+      platform.emit(RecordState.pause); // record_ios paused it this time
+      await settle(10);
+      sessionFree = false; // the call has the audio session
+      await expectLater(engine.resume(), throwsStateError);
+      expect(platform.resumes, 0);
+      expect(interruptions, isNot(contains(false)));
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test('M4A: one the user paused resumes once a call has let go of the '
+        'audio session, before its end arrives', () async {
+      await engine.start(m4aBest, '${dir.path}/m7.m4a');
+      await engine.pause();
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      await engine.resume();
+      await settle(10);
+      expect(platform.resumes, 1);
+      expect(platform.state, RecordState.record);
+      expect(interruptions, [false]);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test('M4A: a resume still taking the audio session when the engine is '
+        'disposed reports nothing', () async {
+      await engine.start(m4aBest, '${dir.path}/m8.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      final taking = sessionGate = Completer<bool>();
+      final resuming = engine.resume();
+      await settle(10);
+      await engine.dispose();
+      taking.complete(true);
+      await resuming;
+      await settle(100); // past the wait for the interruption's end
+      expect(ends, isEmpty);
+    });
+
+    test('M4A: an end still being looked into when the engine is disposed '
+        'is not reported', () async {
+      await engine.start(m4aBest, '${dir.path}/m9.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      final asking = platform.pausedGate = Completer<void>();
+      calls.add(over()); // asks the plugin whether it paused the recorder
+      await settle(10);
+      final disposing = engine.dispose();
+      asking.complete();
+      await disposing;
+      await settle(10);
+      expect(ends, isEmpty);
     });
 
     test('M4A is not started again (it would replace the file)', () async {
