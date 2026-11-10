@@ -1,4 +1,7 @@
 // A recording's own page, opened by tapping its row in the list.
+import 'dart:async';
+
+import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_recorder/src/core/format.dart';
@@ -98,7 +101,7 @@ void main() {
     await tester.pumpAndSettle();
     await _back(tester);
     expect(find.byType(RecordingScreen), findsNothing);
-    expect(find.text('Recording list'), findsOneWidget);
+    expect(find.byType(RecordingListScreen), findsOneWidget);
   });
 
   testWidgets('previous and next go through the list; it keeps up', (
@@ -205,7 +208,7 @@ void main() {
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     expect(find.byType(RecordingScreen), findsNothing);
-    expect(find.text('Recording list'), findsOneWidget);
+    expect(find.byType(RecordingListScreen), findsOneWidget);
     expect(find.text(name), findsNothing);
     expect(await tester.runAsync(t.store.list), hasLength(9));
 
@@ -254,6 +257,153 @@ void main() {
     expect(t.playback.seeks, 1);
     expect(t.playback.position, greaterThan(Duration.zero));
     expect(t.playback.playing, isTrue);
+  });
+
+  testWidgets('a quick second Next plays the recording shown', (tester) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    // The next one takes a while to open; Next again meanwhile.
+    final gate = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    gate.complete();
+    t.playback.loadGate = null;
+    await tester.pumpAndSettle();
+    const third = '2026_09_18_21_23_04.mp3';
+    expect(find.text(third), findsOneWidget);
+    expect(t.playback.fileId, 'mem://$third');
+    expect(t.playback.playing, isTrue);
+    expect(_control('Pause'), findsOneWidget);
+  });
+
+  testWidgets("a screen reader's tap on a seek bar doesn't move it", (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+
+    // Only the slider's own actions: no tap or scroll seeking somewhere.
+    void expectSliderOnly() {
+      final node = tester.getSemantics(_control('Position'));
+      final actions = node.getSemanticsData().actions;
+      expect(
+        actions,
+        SemanticsAction.increase.index | SemanticsAction.decrease.index,
+      );
+    }
+
+    expectSliderOnly();
+    tester.semantics.increase(find.semantics.byLabel('Position'));
+    await tester.pumpAndSettle();
+    expect(t.playback.seeks, 1);
+    expect(t.playback.position, const Duration(seconds: 9)); // 5 % of 3:00
+
+    // The list's seek bar too.
+    await _back(tester);
+    expect(find.byType(HoloSeekBar), findsOneWidget);
+    expectSliderOnly();
+  });
+
+  testWidgets('Back while the page deletes leaves the list open', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    const name = '2026_09_18_21_23_04.mp3';
+    await _openPage(tester, name);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    // Back, and the delete finishes while the page slides away.
+    await tester.tap(labeled('Back'));
+    await tester.pump(const Duration(milliseconds: 50));
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.byType(RecordingScreen), findsNothing);
+    expect(find.byType(RecordingListScreen), findsOneWidget);
+    expect(find.text(name), findsNothing);
+    await waitOutUndo(tester);
+    expect(find.byType(RecordingListScreen), findsOneWidget);
+  });
+
+  testWidgets('a rename that finishes after Back still opens the new name', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, '2026_09_18_21_23_04.mp3');
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expect(find.byType(RecordingScreen), findsNothing);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(_openRow(tester), 'late night idea.mp3');
+  });
+
+  testWidgets('at the largest text, the times let a seek through', (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    // iPhone's largest accessibility size.
+    tester.platformDispatcher.textScaleFactorTestValue = 3.1;
+    final t = await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, _kris);
+
+    // The player's times (the lowest "03:00" is beside the seek bar).
+    final length = find
+        .text('03:00')
+        .evaluate()
+        .reduce(
+          (a, b) =>
+              tester.getRect(find.byWidget(a.widget)).top >
+                  tester.getRect(find.byWidget(b.widget)).top
+              ? a
+              : b,
+        );
+    // No larger than Android's largest (2x).
+    expect(MediaQuery.textScalerOf(length).scale(14), 28);
+
+    // A touch on the seek bar that the length's text covers.
+    final bar = tester.getRect(_control('Position'));
+    final text = tester.getRect(find.byWidget(length.widget));
+    final spot = Offset(text.center.dx, (text.top + bar.bottom) / 2);
+    expect(bar.contains(spot) && text.contains(spot), isTrue);
+    await tester.tapAt(spot);
+    await tester.pumpAndSettle();
+    expect(t.playback.seeks, 1);
+    expect(t.playback.position, greaterThan(const Duration(minutes: 2)));
+  });
+
+  testWidgets('a tap goes to the nearest header button', (tester) async {
+    final t = await _openList(tester);
+    await _openPage(tester, '2026_09_18_21_23_04.mp3');
+    // Right of the pencil, but nearer it than Share.
+    final pencil = tester.getCenter(labeled('Rename'));
+    await tester.tapAt(pencil + const Offset(15, 0));
+    await tester.pumpAndSettle();
+    expect(t.store.shared, isEmpty);
+    expect(find.byType(EditableText), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // And right of Share, nearer it than Delete.
+    final share = tester.getCenter(labeled('Share'));
+    await tester.tapAt(share + const Offset(15, 0));
+    await tester.pump();
+    expect(t.store.shared, ['2026_09_18_21_23_04.mp3']);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Are you sure'), findsNothing);
   });
 
   testWidgets("while recording, the page doesn't play", (tester) async {

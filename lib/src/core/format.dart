@@ -76,19 +76,17 @@ const _months = [
   'Dec',
 ];
 
-/// Recording page date, as the original showed it:
-/// `Thu Oct 08 16:25:38 EDT 2026`.
-String formatLongDate(DateTime t) {
-  final zone = t.isUtc ? 'UTC' : t.timeZoneName;
-  return [
-    _weekdays[t.weekday - 1],
-    _months[t.month - 1],
-    _two(t.day),
-    '${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}',
-    if (zone.isNotEmpty) zone,
-    '${t.year}',
-  ].join(' ');
-}
+/// Recording page date, as the original showed it but without its time
+/// zone: `Thu Oct 08 16:25:38 2026`. Recording dates are clock times where
+/// the recording was made (the name's, or the one stored in the file), so
+/// the phone's zone now could be the wrong one.
+String formatLongDate(DateTime t) => [
+  _weekdays[t.weekday - 1],
+  _months[t.month - 1],
+  _two(t.day),
+  '${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}',
+  '${t.year}',
+].join(' ');
 
 final _timestampName = RegExp(
   r'^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?!\d)',

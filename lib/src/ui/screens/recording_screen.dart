@@ -73,6 +73,10 @@ class _RecordingScreenState extends State<RecordingScreen> {
   /// Where the thumb is while the user drags it (0..1).
   double? _drag;
 
+  /// A recording the page started that isn't playing yet (it may take a
+  /// moment to load): previous and next count it as playing.
+  String? _starting;
+
   final _shareKey = GlobalKey();
 
   // The app's files by id, worked out once per list (the page rebuilds many
@@ -117,8 +121,19 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _playOnOpening() async {
     final app = AppScope.read(context);
     if (app.isRecording || app.isBusy || app.playback.isPlaying(_id)) return;
-    final outcome = await app.togglePlay(_file(app));
+    final outcome = await _start(app, _file(app));
     if (mounted) showPlayProblem(context, outcome);
+  }
+
+  /// Plays [file], counted as playing until it does (or fails).
+  Future<PlayOutcome> _start(AppController app, RecordingFile file) async {
+    _starting = file.id;
+    try {
+      return await app.togglePlay(file);
+    } finally {
+      // A later start replaces this one; it clears its own.
+      if (_starting == file.id) _starting = null;
+    }
   }
 
   /// The player reacts to a tap, not to a recording in progress (also while
@@ -154,7 +169,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _go(AppController app, int step) async {
     final to = _neighbour(app, step);
     if (to == null) return;
-    final wasPlaying = app.playback.isPlaying(_id);
+    final wasPlaying = app.playback.isPlaying(_id) || _starting == _id;
     setState(() {
       _id = to.id;
       _last = to;
@@ -162,7 +177,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
     });
     widget.onShown?.call(to.id);
     if (!wasPlaying || app.isRecording || app.isBusy) return;
-    final outcome = await app.togglePlay(to);
+    final outcome = await _start(app, to);
     if (mounted) showPlayProblem(context, outcome);
   }
 
@@ -180,14 +195,16 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _rename(AppController app) => _run(() async {
     final file = _file(app);
     final renamed = await renameRecording(context, file);
-    if (renamed == null || !mounted) return;
+    if (renamed == null) return;
+    // The list keeps it open, also if the page has been closed meanwhile.
+    widget.onShown?.call(renamed.id);
+    if (!mounted) return;
     setState(() {
       final i = _order.indexOf(file.id);
       if (i >= 0) _order[i] = renamed.id;
       _id = renamed.id;
       _last = renamed;
     });
-    widget.onShown?.call(renamed.id);
   });
 
   Future<void> _share(AppController app) => _run(() async {
@@ -199,8 +216,15 @@ class _RecordingScreenState extends State<RecordingScreen> {
   });
 
   Future<void> _delete(AppController app) => _run(() async {
-    if (await deleteRecordings(context, [_file(app)]) && mounted) {
-      await Navigator.of(context).maybePop();
+    if (!await deleteRecordings(context, [_file(app)]) || !mounted) return;
+    // Closes this page only: Back may have closed it already while the
+    // delete went on, and something may have opened above it.
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isActive) return;
+    if (route.isCurrent) {
+      Navigator.of(context).pop();
+    } else {
+      Navigator.of(context).removeRoute(route);
     }
   });
 
@@ -228,8 +252,14 @@ class _RecordingScreenState extends State<RecordingScreen> {
             ),
           ),
           // Inside the frame, which says how far it reaches under the home
-          // indicator.
-          Builder(builder: (context) => _player(context, app, file, width)),
+          // indicator. The times grow no larger than Android's largest text
+          // (2x): larger, they would reach up over the seek bar.
+          MediaQuery.withClampedTextScaling(
+            maxScaleFactor: 2,
+            child: Builder(
+              builder: (context) => _player(context, app, file, width),
+            ),
+          ),
         ],
       ),
     );
@@ -246,6 +276,11 @@ class _RecordingScreenState extends State<RecordingScreen> {
     }) => BarButton(
       key: key,
       center: Offset(width - fromRight, Spec.pageIconCenterY),
+      // As wide as the buttons are apart, so a tap goes to the nearest.
+      touchSize: const Size(
+        Spec.pageRenameFromRight - Spec.pageShareFromRight,
+        Spec.headerHeight,
+      ),
       semanticLabel: label,
       onTap: onTap,
       child: InkIcon(icon, size: size, color: _white),
@@ -330,7 +365,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
         text: formatFileSize(file.size),
       ),
       _DetailRow(
-        icon: AppIcons.floppy,
+        icon: AppIcons.pageFloppy,
         iconSize: Spec.pageFolderIcon,
         label: 'Location',
         // It may break after any slash, as the original's did.
@@ -422,27 +457,33 @@ class _RecordingScreenState extends State<RecordingScreen> {
               },
             ),
           ),
+          // The times let touches through to the seek bar and buttons.
           Positioned(
             left: Spec.playerTimeLeft,
             top: timeTop,
-            child: AText(
-              formatPosition(shown),
-              style: Spec.pageText,
-              maxLines: 1,
+            child: IgnorePointer(
+              child: AText(
+                formatPosition(shown),
+                style: Spec.pageText,
+                maxLines: 1,
+              ),
             ),
           ),
           Positioned(
             right: Spec.playerTimeRight,
             top: timeTop,
-            child: AText(
-              formatTimer(duration),
-              style: Spec.pageText,
-              maxLines: 1,
+            child: IgnorePointer(
+              child: AText(
+                formatTimer(duration),
+                style: Spec.pageText,
+                maxLines: 1,
+              ),
             ),
           ),
           _RoundButton(
             center: Offset(mid - Spec.playerFarButton, y),
             diameter: Spec.playerSmallButton,
+            ring: Spec.playerSmallRing,
             icon: AppIcons.skipPrevious,
             iconSize: AppIcons.skipPrevious.box,
             semanticLabel: 'Previous recording',
@@ -451,6 +492,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
           _RoundButton(
             center: Offset(mid - Spec.playerNearButton, y),
             diameter: Spec.playerMidButton,
+            ring: Spec.playerMidRing,
             icon: AppIcons.rewind,
             iconSize: AppIcons.rewind.box,
             iconOffset: const Offset(-1.2, 0),
@@ -460,6 +502,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
           _RoundButton(
             center: Offset(mid, y),
             diameter: Spec.playerBigButton,
+            ring: Spec.playerBigRing,
             icon: playing ? AppIcons.pause : AppIcons.play,
             iconSize: playing ? AppIcons.pause.box : AppIcons.play.box,
             iconOffset: playing ? Offset.zero : const Offset(2, 0),
@@ -469,6 +512,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
           _RoundButton(
             center: Offset(mid + Spec.playerNearButton, y),
             diameter: Spec.playerMidButton,
+            ring: Spec.playerMidRing,
             icon: AppIcons.fastForward,
             iconSize: AppIcons.fastForward.box,
             iconOffset: const Offset(1.2, 0),
@@ -478,6 +522,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
           _RoundButton(
             center: Offset(mid + Spec.playerFarButton, y),
             diameter: Spec.playerSmallButton,
+            ring: Spec.playerSmallRing,
             icon: AppIcons.skipNext,
             iconSize: AppIcons.skipNext.box,
             semanticLabel: 'Next recording',
@@ -545,6 +590,7 @@ class _RoundButton extends StatefulWidget {
     required this.diameter,
     required this.icon,
     required this.iconSize,
+    required this.ring,
     required this.semanticLabel,
     required this.onTap,
     this.iconOffset = Offset.zero,
@@ -552,6 +598,9 @@ class _RoundButton extends StatefulWidget {
 
   final Offset center;
   final double diameter;
+
+  /// The ring's width.
+  final double ring;
   final IconShape icon;
   final Size iconSize;
   final Offset iconOffset;
@@ -595,7 +644,7 @@ class _RoundButtonState extends State<_RoundButton> {
           child: Opacity(
             opacity: enabled ? 1 : 0.4,
             child: CustomPaint(
-              painter: _RingPainter(widget.diameter, _down),
+              painter: _RingPainter(widget.diameter, widget.ring, _down),
               child: Center(
                 child: Transform.translate(
                   offset: widget.iconOffset,
@@ -615,15 +664,15 @@ class _RoundButtonState extends State<_RoundButton> {
 }
 
 class _RingPainter extends CustomPainter {
-  _RingPainter(this.diameter, this.pressed);
+  _RingPainter(this.diameter, this.width, this.pressed);
 
   final double diameter;
+  final double width;
   final bool pressed;
 
   @override
   void paint(Canvas canvas, Size size) {
     final centre = size.center(Offset.zero);
-    final width = diameter * Spec.playerRingWidth;
     final r = (diameter - width) / 2;
     if (pressed) {
       canvas.drawCircle(centre, r, Paint()..color = const Color(0x40FFFFFF));
@@ -640,7 +689,7 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RingPainter old) =>
-      old.diameter != diameter || old.pressed != pressed;
+      old.diameter != diameter || old.width != width || old.pressed != pressed;
 }
 
 /// The player's seek bar: a metal track with a metal slider on it.
@@ -697,8 +746,11 @@ class _MetalSeekBarState extends State<_MetalSeekBar> {
           decreasedValue: say(math.max(0.0, p - 0.05)),
           onIncrease: () => widget.onChangeEnd(math.min(1.0, p + 0.05)),
           onDecrease: () => widget.onChangeEnd(math.max(0.0, p - 0.05)),
+          // Not the gestures' tap and scroll: a screen reader's would seek to
+          // the middle.
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            excludeFromSemantics: true,
             onTapUp: (d) => widget.onChangeEnd(track.at(d.localPosition.dx)),
             onHorizontalDragStart: (d) => _move(track.at(d.localPosition.dx)),
             onHorizontalDragUpdate: (d) => _move(track.at(d.localPosition.dx)),
@@ -763,14 +815,17 @@ class _MetalSeekPainter extends CustomPainter {
   static const _thumbShades = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
+    // Darkest about three quarters down, then lighter to the rim.
     colors: [
       Color(0xFFF2F2F2),
-      Color(0xFFDDDDDD),
-      Color(0xFF989898),
-      Color(0xFFCDCDCD),
-      Color(0xFF8A8A8A),
+      Color(0xFFE5E5E5),
+      Color(0xFFAEAEAE),
+      Color(0xFF818181),
+      Color(0xFF888888),
+      Color(0xFF9C9C9C),
+      Color(0xFFCACACA),
     ],
-    stops: [0, 0.1, 0.5, 0.92, 1],
+    stops: [0, 0.05, 0.34, 0.72, 0.85, 0.91, 0.97],
   );
 
   @override

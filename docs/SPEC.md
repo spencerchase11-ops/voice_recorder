@@ -112,7 +112,7 @@ panel's top, under a 13.1 × 28.6 dp metal slider. The two times are 14 sp,
 on a baseline 84.9 dp down. Five ringed buttons are centred 116 dp down:
 play/pause (47.8 dp) in the middle, back and forward 10 seconds (38.6 dp)
 55.7 dp to each side, previous and next recording (30 dp) at 101.7 dp. The
-rings are 4.2 % of their diameter.
+rings are 1.6, 1.1 and 0.95 dp wide.
 
 **Settings.** The section headers ("Recorder", "More app") are 14 sp
 `#DFDFDF` on the metal under 25 % white. Rows are 48 dp, with a 14 sp title

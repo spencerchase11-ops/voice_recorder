@@ -95,18 +95,15 @@ void main() {
     expect(formatFileSize(2048 * 1024 * 1024 * 1024 * 1024), '2048 TB');
   });
 
-  test('page date is written out like the original', () {
+  test('page date is written out like the original, without a zone', () {
+    // A clock time where it was recorded: no zone, which could be wrong.
     expect(
-      formatLongDate(DateTime.utc(2026, 10, 8, 16, 25, 38)),
-      'Thu Oct 08 16:25:38 UTC 2026',
+      formatLongDate(DateTime(2026, 10, 8, 16, 25, 38)),
+      'Thu Oct 08 16:25:38 2026',
     );
-    final t = DateTime(2027, 1, 2, 3, 4, 5);
-    final zone = t.timeZoneName;
     expect(
-      formatLongDate(t),
-      zone.isEmpty
-          ? 'Sat Jan 02 03:04:05 2027'
-          : 'Sat Jan 02 03:04:05 $zone 2027',
+      formatLongDate(DateTime(2027, 1, 2, 3, 4, 5)),
+      'Sat Jan 02 03:04:05 2027',
     );
   });
 }

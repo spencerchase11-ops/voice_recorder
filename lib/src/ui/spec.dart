@@ -348,8 +348,8 @@ abstract final class Spec {
     color: Color(0xFFFFFFFF),
   );
   static const Size pageNameIcon = Size(20.3, 20.3);
-  static const Size pageSizeIcon = Size(19.4, 19.4);
-  static const Size pageFolderIcon = Size(20.6, 20.0);
+  static const Size pageSizeIcon = Size(19.7, 19.7);
+  static const Size pageFolderIcon = Size(20.9, 20.9);
   static const Size pageDateIcon = Size(25.1, 23.4);
   static const Size pageLengthIcon = Size(24.3, 24.3);
 
@@ -375,6 +375,9 @@ abstract final class Spec {
   static const double playerMidButton = 38.6;
   static const double playerSmallButton = 30.0;
 
-  /// The buttons' rings, as a fraction of their diameter.
-  static const double playerRingWidth = 0.042;
+  /// The buttons' rings: thinner on the smaller buttons, though not in
+  /// proportion.
+  static const double playerBigRing = 1.6;
+  static const double playerMidRing = 1.1;
+  static const double playerSmallRing = 0.95;
 }

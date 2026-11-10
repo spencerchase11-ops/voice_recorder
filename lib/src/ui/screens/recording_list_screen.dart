@@ -1024,8 +1024,11 @@ class _HoloSeekBarState extends State<HoloSeekBar> {
           decreasedValue: say(math.max(0.0, p - 0.05)),
           onIncrease: () => widget.onChangeEnd(math.min(1.0, p + 0.05)),
           onDecrease: () => widget.onChangeEnd(math.max(0.0, p - 0.05)),
+          // Not the gestures' tap and scroll: a screen reader's would seek to
+          // the middle.
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
+            excludeFromSemantics: true,
             onTapUp: (d) => widget.onChangeEnd(at(d.localPosition)),
             onHorizontalDragStart: (d) => _move(at(d.localPosition)),
             onHorizontalDragUpdate: (d) => _move(at(d.localPosition)),

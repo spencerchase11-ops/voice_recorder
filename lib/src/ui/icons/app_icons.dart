@@ -143,6 +143,7 @@ abstract final class AppIcons {
   static const deleteFilled = GlyphShape(GlyphData.deleteFilled);
   static const shareFilled = GlyphShape(GlyphData.shareFilled);
   static const musicNote = DrawnShape(_musicNote, Size(20, 20));
+  static const pageFloppy = DrawnShape(_pageFloppy, Size(20.9, 20.9));
   static const expand = DrawnShape(_expand, Size(20, 20));
   static const playedAt = DrawnShape(_playedAt, Size(25.1, 23.4));
   static const length = DrawnShape(_length, Size(24.3, 24.3));
@@ -161,31 +162,62 @@ Paint _stroke(Paint p, double width) => Paint()
   ..style = PaintingStyle.stroke
   ..strokeWidth = width;
 
-/// Two beamed-off notes' worth of flags on one stem: a tilted head at the
-/// bottom left, the stem and two wavy flags to the right.
+/// A note with two flags on its stem: a tilted head at the bottom left, the
+/// stem, and two flags drooping to the right.
 void _musicNote(Canvas c, Paint p) {
   c
     ..save()
-    ..translate(4.78, 16.11)
-    ..rotate(-25 * math.pi / 180)
-    ..drawOval(Rect.fromCenter(center: Offset.zero, width: 10, height: 7.2), p)
+    ..translate(4.6, 16.9)
+    ..rotate(-10 * math.pi / 180)
+    ..drawOval(Rect.fromCenter(center: Offset.zero, width: 9.2, height: 6.5), p)
     ..restore()
-    ..drawRect(const Rect.fromLTRB(8.2, 1.0, 9.7, 15.6), p);
-  final flag = _stroke(p, 2)..strokeCap = StrokeCap.round;
-  for (final y in const [1.0, 6.0]) {
+    ..drawRect(const Rect.fromLTRB(8.8, 0.4, 10.3, 17.0), p);
+  // Each flag: from the stem out to its tip (ex, ey), and back under itself.
+  for (final (y, ex, ey, depth) in const [
+    (0.0, 19.8, 4.3, 4.1),
+    (5.3, 17.8, 9.0, 3.3),
+  ]) {
     c.drawPath(
       Path()
-        ..moveTo(9.2, y)
-        ..cubicTo(12.6, y + 0.4, 13.2, y + 3.4, 16.0, y + 2.7)
-        ..cubicTo(17.6, y + 2.3, 18.4, y + 1.0, 19.0, y + 0.2),
-      flag,
+        ..moveTo(9.5, y)
+        ..cubicTo(13.0, y, 15.6, ey - 2.2, ex, ey - 0.7)
+        ..lineTo(ex, ey + 0.6)
+        ..cubicTo(15.6, ey + 1.0, 13.0, y + depth, 10.0, y + depth + 0.4)
+        ..close(),
+      p,
     );
   }
 }
 
+/// The page's floppy disk, filled: a body with its top right corner cut
+/// off, a dark window at the top with the shutter's slot showing white in
+/// it, and a dark label below.
+void _pageFloppy(Canvas c, Paint p) {
+  const s = 20.9, r = 1.8, cut = 3.9;
+  const round = Radius.circular(r);
+  c.drawPath(
+    Path()
+      ..fillType = PathFillType.evenOdd
+      ..moveTo(r, 0)
+      ..lineTo(s - cut, 0)
+      ..lineTo(s, cut)
+      ..lineTo(s, s - r)
+      ..arcToPoint(const Offset(s - r, s), radius: round)
+      ..lineTo(r, s)
+      ..arcToPoint(const Offset(0, s - r), radius: round)
+      ..lineTo(0, r)
+      ..arcToPoint(const Offset(r, 0), radius: round)
+      ..close()
+      ..addRect(const Rect.fromLTRB(4.6, 1.7, 16.3, 8.6))
+      ..addRect(const Rect.fromLTRB(12.3, 2.3, 14.9, 8.0))
+      ..addRect(const Rect.fromLTRB(3.1, 10.9, 18.6, 19.5)),
+    p,
+  );
+}
+
 /// Four thin arrows pointing out to the corners.
 void _expand(Canvas c, Paint p) {
-  const w = 1.6, e = w / 2, leg = 6.2, inner = 7.4;
+  const w = 1.1, e = w / 2, leg = 6.45, inner = 8.1;
   final s = _stroke(p, w)..strokeJoin = StrokeJoin.miter;
   final corner = Path()
     ..moveTo(e, e + leg)
@@ -213,11 +245,12 @@ void _expand(Canvas c, Paint p) {
 
 /// When it was recorded: a circle turning back, with a play mark inside.
 void _playedAt(Canvas c, Paint p) {
-  const r = 10.7, w = 2.0, cx = 25.1 - r - w / 2, cy = 23.4 / 2;
+  // The ring reaches a little past the box, as the original's did.
+  const r = 11.0, w = 2.0, cx = 13.85, cy = 11.1;
   c.drawArc(
     Rect.fromCircle(center: const Offset(cx, cy), radius: r),
     math.pi - 0.05,
-    5 * math.pi / 3,
+    5.83,
     false,
     _stroke(p, w),
   );
@@ -226,17 +259,17 @@ void _playedAt(Canvas c, Paint p) {
   c
     ..drawPath(
       Path()
-        ..moveTo(ax - 2.7, cy - 0.6)
-        ..lineTo(ax + 2.7, cy - 0.6)
-        ..lineTo(ax, cy + 3.4)
+        ..moveTo(ax - 3.0, cy - 2.1)
+        ..lineTo(ax + 3.0, cy - 2.1)
+        ..lineTo(ax, cy + 1.8)
         ..close(),
       p,
     )
     ..drawPath(
       Path()
-        ..moveTo(cx - 2.4, cy - 4.0)
-        ..lineTo(cx + 4.2, cy)
-        ..lineTo(cx - 2.4, cy + 4.0)
+        ..moveTo(cx - 3.1, cy - 4.3)
+        ..lineTo(cx + 4.6, cy)
+        ..lineTo(cx - 3.1, cy + 4.3)
         ..close(),
       p,
     );
@@ -244,7 +277,7 @@ void _playedAt(Canvas c, Paint p) {
 
 /// Its length: a clock face with a quarter filled and dots for the hours.
 void _length(Canvas c, Paint p) {
-  const r = 11.2, w = 1.9, m = 24.3 / 2;
+  const r = 11.35, w = 1.55, m = 24.3 / 2;
   const centre = Offset(m, m);
   c
     ..drawCircle(centre, r, _stroke(p, w))
@@ -252,7 +285,7 @@ void _length(Canvas c, Paint p) {
       Path()
         ..moveTo(m, m)
         ..arcTo(
-          Rect.fromCircle(center: centre, radius: 7.6),
+          Rect.fromCircle(center: centre, radius: 9.2),
           -math.pi / 2,
           math.pi / 2,
           false,
