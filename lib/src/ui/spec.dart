@@ -314,4 +314,67 @@ abstract final class Spec {
     fontSize: 14,
     color: Color(0xFF007AFF),
   );
+
+  // ------------------------------------------------------ recording page
+  /// The page a tapped row opens, measured from the owner's screenshot of
+  /// the original (same phone). Header coordinates are 0..width, 0..48.
+  static const TextStyle pageTitle = TextStyle(
+    fontFamily: font,
+    fontSize: 20,
+    color: Color(0xFFFFFFFF),
+  );
+  static const double pageTitleLeft = 58.4;
+
+  /// Header buttons' centres, from the right edge, and their icons' ink.
+  static const double pageIconCenterY = 23.8;
+  static const double pageRenameFromRight = 99.1;
+  static const double pageShareFromRight = 61.7;
+  static const double pageDeleteFromRight = 24.1;
+  static const Size pageRenameIcon = Size(21.4, 21.4);
+  static const Size pageShareIcon = Size(22.3, 24.6);
+  static const Size pageDeleteIcon = Size(18.0, 22.9);
+
+  /// The details, centred in the space above the player: each row is at
+  /// least [pageRowHeight] high, its icon centred in that height and its
+  /// text in the row.
+  static const double pageRowHeight = 32;
+  static const double pageRowGap = 11.3;
+  static const double pageIconCenterX = 37.8;
+  static const double pageTextLeft = 75.4;
+  static const double pageTextRight = 16;
+  static const TextStyle pageText = TextStyle(
+    fontFamily: font,
+    fontSize: 14,
+    color: Color(0xFFFFFFFF),
+  );
+  static const Size pageNameIcon = Size(20.3, 20.3);
+  static const Size pageSizeIcon = Size(19.4, 19.4);
+  static const Size pageFolderIcon = Size(20.6, 20.0);
+  static const Size pageDateIcon = Size(25.1, 23.4);
+  static const Size pageLengthIcon = Size(24.3, 24.3);
+
+  /// The page's brushed metal is darker than the other screens'; the player
+  /// at the bottom has the usual one.
+  static const double pageBrightness = 0.745;
+  static const double playerHeight = 143.4;
+  static const double playerTrackLeft = 22.9;
+  static const double playerTrackRight = 22.3;
+  static const double playerTrackTop = 37.1;
+  static const double playerTrackHeight = 21.4;
+  static const double playerTrackRadius = 4;
+  static const Size playerThumb = Size(13.1, 28.6);
+  static const double playerTimeLeft = 21.8;
+  static const double playerTimeRight = 22.4;
+  static const double playerTimeBaseline = 84.9;
+  static const double playerButtonsCenterY = 116.0;
+
+  /// Distance of the buttons' centres from the middle, and their sizes.
+  static const double playerNearButton = 55.7;
+  static const double playerFarButton = 101.7;
+  static const double playerBigButton = 47.8;
+  static const double playerMidButton = 38.6;
+  static const double playerSmallButton = 30.0;
+
+  /// The buttons' rings, as a fraction of their diameter.
+  static const double playerRingWidth = 0.042;
 }

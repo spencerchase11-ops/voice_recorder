@@ -608,8 +608,14 @@ void main() {
     await tester.tap(labeled('Recording list'));
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(seconds: 1));
+    // Its page doesn't play it while recording; back to its open row.
     await tester.tap(find.text('2026_09_20_17_26_27.mp3'));
-    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(t.playback.played, isEmpty);
+    await tester.tap(labeled('Back'));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
 
     // Stopped while the list is open (as from the notification's Stop
     // button). The stop waits for the app's start, which runAsync lets

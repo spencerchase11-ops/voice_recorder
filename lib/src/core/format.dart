@@ -44,6 +44,52 @@ String formatCount(int n) {
 /// Recording list size: whole kibibytes, `39819KB`.
 String formatListSize(int bytes) => '${bytes ~/ 1024}KB';
 
+/// Recording page size, in units of 1024 like the original: `7.2 MB`,
+/// `512 KB`, `1.4 GB`; tenths below 100.
+String formatFileSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  var v = bytes / 1024;
+  var i = 0;
+  // What would round up to 1024 is the next unit's 1.0.
+  while (v >= 1023.5 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  final shown = v < 99.95 ? v.toStringAsFixed(1) : v.toStringAsFixed(0);
+  return '$shown ${units[i]}';
+}
+
+const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _months = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/// Recording page date, as the original showed it:
+/// `Thu Oct 08 16:25:38 EDT 2026`.
+String formatLongDate(DateTime t) {
+  final zone = t.isUtc ? 'UTC' : t.timeZoneName;
+  return [
+    _weekdays[t.weekday - 1],
+    _months[t.month - 1],
+    _two(t.day),
+    '${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}',
+    if (zone.isNotEmpty) zone,
+    '${t.year}',
+  ].join(' ');
+}
+
 final _timestampName = RegExp(
   r'^(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})(?!\d)',
 );

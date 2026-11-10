@@ -163,9 +163,9 @@ void main() {
     });
 
     testWidgets('the open row has skip and speed buttons', (tester) async {
-      final t = await openList(tester);
-      await tester.tap(find.text(_kris));
-      await tester.pumpAndSettle();
+      useReferenceDevice(tester);
+      final t = await pumpReferenceApp(tester);
+      await openListAt(tester, _kris);
       await tester.tap(labeled('Forward 10 seconds'));
       await tester.pumpAndSettle();
       expect(t.playback.fileId, 'mem://$_kris');

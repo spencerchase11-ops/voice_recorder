@@ -387,6 +387,9 @@ void main() {
 
       await tester.tap(find.text('2026_09_18_21_23_04.mp3'));
       await tester.pumpAndSettle();
+      // Back from its page, the row stays open for the list's buttons.
+      await tester.tap(labeled('Back'));
+      await tester.pumpAndSettle();
       await tester.tap(labeled('Share'));
       await tester.pump();
       expect(t.store.shared, ['2026_09_18_21_23_04.mp3']);
@@ -479,10 +482,10 @@ void main() {
     testWidgets(
       'dragging the seek bar seeks once, on release, without playing',
       (tester) async {
-        final t = await openList(tester);
+        useReferenceDevice(tester);
+        final t = await pumpReferenceApp(tester);
         const name = '2026_09_20_17_26_27.mp3';
-        await tester.tap(find.text(name));
-        await tester.pumpAndSettle();
+        await openListAt(tester, name);
         final bar = find.byType(HoloSeekBar);
         final box = tester.getRect(bar);
         // Drag the thumb from the start to the middle of the track.
@@ -546,6 +549,9 @@ void main() {
     ) async {
       final t = await openList(tester);
       await tester.tap(find.text('2026_09_18_21_23_04.mp3'));
+      await tester.pumpAndSettle();
+      // Back from its page, the row stays open for the list's buttons.
+      await tester.tap(labeled('Back'));
       await tester.pumpAndSettle();
       t.store.slow = Completer<void>();
       await tester.tap(labeled('Delete'));

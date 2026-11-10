@@ -85,6 +85,25 @@ class StrokeShape extends IconShape {
   }
 }
 
+/// A shape drawn in its own [box] (its ink spans exactly 0..width and
+/// 0..height there), which is stretched to the ink rectangle.
+class DrawnShape extends IconShape {
+  const DrawnShape(this.draw, this.box);
+
+  final void Function(Canvas canvas, Paint paint) draw;
+  final Size box;
+
+  @override
+  void paint(Canvas canvas, Rect ink, Color color) {
+    canvas
+      ..save()
+      ..translate(ink.left, ink.top)
+      ..scale(ink.width / box.width, ink.height / box.height);
+    draw(canvas, Paint()..color = color);
+    canvas.restore();
+  }
+}
+
 /// Every icon used by the three screens.
 abstract final class AppIcons {
   static const share = GlyphShape(GlyphData.share);
@@ -119,7 +138,188 @@ abstract final class AppIcons {
   static const noise = GlyphShape(GlyphData.noiseAware);
   static const replay10 = GlyphShape(GlyphData.replay10);
   static const forward10 = GlyphShape(GlyphData.forward10);
+
+  // The recording page, drawn after the original's.
+  static const deleteFilled = GlyphShape(GlyphData.deleteFilled);
+  static const shareFilled = GlyphShape(GlyphData.shareFilled);
+  static const musicNote = DrawnShape(_musicNote, Size(20, 20));
+  static const expand = DrawnShape(_expand, Size(20, 20));
+  static const playedAt = DrawnShape(_playedAt, Size(25.1, 23.4));
+  static const length = DrawnShape(_length, Size(24.3, 24.3));
+  static const skipPrevious = DrawnShape(_skipPrevious, Size(16.9, 10.6));
+  static const skipNext = DrawnShape(_skipNext, Size(16.9, 10.6));
+  static const rewind = DrawnShape(_rewind, Size(24, 15.1));
+  static const fastForward = DrawnShape(_fastForward, Size(24, 15.1));
+  static const pause = DrawnShape(_pause, Size(15.7, 22));
+  static const play = DrawnShape(_play, Size(18.5, 21.4));
 }
+
+// ------------------------------------------------------- recording page
+
+Paint _stroke(Paint p, double width) => Paint()
+  ..color = p.color
+  ..style = PaintingStyle.stroke
+  ..strokeWidth = width;
+
+/// Two beamed-off notes' worth of flags on one stem: a tilted head at the
+/// bottom left, the stem and two wavy flags to the right.
+void _musicNote(Canvas c, Paint p) {
+  c
+    ..save()
+    ..translate(4.78, 16.11)
+    ..rotate(-25 * math.pi / 180)
+    ..drawOval(Rect.fromCenter(center: Offset.zero, width: 10, height: 7.2), p)
+    ..restore()
+    ..drawRect(const Rect.fromLTRB(8.2, 1.0, 9.7, 15.6), p);
+  final flag = _stroke(p, 2)..strokeCap = StrokeCap.round;
+  for (final y in const [1.0, 6.0]) {
+    c.drawPath(
+      Path()
+        ..moveTo(9.2, y)
+        ..cubicTo(12.6, y + 0.4, 13.2, y + 3.4, 16.0, y + 2.7)
+        ..cubicTo(17.6, y + 2.3, 18.4, y + 1.0, 19.0, y + 0.2),
+      flag,
+    );
+  }
+}
+
+/// Four thin arrows pointing out to the corners.
+void _expand(Canvas c, Paint p) {
+  const w = 1.6, e = w / 2, leg = 6.2, inner = 7.4;
+  final s = _stroke(p, w)..strokeJoin = StrokeJoin.miter;
+  final corner = Path()
+    ..moveTo(e, e + leg)
+    ..lineTo(e, e)
+    ..lineTo(e + leg, e)
+    ..moveTo(e, e)
+    ..lineTo(inner, inner);
+  for (final (sx, sy) in const [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)]) {
+    c
+      ..save()
+      ..translate(10, 10)
+      ..scale(sx, sy)
+      ..translate(-10, -10)
+      ..drawPath(corner, s)
+      ..restore();
+  }
+  c
+    ..save()
+    ..translate(10, 10)
+    ..scale(-1, -1)
+    ..translate(-10, -10)
+    ..drawPath(corner, s)
+    ..restore();
+}
+
+/// When it was recorded: a circle turning back, with a play mark inside.
+void _playedAt(Canvas c, Paint p) {
+  const r = 10.7, w = 2.0, cx = 25.1 - r - w / 2, cy = 23.4 / 2;
+  c.drawArc(
+    Rect.fromCircle(center: const Offset(cx, cy), radius: r),
+    math.pi - 0.05,
+    5 * math.pi / 3,
+    false,
+    _stroke(p, w),
+  );
+  // The arrowhead on the left, pointing down.
+  const ax = cx - r;
+  c
+    ..drawPath(
+      Path()
+        ..moveTo(ax - 2.7, cy - 0.6)
+        ..lineTo(ax + 2.7, cy - 0.6)
+        ..lineTo(ax, cy + 3.4)
+        ..close(),
+      p,
+    )
+    ..drawPath(
+      Path()
+        ..moveTo(cx - 2.4, cy - 4.0)
+        ..lineTo(cx + 4.2, cy)
+        ..lineTo(cx - 2.4, cy + 4.0)
+        ..close(),
+      p,
+    );
+}
+
+/// Its length: a clock face with a quarter filled and dots for the hours.
+void _length(Canvas c, Paint p) {
+  const r = 11.2, w = 1.9, m = 24.3 / 2;
+  const centre = Offset(m, m);
+  c
+    ..drawCircle(centre, r, _stroke(p, w))
+    ..drawPath(
+      Path()
+        ..moveTo(m, m)
+        ..arcTo(
+          Rect.fromCircle(center: centre, radius: 7.6),
+          -math.pi / 2,
+          math.pi / 2,
+          false,
+        )
+        ..close(),
+      p,
+    );
+  for (var hour = 4; hour <= 11; hour++) {
+    final a = (hour - 3) * math.pi / 6;
+    c
+      ..save()
+      ..translate(m + 8.0 * math.cos(a), m + 8.0 * math.sin(a))
+      ..rotate(a)
+      ..drawRect(
+        Rect.fromCenter(center: Offset.zero, width: 1.8, height: 1.6),
+        p,
+      )
+      ..restore();
+  }
+}
+
+Path _triangle(double x0, double x1, double h) => Path()
+  ..moveTo(x0, h / 2)
+  ..lineTo(x1, 0)
+  ..lineTo(x1, h)
+  ..close();
+
+void _rewind(Canvas c, Paint p) => c
+  ..drawPath(_triangle(0, 12, 15.1), p)
+  ..drawPath(_triangle(12, 24, 15.1), p);
+
+void _fastForward(Canvas c, Paint p) => c
+  ..drawPath(_triangle(12, 0, 15.1), p)
+  ..drawPath(_triangle(24, 12, 15.1), p);
+
+void _skipPrevious(Canvas c, Paint p) => c
+  ..drawRect(const Rect.fromLTWH(0, 0, 2.3, 10.6), p)
+  ..drawPath(_triangle(2.3, 9.6, 10.6), p)
+  ..drawPath(_triangle(9.6, 16.9, 10.6), p);
+
+void _skipNext(Canvas c, Paint p) => c
+  ..drawRect(const Rect.fromLTWH(14.6, 0, 2.3, 10.6), p)
+  ..drawPath(_triangle(14.6, 7.3, 10.6), p)
+  ..drawPath(_triangle(7.3, 0, 10.6), p);
+
+/// Two bars with their corners cut.
+void _pause(Canvas c, Paint p) {
+  Path bar(double x) {
+    const w = 5.0, h = 22.0, cut = 1.3;
+    return Path()
+      ..moveTo(x + cut, 0)
+      ..lineTo(x + w - cut, 0)
+      ..lineTo(x + w, cut)
+      ..lineTo(x + w, h - cut)
+      ..lineTo(x + w - cut, h)
+      ..lineTo(x + cut, h)
+      ..lineTo(x, h - cut)
+      ..lineTo(x, cut)
+      ..close();
+  }
+
+  c
+    ..drawPath(bar(0), p)
+    ..drawPath(bar(10.7), p);
+}
+
+void _play(Canvas c, Paint p) => c.drawPath(_triangle(18.5, 0, 21.4), p);
 
 // ---------------------------------------------------------------- pencil
 //

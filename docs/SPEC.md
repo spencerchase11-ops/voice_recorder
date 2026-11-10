@@ -1,9 +1,11 @@
 # How the spec was measured
 
-The spec is six screenshots of the original app: the Recorder with and without
-a recording, the Recording list, Settings, the Delete dialog and the Rename
-dialog. Every size, colour and font
+The spec is seven screenshots of the original app: the Recorder with and
+without a recording, the Recording list, a recording's own page, Settings, the
+Delete dialog and the Rename dialog. Every size, colour and font
 in [`lib/src/ui/spec.dart`](../lib/src/ui/spec.dart) was measured from them.
+The recording page's screenshot came later (1.1.0), from the same reference
+phone.
 This page explains how, so the numbers can be checked or re-measured.
 
 ## The reference phone
@@ -60,6 +62,7 @@ excluded), on a 0 to 255 scale:
 | Delete dialog | 3.2 |
 | Rename dialog | 3.1 |
 | Recording list | 14.6 (4.2 before the upgrades) |
+| Recording page | 4.4 (a pencil where the original's scissors were) |
 | Settings | 11.6 (4.0 before the upgrades) |
 
 The original's "no ads" badge (top left of the Recorder) and its "Remove ads"
@@ -96,6 +99,21 @@ the name in white, then the date and size in `#C1C1C1`. Text starts at
 row is `#FF8B00` and adds a Holo seek bar (`#33B5E5` thumb) with the
 position under it.
 
+**Recording page.** The header is the list's, with a 20 sp white title,
+"Voice Recorder", at 58.4 dp. Its icons are centred 23.8 dp from the top and
+99.1, 61.7 and 24.1 dp from the right edge: rename (the original's scissors
+trimmed), share and delete. The body is the brushed metal at 74.5 %
+brightness. Its five rows (name, size, location, date, length) are 32 dp tall,
+11.3 dp apart, and centred as a block; icons are centred at 37.8 dp and the
+14 sp white text starts at 75.4 dp. The player at the bottom is 143.4 dp of
+plain brushed metal. Its metal track is 21.4 dp tall with a 4 dp radius,
+22.9 dp from the left edge and 22.3 dp from the right, 37.1 dp from the
+panel's top, under a 13.1 × 28.6 dp metal slider. The two times are 14 sp,
+on a baseline 84.9 dp down. Five ringed buttons are centred 116 dp down:
+play/pause (47.8 dp) in the middle, back and forward 10 seconds (38.6 dp)
+55.7 dp to each side, previous and next recording (30 dp) at 101.7 dp. The
+rings are 4.2 % of their diameter.
+
 **Settings.** The section headers ("Recorder", "More app") are 14 sp
 `#DFDFDF` on the metal under 25 % white. Rows are 48 dp, with a 14 sp title
 and a 14 sp `#E0E0E0` summary at 53.7 dp. Icons are centred at 32.3 dp.
@@ -126,5 +144,7 @@ comes from the original APK.
   iOS icon set.
 - `extract_glyphs.py`: icon outlines from Font Awesome 4.7, Ionicons 2.0.1 and
   Material Icons ([THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). The
-  pencil, gear, list and back-chevron icons are drawn in code
+  pencil, gear, list and back-chevron icons, and the recording page's music
+  note, arrows, clock, length dial and player symbols, are drawn in code
   (`lib/src/ui/icons/app_icons.dart`), because no open icon font matched them.
+  `--keep-existing` adds new glyphs without touching the ones already there.

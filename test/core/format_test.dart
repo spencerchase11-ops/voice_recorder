@@ -80,4 +80,33 @@ void main() {
     expect(sanitizeFileName('.meeting'), 'meeting');
     expect(sanitizeFileName(' . .notes'), 'notes');
   });
+
+  test('page size is in units of 1024, with tenths below 100', () {
+    expect(formatFileSize(0), '0 B');
+    expect(formatFileSize(1023), '1023 B');
+    expect(formatFileSize(1024), '1.0 KB');
+    expect(formatFileSize(512 * 1024), '512 KB');
+    expect(formatFileSize(102338), '99.9 KB');
+    expect(formatFileSize(102376), '100 KB'); // 99.98 KB
+    expect(formatFileSize(1048063), '1023 KB');
+    expect(formatFileSize(1048064), '1.0 MB'); // would round to 1024 KB
+    expect(formatFileSize(39819 * 1024 + 300), '38.9 MB');
+    expect(formatFileSize(1503238554), '1.4 GB');
+    expect(formatFileSize(2048 * 1024 * 1024 * 1024 * 1024), '2048 TB');
+  });
+
+  test('page date is written out like the original', () {
+    expect(
+      formatLongDate(DateTime.utc(2026, 10, 8, 16, 25, 38)),
+      'Thu Oct 08 16:25:38 UTC 2026',
+    );
+    final t = DateTime(2027, 1, 2, 3, 4, 5);
+    final zone = t.timeZoneName;
+    expect(
+      formatLongDate(t),
+      zone.isEmpty
+          ? 'Sat Jan 02 03:04:05 2027'
+          : 'Sat Jan 02 03:04:05 $zone 2027',
+    );
+  });
 }

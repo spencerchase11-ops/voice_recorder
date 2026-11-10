@@ -21,6 +21,7 @@ import '../widgets/recorder_widgets.dart';
 import '../widgets/red_bars.dart';
 import '../widgets/toast.dart';
 import 'common_actions.dart';
+import 'recording_screen.dart';
 
 const _white = Color(0xFFFFFFFF);
 
@@ -259,6 +260,30 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     setState(() => _selected = f.id);
   }
 
+  /// The recording's own page is open (a second tap waits for it).
+  bool _onPage = false;
+
+  /// Opens [f]'s own page, as the original did; its previous and next go
+  /// through [visible]. The row stays open (selected) for the bottom bar.
+  Future<void> _openPage(RecordingFile f, List<RecordingFile> visible) async {
+    if (_onPage) return;
+    _open(f);
+    _onPage = true;
+    try {
+      await Navigator.of(context).push(
+        RecordingScreen.route(
+          file: f,
+          order: [for (final v in visible) v.id],
+          onShown: (id) {
+            if (mounted) setState(() => _selected = id);
+          },
+        ),
+      );
+    } finally {
+      _onPage = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
@@ -317,7 +342,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                               file: f,
                               selected: f.id == _selected,
                               open: f.id == _selected,
-                              onSelect: () => _open(f),
+                              onSelect: () => _openPage(f, visible),
                               onLongPress: () => _startSelecting(f),
                               onPlay: () {
                                 _open(f);

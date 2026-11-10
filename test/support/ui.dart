@@ -1,6 +1,10 @@
 // Helpers for tests that drive the screens.
+import 'dart:async';
+
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
 import 'package:voice_recorder/src/ui/widgets/recorder_widgets.dart';
 
@@ -49,4 +53,20 @@ Future<void> pumpUntil(WidgetTester tester, bool Function() done) async {
   }
   expect(done(), isTrue, reason: 'condition not reached');
   await tester.pump();
+}
+
+/// Opens the recording list with [name]'s row open (as after coming back
+/// from its page), without playing it: tapping a row opens its page, which
+/// plays it.
+Future<void> openListAt(WidgetTester tester, String name) async {
+  final nav = tester.state<NavigatorState>(find.byType(Navigator));
+  unawaited(
+    nav.push(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, _, _) =>
+            RecordingListScreen(initialSelection: 'mem://$name'),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
