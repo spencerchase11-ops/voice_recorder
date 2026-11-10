@@ -1254,6 +1254,94 @@ void main() {
       await engine.stop();
     });
 
+    for (final pauseFirst in [false, true]) {
+      test(
+        'M4A: opened as an end without "should resume" arrives, while '
+        'another app plays, it is not resumed until that app stops '
+        '(${pauseFirst ? 'paused before' : 'paused after'} the begin)',
+        () async {
+          await engine.start(m4aBest, '${dir.path}/m12l$pauseFirst.m4a');
+          if (pauseFirst) {
+            platform.emit(RecordState.pause);
+            calls.add(began());
+          } else {
+            calls.add(began());
+            platform.emit(RecordState.pause); // record_ios paused it
+          }
+          await settle(10);
+          othersPlay = true;
+          // The end and the app's return arrive together: whether record_ios
+          // paused its recorder is still being asked.
+          final answering = platform.pausedGate = Completer<void>();
+          calls.add(over());
+          await settle(10);
+          await expectLater(
+            engine.resume(byUser: false),
+            throwsA(isA<OtherAudioPlaying>()),
+          );
+          expect(platform.resumes, 0);
+          expect(activations, 0);
+          answering.complete();
+          await settle(50);
+          expect(platform.resumes, 0);
+          othersPlay = false; // that app stopped: it goes on, the app open
+          await eventually(() => platform.resumes == 1);
+          expect(platform.state, RecordState.record);
+          expect(interruptions.last, isFalse);
+          expect(ends, isEmpty);
+          await engine.stop();
+        },
+      );
+    }
+
+    test("M4A: paused by the user during a call, resumed by them just after "
+        "the call's end (to be resumed), it goes on and says so", () async {
+      await engine.start(m4aBest, '${dir.path}/m12m.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      await engine.pause(); // record_ios does nothing: not recording now
+      expect(platform.state, RecordState.record);
+      // The call ends, to be resumed: record_ios resumes its recorder
+      // itself (its state never left "record").
+      platform.systemPaused = false;
+      calls.add(over(resume: true));
+      await settle(10);
+      await engine.resume(); // the user's, at once
+      await settle(10);
+      expect(platform.state, RecordState.record);
+      expect(interruptions, [true, false]);
+      await settle(600); // nothing pauses it again later
+      expect(platform.state, RecordState.record);
+      expect(interruptions, [true, false]);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
+    test("M4A: paused by the user during a call, it is paused again should "
+        "record_ios resume it only after the app's first pause", () async {
+      await engine.start(m4aBest, '${dir.path}/m12n.m4a');
+      platform.systemPaused = true;
+      calls.add(began());
+      await settle(10);
+      await engine.pause(); // record_ios does nothing: not recording now
+      calls.add(over(resume: true)); // the app's pause comes too early
+      await settle(10);
+      expect(platform.state, RecordState.record);
+      platform.systemPaused = false; // record_ios resumes its recorder now
+      await eventually(() => platform.state == RecordState.pause);
+      expect(interruptions, [true]);
+      final pauses = platform.pauses;
+      await settle(600);
+      expect(platform.pauses, pauses); // once only
+      await engine.resume(); // the user's: it goes on
+      await settle(10);
+      expect(platform.state, RecordState.record);
+      expect(interruptions, [true, false]);
+      expect(ends, isEmpty);
+      await engine.stop();
+    });
+
     test('M4A: opened during a call that ends without saying so, with the app '
         'still open it ends after the wait', () async {
       await engine.start(m4aBest, '${dir.path}/m12f.m4a');

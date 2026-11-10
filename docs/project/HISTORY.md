@@ -27,11 +27,13 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 - **Playback (Android):** headphones unplugged during a call no longer let playback resume out
   loud after it; play during a call says "audio busy".
 - **Recording:** an iOS M4A recording that iOS paused and won't let resume ends, saved, instead
-  of staying frozen; opening the app never takes the audio session from another app that plays
-  (D15), counting only audio it would cut off; while such audio holds an M4A recording up, the
-  app says that stopping saves it and, while open, asks again every 2 s, so the recording goes
-  on or is saved once that audio is over (D17); the MP3/WAV level meter no longer freezes when
-  the clock goes back; the WAV limit notice gives the right hours for the quality.
+  of staying frozen; opening the app with an M4A recording held up never takes the audio
+  session from another app that plays (D15), counting only audio it would cut off, even as the
+  interruption's end arrives; while such audio holds it up, the app says that stopping saves it
+  and, while open, asks again every 2 s, so the recording goes on or is saved once that audio
+  is over (D17); an M4A recording paused during a call and resumed just after the call's end
+  no longer stays shown as held up while it records; the MP3/WAV level meter no longer freezes
+  when the clock goes back; the WAV limit notice gives the right hours for the quality.
 - **Dates and Recently deleted:** a date kept only in the app's cache (a renamed AAC, a write
   that failed or was refused, 1.0.x caches) survives delete and restore, folder switches and
   renames; a 1.0.1 copy time cached on iPhone no longer hides a date typed into the name;
