@@ -84,6 +84,36 @@ void main() {
     );
   }, variant: iPhone);
 
+  testWidgets("on iPhone a recording's player stays above the home indicator", (
+    tester,
+  ) async {
+    useIPhone(tester);
+    await pumpReferenceApp(tester);
+    await tester.tap(find.text('Recording list'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('kris n evan got back then zach.mp3'));
+    await tester.pumpAndSettle();
+    final screen = tester.getRect(find.byType(WidgetsApp));
+
+    // The metal goes on to the screen's edge; the buttons keep clear of the
+    // home indicator, as far above it as the original's above its edge.
+    final pause = tester.getRect(find.bySemanticsLabel('Pause'));
+    expect(
+      pause.center.dy,
+      moreOrLessEquals(
+        screen.bottom -
+            _homeIndicator -
+            Spec.playerHeight +
+            Spec.playerButtonsCenterY,
+      ),
+    );
+    // Its ring, that is; the touch area may reach a little lower.
+    expect(
+      pause.center.dy + Spec.playerBigButton / 2,
+      lessThan(screen.bottom - _homeIndicator),
+    );
+  }, variant: iPhone);
+
   testWidgets('on Android the system bars look like the original', (
     tester,
   ) async {

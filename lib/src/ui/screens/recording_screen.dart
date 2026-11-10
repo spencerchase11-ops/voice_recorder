@@ -227,7 +227,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
               ],
             ),
           ),
-          _player(app, file, width),
+          // Inside the frame, which says how far it reaches under the home
+          // indicator.
+          Builder(builder: (context) => _player(context, app, file, width)),
         ],
       ),
     );
@@ -367,7 +369,12 @@ class _RecordingScreenState extends State<RecordingScreen> {
     );
   }
 
-  Widget _player(AppController app, RecordingFile file, double width) {
+  Widget _player(
+    BuildContext context,
+    AppController app,
+    RecordingFile file,
+    double width,
+  ) {
     final playback = app.playback;
     final loaded = playback.fileId == file.id;
     final playing = playback.isPlaying(file.id);
