@@ -1,12 +1,12 @@
-// Renders the four App Store screenshots (docs/app-store) as 1290 x 2796
+// Renders the five App Store screenshots (docs/app-store) as 1290 x 2796
 // iPhone screens with neutral sample recordings. Skipped unless asked for:
 //
 //   flutter test test/tool/app_store_screenshots_test.dart \
 //     --dart-define=SHOTS_OUT=/absolute/output/dir
 //
 // then convert each PNG to docs/app-store/<name>.jpg (sips -s format jpeg
-// -s formatOptions 90). Order on the store: recording, playing, list,
-// Recently deleted.
+// -s formatOptions 90). Order on the store: recording, playing, list, a
+// recording's page, Recently deleted.
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -20,6 +20,7 @@ import 'package:voice_recorder/src/core/settings.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/ui/screens/recently_deleted_screen.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
+import 'package:voice_recorder/src/ui/screens/recording_screen.dart';
 
 import '../support/fakes.dart';
 import '../support/harness.dart';
@@ -103,11 +104,19 @@ List<RecordingFile> sampleRecordings({bool trashTwo = false}) {
   ];
 }
 
+/// The fake player, with a length to match the recording shown.
+class ShotPlayback extends FakePlayback {
+  Duration? length;
+
+  @override
+  Duration get duration => length ?? super.duration;
+}
+
 class Shot {
   Shot(this.controller, this.engine, this.playback);
   final AppController controller;
   final FakeEngine engine;
-  final FakePlayback playback;
+  final ShotPlayback playback;
 }
 
 Future<Shot> pumpShotApp(
@@ -142,7 +151,7 @@ Future<Shot> pumpShotApp(
     free: (656 * 3600 + 10 * 60 + 32) * 20000,
   );
   final engine = FakeEngine();
-  final playback = FakePlayback();
+  final playback = ShotPlayback();
   final controller = AppController(
     settings: settings,
     store: store,
@@ -253,11 +262,38 @@ void main() {
   );
 
   testWidgets(
-    '4-recently-deleted',
+    '4-recording-page',
+    (tester) async {
+      final s = await pumpShotApp(tester);
+      // Listed when the list opens, which this goes past.
+      await tester.runAsync(() => s.controller.refreshFiles());
+      final files = s.controller.files;
+      final lecture = files.firstWhere((f) => f.name.startsWith('Lecture'));
+      s.playback.length = lecture.duration;
+      await push(
+        tester,
+        RecordingScreen(
+          file: lecture,
+          order: [for (final f in files) f.id],
+          autoplay: false,
+        ),
+      );
+      await tester.runAsync(() => s.controller.togglePlay(lecture));
+      s.playback.setPosition(const Duration(minutes: 21, seconds: 15));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      await snap(tester, '4-recording-page');
+    },
+    variant: ios,
+    skip: skip != null,
+  );
+
+  testWidgets(
+    '5-recently-deleted',
     (tester) async {
       await pumpShotApp(tester, trashTwo: true);
       await push(tester, const RecentlyDeletedScreen());
-      await snap(tester, '4-recently-deleted');
+      await snap(tester, '5-recently-deleted');
     },
     variant: ios,
     skip: skip != null,
