@@ -820,7 +820,136 @@ void main() {
     expect(find.text(_second), findsNothing);
     expect(t.playback.fileId, isNull);
     expect(t.playback.playing, isFalse);
+    // The page on it closed: nothing is under the Undo toast.
+    expect(labeled('Undo'), findsOneWidget);
     await waitOutUndo(tester);
+  });
+
+  testWidgets(
+    "a delete that ends on another recording's page leaves out Undo",
+    (tester) async {
+      final t = await _openList(tester);
+      await _openPage(tester, _third);
+      await tester.tap(labeled('Delete'));
+      await tester.pumpAndSettle();
+      final slow = t.store.slow = Completer<void>();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      await _back(tester);
+      await _openPage(tester, _kris);
+      slow.complete();
+      t.store.slow = null;
+      await tester.pumpAndSettle();
+      expect(find.byType(RecordingScreen), findsOneWidget);
+      expect(find.text('Moved to Recently deleted'), findsOneWidget);
+      expect(labeled('Undo'), findsNothing);
+      // A tap on the seek bar under it goes through.
+      final seeks = t.playback.seeks;
+      final bar = tester.getRect(find.bySemanticsLabel('Position'));
+      await tester.tapAt(Offset(bar.left + bar.width * 0.3, bar.center.dy));
+      await tester.pumpAndSettle();
+      expect(t.playback.seeks, seeks + 1);
+      await waitOutUndo(tester);
+    },
+  );
+
+  testWidgets('after paging far with Next, Back shows the row playing', (
+    tester,
+  ) async {
+    String name(int i) => 'rec ${i.toString().padLeft(2, '0')}.mp3';
+    await _openList(
+      tester,
+      files: [
+        for (var i = 0; i < 40; i++)
+          RecordingFile(
+            id: 'mem://${name(i)}',
+            name: name(i),
+            size: 1024 * 1024,
+            modified: DateTime(2026, 9, 23, 12).subtract(Duration(hours: i)),
+          ),
+      ],
+    );
+    await _openPage(tester, name(0));
+    for (var i = 0; i < 25; i++) {
+      await tester.tap(_control('Next recording'));
+      await tester.pumpAndSettle();
+    }
+    expect(find.text(name(25)), findsOneWidget);
+    await _back(tester);
+    expect(_openRow(tester), name(25));
+    expect(labeled('Pause ${name(25)}').hitTestable(), findsOneWidget);
+    // A row already on screen is left where it is.
+    ScrollPosition list() => tester
+        .state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byType(ListView),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        )
+        .position;
+    final at = list().pixels;
+    await _openPage(tester, name(27));
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expect(_openRow(tester), name(28));
+    expect(list().pixels, at);
+  });
+
+  testWidgets("Previous and Next are heard: the name's row is read out", (
+    tester,
+  ) async {
+    await _openList(tester);
+    await _openPage(tester, _kris);
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Name: $_kris')),
+      isSemantics(isLiveRegion: true),
+    );
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Name: $_second')),
+      isSemantics(isLiveRegion: true),
+    );
+    // The other rows are not read out on their own.
+    expect(
+      tester.getSemantics(find.bySemanticsLabel(RegExp('^Size: '))),
+      isNot(isSemantics(isLiveRegion: true)),
+    );
+  });
+
+  testWidgets('renamed to a name freed in Files, Next still goes on', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _second);
+    // The row before it is deleted in the Files app.
+    t.store.files.removeWhere((f) => f.name == _kris);
+    await tester.runAsync(t.controller.refreshFiles);
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(EditableText),
+      _kris.substring(0, _kris.length - 4),
+    );
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(find.text(_kris), findsOneWidget);
+    await tester.tap(_control('Play'));
+    await tester.pumpAndSettle();
+    expect(t.playback.isPlaying('mem://$_kris'), isTrue);
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(find.text(_third), findsOneWidget);
+    expect(t.playback.isPlaying('mem://$_third'), isTrue);
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    expect(find.text(_kris), findsOneWidget);
   });
 
   testWidgets("the open row's position is read out by its slider only", (

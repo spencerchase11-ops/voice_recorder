@@ -53,6 +53,19 @@ class RecordingScreen extends StatefulWidget {
   /// Plays it on opening, as the original did.
   final bool autoplay;
 
+  /// The recording pages open now.
+  static final _shown = <_RecordingScreenState>{};
+
+  /// Whether a recording page other than [route]'s is open on a recording
+  /// not among [ids] (a page on one of those closes when it goes).
+  static bool showsOther(Route<Object?>? route, Set<String> ids) => _shown.any(
+    (s) =>
+        s._route != route &&
+        (s._route?.isActive ?? false) &&
+        !s._closing &&
+        !ids.contains(s._id),
+  );
+
   static Route<void> route({
     required RecordingFile file,
     List<String> order = const [],
@@ -106,11 +119,26 @@ class _RecordingScreenState extends State<RecordingScreen> {
   @override
   void initState() {
     super.initState();
+    RecordingScreen._shown.add(this);
     if (widget.autoplay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _playOnOpening();
       });
     }
+  }
+
+  Route<Object?>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  @override
+  void dispose() {
+    RecordingScreen._shown.remove(this);
+    super.dispose();
   }
 
   RecordingFile? _lookUp(AppController app, String id) {
@@ -127,11 +155,25 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   /// [from] has been renamed [to]: this page's ids follow.
   void _adopt(String from, String to) {
-    final i = _order.indexOf(from);
-    if (i >= 0) _order[i] = to;
+    _replace(from, to);
     final place = _places.remove(from);
     if (place != null) _places[to] = place;
     if (_id == from) _id = to;
+  }
+
+  /// [from]'s place in the order becomes [to]'s. A place that held [to]
+  /// already was a recording gone since (deleted in Files) whose name has
+  /// been taken again (on iPhone an id is the path): it stays gone.
+  void _replace(String from, String to) {
+    final i = _order.indexOf(from);
+    if (i < 0) return;
+    for (var j = 0; j < _order.length; j++) {
+      if (_order[j] == to) {
+        _order[j] = '';
+        _places.remove(to);
+      }
+    }
+    _order[i] = to;
   }
 
   /// The recording shown, as the app knows it now (its length may have been
@@ -270,8 +312,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
     widget.onRenamed?.call(file.id, renamed.id);
     if (!mounted) return;
     setState(() {
-      final i = _order.indexOf(file.id);
-      if (i >= 0) _order[i] = renamed.id;
+      _replace(file.id, renamed.id);
       if (_id == file.id) {
         _id = renamed.id;
         _last = renamed;
@@ -474,6 +515,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
         iconSize: Spec.pageNameIcon,
         label: 'Name',
         text: file.name,
+        live: true,
       ),
       _DetailRow(
         icon: AppIcons.expand,
@@ -664,6 +706,7 @@ class _DetailRow extends StatelessWidget {
     required this.label,
     required this.text,
     this.spoken,
+    this.live = false,
   });
 
   final IconShape icon;
@@ -674,11 +717,16 @@ class _DetailRow extends StatelessWidget {
   /// What a screen reader says for [text], if not the same.
   final String? spoken;
 
+  /// Read out when it changes (the name, after previous or next). One
+  /// announcement more would make VoiceOver say it twice.
+  final bool live;
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
       label: '$label: ${spoken ?? text}',
+      liveRegion: live,
       excludeSemantics: true,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: Spec.pageRowHeight),

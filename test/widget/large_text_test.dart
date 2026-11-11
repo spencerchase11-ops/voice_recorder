@@ -10,6 +10,7 @@ import 'package:voice_recorder/src/ui/icons/app_icons.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
 import 'package:voice_recorder/src/ui/widgets/red_bars.dart';
+import 'package:voice_recorder/src/ui/widgets/toast.dart';
 
 import '../support/fakes.dart';
 import '../support/harness.dart';
@@ -249,6 +250,81 @@ void main() {
       find.textContaining('days left'),
     );
     await tester.pump(const Duration(seconds: 5));
+  });
+
+  // The dates are drawn smaller where they wouldn't fit, never cut.
+  for (final (wide, scale, bold) in [
+    (375.0, _largest, false),
+    (320.0, _largest, true),
+    (320.0, 2.0, true),
+  ]) {
+    testWidgets(
+      'at ${scale}x, $wide wide${bold ? ', bold' : ''}, the dates are whole',
+      (tester) async {
+        useReferenceDevice(tester);
+        tester.view.physicalSize = Size(wide * 3, 2436);
+        tester.view.devicePixelRatio = 3;
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            FakeAccessibilityFeatures(boldText: bold);
+        addTearDown(
+          tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+        );
+        final t = await pumpReferenceApp(tester);
+        await tester.tap(labeled('Recording list'));
+        await tester.pumpAndSettle();
+        void expectWhole(Finder text) {
+          expect(text, findsWidgets);
+          final p = tester.renderObject<RenderParagraph>(
+            find.descendant(of: text.first, matching: find.byType(RichText)),
+          );
+          expect(p.didExceedMaxLines, isFalse, reason: p.text.toPlainText());
+        }
+
+        expectWhole(find.textContaining('2026-09-23'));
+        await tester.runAsync(
+          () => t.controller.delete([t.controller.files[1]]),
+        );
+        await tester.tap(labeled('Back'));
+        await tester.pumpAndSettle();
+        await tester.tap(labeled('Settings'));
+        await tester.pumpAndSettle();
+        await _openRecentlyDeleted(tester);
+        expectWhole(find.textContaining('Deleted '));
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
+  }
+
+  testWidgets("the toasts' and Settings summaries' text is at most 2x", (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    _useNarrowPhone(tester);
+    tester.platformDispatcher.textScaleFactorTestValue = _largest;
+    await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2026_09_18_21_23_04.mp3'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    double scale(Finder f) =>
+        MediaQuery.textScalerOf(tester.element(f)).scale(10);
+    expect(scale(find.text('Moved to Recently deleted')), 20);
+    showToast(tester.element(find.byType(RecordingListScreen)), 'Saved');
+    await tester.pump();
+    expect(scale(find.text('Saved')), 20);
+    await waitOutUndo(tester);
+    await tester.tap(labeled('Back'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Settings'));
+    await tester.pumpAndSettle();
+    expect(scale(find.text('Filters out background noise')), 20);
+    // The titles keep the full size.
+    expect(scale(find.text('Noise reduction')), 31);
   });
 
   testWidgets('a big recording at the largest bold text fits its row', (

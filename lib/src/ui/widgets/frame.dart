@@ -277,7 +277,14 @@ class DetailLine extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) => Row(
         children: [
-          Expanded(child: main),
+          Expanded(
+            // Smaller rather than cut, as the headers' titles: at the
+            // largest text the date would show only its year.
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(fit: BoxFit.scaleDown, child: main),
+            ),
+          ),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: c.maxWidth / 3),
             child: FittedBox(

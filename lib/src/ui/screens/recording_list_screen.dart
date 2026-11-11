@@ -303,6 +303,31 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     } finally {
       _onPage = false;
     }
+    // Previous and next on the page may have opened a row far from the one
+    // tapped: it is brought into view.
+    if (mounted && _selected != f.id) _reveal();
+  }
+
+  /// Scrolls the open row to the top of the list if it isn't wholly on
+  /// screen. The rows above it are closed, so all the same height.
+  void _reveal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final i = _visible(AppScope.read(context).files)
+          .indexWhere((f) => f.id == _selected);
+      if (i < 0) return;
+      final row =
+          Spec.listRowPadding * 2 +
+          AText.boxHeight(context, Spec.listName) * 2 +
+          Spec.listLineGap +
+          1 / MediaQuery.devicePixelRatioOf(context);
+      final top = Spec.listTopGap + i * row;
+      final p = _scroll.position;
+      if (top >= p.pixels && top + row <= p.pixels + p.viewportDimension) {
+        return;
+      }
+      _scroll.jumpTo(math.min(top, p.maxScrollExtent));
+    });
   }
 
   @override

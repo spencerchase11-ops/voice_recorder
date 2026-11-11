@@ -7,6 +7,7 @@ import '../../platform/native_bridge.dart';
 import '../app_scope.dart';
 import '../dialogs/dialogs.dart';
 import '../widgets/toast.dart';
+import 'recording_screen.dart';
 
 /// The record button: starts a recording (asking for the folder or the
 /// microphone first if needed) or stops the one running.
@@ -117,6 +118,7 @@ Future<bool> deleteRecordings(
     count: files.length,
   );
   if (!confirmed || !context.mounted) return false;
+  final from = ModalRoute.of(context);
   // The Undo toast is shown even if the user has left the screen meanwhile.
   final navigator = Navigator.of(context, rootNavigator: true);
   final deleted = await runWithProgress(
@@ -152,6 +154,13 @@ Future<bool> deleteRecordings(
       : n == 1
       ? 'Moved to Recently deleted'
       : '${formatCount(n)} recordings moved to Recently deleted';
+  // Another recording's page has opened meanwhile: the Undo toast would lie
+  // over its seek bar. Only said then (touches go through it); Recently
+  // deleted still has them.
+  if (RecordingScreen.showsOther(from, {for (final f in files) f.id})) {
+    showToast(navigator.context, message);
+    return true;
+  }
   showActionToast(
     navigator.context,
     message,

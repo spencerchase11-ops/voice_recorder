@@ -59,27 +59,32 @@ void showToast(BuildContext context, String message, {bool long = false}) {
       right: 24,
       // Above the undo toast, when both show.
       bottom: _toastBottom(ctx, _actionToast == null ? 88 : 144),
-      child: IgnorePointer(
-        child: Center(
-          child: PlainText(
-            child: Semantics(
-              liveRegion: true,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xE6333333),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontFamily: Spec.font,
-                    fontSize: 14,
-                    color: Color(0xFFFFFFFF),
+      // At most 2x, as the dialogs: larger, its words split on a narrow
+      // phone.
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 2,
+        child: IgnorePointer(
+          child: Center(
+            child: PlainText(
+              child: Semantics(
+                liveRegion: true,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xE6333333),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontFamily: Spec.font,
+                      fontSize: 14,
+                      color: Color(0xFFFFFFFF),
+                    ),
                   ),
                 ),
               ),
@@ -141,61 +146,66 @@ void showActionToast(
       left: 16,
       right: 16,
       bottom: _toastBottom(ctx, 80),
-      child: Center(
-        child: PlainText(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 480),
-            padding: const EdgeInsets.only(left: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xF2333333),
-              borderRadius: BorderRadius.circular(4),
-              boxShadow: const [
-                BoxShadow(color: Color(0x66000000), blurRadius: 4),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        message,
-                        style: const TextStyle(
-                          fontFamily: Spec.font,
-                          fontSize: 14,
-                          color: Color(0xFFFFFFFF),
+      // At most 2x, as the dialogs: larger, its words split on a narrow
+      // phone.
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 2,
+        child: Center(
+          child: PlainText(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 480),
+              padding: const EdgeInsets.only(left: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xF2333333),
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x66000000), blurRadius: 4),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          message,
+                          style: const TextStyle(
+                            fontFamily: Spec.font,
+                            fontSize: 14,
+                            color: Color(0xFFFFFFFF),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                PressableArea(
-                  semanticLabel: action,
-                  highlight: const Color(0x33FFFFFF),
-                  onTap: () {
-                    remove();
-                    onAction();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    child: Text(
-                      action.toUpperCase(),
-                      style: const TextStyle(
-                        fontFamily: Spec.font,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Spec.holoBlue,
+                  PressableArea(
+                    semanticLabel: action,
+                    highlight: const Color(0x33FFFFFF),
+                    onTap: () {
+                      remove();
+                      onAction();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Text(
+                        action.toUpperCase(),
+                        style: const TextStyle(
+                          fontFamily: Spec.font,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Spec.holoBlue,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

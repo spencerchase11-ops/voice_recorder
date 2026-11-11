@@ -625,7 +625,12 @@ class _Item extends StatelessWidget {
                         AText(title, style: Spec.settingsTitle),
                         if (summary != null) ...[
                           const SizedBox(height: Spec.settingsLineGap),
-                          AText(summary!, style: Spec.settingsSummary),
+                          // At most 2x: larger, its long words split on a
+                          // narrow phone ("backgroun|d").
+                          MediaQuery.withClampedTextScaling(
+                            maxScaleFactor: 2,
+                            child: AText(summary!, style: Spec.settingsSummary),
+                          ),
                         ],
                       ],
                     ),
