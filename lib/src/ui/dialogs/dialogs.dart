@@ -151,15 +151,11 @@ class _ProgressBody extends StatefulWidget {
 
 class _ProgressBodyState extends State<_ProgressBody> {
   late String _spoken = widget.label;
-  late int _step = widget.step;
 
   @override
   void didUpdateWidget(_ProgressBody old) {
     super.didUpdateWidget(old);
-    if (widget.step != _step) {
-      _step = widget.step;
-      _spoken = widget.label;
-    }
+    if (widget.step != old.step) _spoken = widget.label;
   }
 
   @override

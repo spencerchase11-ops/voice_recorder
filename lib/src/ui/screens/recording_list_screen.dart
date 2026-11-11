@@ -249,12 +249,15 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       showToast(context, 'Select only one recording to rename');
       return;
     }
+    final selected = _selected;
+    final ticked = _ticked;
     final renamed = await renameRecording(context, files.single);
     if (renamed != null && mounted) {
+      // A row opened (or a selection started) while it was saved is kept.
       setState(() {
-        if (_ticked != null) {
-          _ticked = {renamed.id};
-        } else {
+        if (ticked != null) {
+          if (identical(_ticked, ticked)) _ticked = {renamed.id};
+        } else if (_selected == selected) {
           _selected = renamed.id;
         }
       });

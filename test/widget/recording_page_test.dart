@@ -961,6 +961,62 @@ void main() {
     await waitOutUndo(tester);
   });
 
+  testWidgets("a row opened while the list's rename runs stays open", (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await tester.tap(labeled('Play $_third'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, _second);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expect(_openRow(tester), _second);
+    expect(t.playback.isPlaying('mem://$_second'), isTrue);
+    expect(find.text('late night idea.mp3'), findsOneWidget);
+  });
+
+  testWidgets('with a screen reader on, Undo waits to be found', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(
+          accessibleNavigation: true,
+          supportsAnnounce: true,
+        );
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    tester.takeAnnouncements();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.takeAnnouncements().map((a) => a.message),
+      contains('Moved to Recently deleted. Undo available'),
+    );
+    expect(
+      find.bySemanticsLabel('Moved to Recently deleted. Undo available'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsOneWidget);
+    await tester.tap(labeled('Undo'));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
+    expect(t.controller.files.map((f) => f.name), contains(_third));
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('after paging far with Next, Back shows the row playing', (
     tester,
   ) async {

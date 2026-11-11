@@ -140,6 +140,11 @@ void showActionToast(
   final overlay = _overlay(context);
   if (overlay == null) return;
   hideActionToast();
+  // With a screen reader on, finding the button takes longer than
+  // [duration]: it stays until used or replaced, as Flutter's snack bars
+  // do, and it is said that the button is there.
+  final reader = MediaQuery.accessibleNavigationOf(context);
+  final spoken = reader ? '$message. $action available' : message;
   final box = _actionBox = GlobalKey();
   late OverlayEntry entry;
   var removed = false;
@@ -188,6 +193,8 @@ void showActionToast(
                       child: Semantics(
                         // As the plain toast's.
                         liveRegion: !MediaQuery.supportsAnnounceOf(ctx),
+                        label: spoken,
+                        excludeSemantics: true,
                         child: Text(
                           message,
                           style: const TextStyle(
@@ -236,8 +243,8 @@ void showActionToast(
   // A plain toast showing already moves above it, once its height is
   // known.
   WidgetsBinding.instance.addPostFrameCallback((_) => _toast?.markNeedsBuild());
-  _actionTimer = Timer(duration, remove);
-  _announce(context, message);
+  if (!reader) _actionTimer = Timer(duration, remove);
+  _announce(context, spoken);
 }
 
 /// Removes the showing action toast.

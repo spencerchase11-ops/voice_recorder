@@ -524,6 +524,51 @@ void main() {
     );
   }
 
+  testWidgets("a job's first change is read out (copying starts, Cancel)", (
+    tester,
+  ) async {
+    await _pump(tester);
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    String heard() => tester
+        .getSemantics(find.bySemanticsLabel(RegExp('^Looking|^Copying|^Stop')))
+        .label;
+    Future<ProgressDialogRoute> open(ValueNotifier<JobState> state) async {
+      final route = ProgressDialogRoute(
+        title: 'Importing',
+        state: state,
+        label: (s) => s.total == 0
+            ? 'Looking for recordings…'
+            : 'Copying ${s.done} of ${s.total} recordings…',
+        onCancel: () {},
+      );
+      navigator.push(route);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      return route;
+    }
+
+    // Done looking: copying is said at once, not a tenth in.
+    var state = ValueNotifier<JobState>((done: 0, total: 0));
+    var route = await open(state);
+    expect(heard(), 'Looking for recordings…');
+    state.value = (done: 0, total: 200);
+    await tester.pump();
+    expect(heard(), 'Copying 0 of 200 recordings…');
+    navigator.removeRoute(route);
+    await tester.pumpAndSettle();
+
+    // Cancel before anything has been done.
+    for (final total in [0, 25]) {
+      state = ValueNotifier<JobState>((done: 0, total: total));
+      route = await open(state);
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      expect(heard(), 'Stopping…', reason: '$total');
+      navigator.removeRoute(route);
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets('a long job is read out by tenths, not every recording', (
     tester,
   ) async {
