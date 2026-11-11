@@ -207,12 +207,16 @@ class _RecordingScreenState extends State<RecordingScreen> {
     });
     widget.onShown?.call(to.id);
     if (app.isRecording || app.isBusy) return;
+    // A place is for the next visit only: played from the start on this
+    // one, it would be stale on a later one.
+    final place = _places.remove(to.id);
     if (!wasPlaying) {
       // Loaded, paused (where it was left, if it was): the lock screen's and
       // headphones' controls (and a resume after an interruption) then act
-      // on the recording shown, not on the one before.
+      // on the recording shown, not on the one before. An absolute seek: a
+      // seek-bar tap while it opens comes after it, and wins.
       if (app.playback.fileId != to.id) {
-        await app.skip(_places.remove(to.id) ?? Duration.zero, file: to);
+        await app.seek(to, 0, at: place ?? Duration.zero);
       }
       return;
     }
@@ -228,6 +232,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
       await action();
     } finally {
       _busy = false;
+      // Built again: the recording may have gone from the folder meanwhile
+      // (the page then closes), with nothing else to rebuild it.
+      if (mounted) setState(() {});
     }
   }
 
@@ -383,13 +390,17 @@ class _RecordingScreenState extends State<RecordingScreen> {
           bottom: 0,
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Semantics(
-              header: true,
-              child: const AText(
-                'Voice Recorder',
-                style: Spec.pageTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            // Drawn smaller when too wide (at 2x), as the other headers'.
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Semantics(
+                header: true,
+                child: const AText(
+                  'Voice Recorder',
+                  style: Spec.pageTitle,
+                  maxLines: 1,
+                ),
               ),
             ),
           ),

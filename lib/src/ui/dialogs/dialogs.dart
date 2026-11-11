@@ -284,11 +284,11 @@ class HoloDialog extends StatelessWidget {
                   bottom: 0,
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: AText(
-                      title,
-                      style: Spec.holoTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // Drawn smaller when too wide (at 2x), as the headers'.
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: AText(title, style: Spec.holoTitle, maxLines: 1),
                     ),
                   ),
                 ),
@@ -498,6 +498,8 @@ Future<int?> showChoiceDialog(
               PressableArea(
                 onTap: () => Navigator.of(ctx).pop(i),
                 semanticLabel: items[i],
+                // Screen readers say which is the current choice.
+                selected: i == selected,
                 // Taller when larger text wraps the choice.
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 48),

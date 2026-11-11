@@ -530,8 +530,10 @@ void main() {
   testWidgets('the page closes when its recording is gone from the folder', (
     tester,
   ) async {
+    final calls = mockNativeChannel();
     final t = await _openList(tester);
     await _openPage(tester, _third);
+    expect(t.playback.playing, isTrue);
     // Deleted in a file manager; the folder is listed again on coming back.
     t.store.files.removeWhere((f) => f.name == _third);
     await tester.runAsync(t.controller.refreshFiles);
@@ -539,6 +541,133 @@ void main() {
     expect(find.byType(RecordingScreen), findsNothing);
     expect(find.byType(RecordingListScreen), findsOneWidget);
     expect(find.text(_third), findsNothing);
+    // It stops, and its lock-screen controls go, as after a delete.
+    expect(t.playback.fileId, isNull);
+    expect(t.playback.playing, isFalse);
+    expect(calls.last, 'clearMediaSession');
+  });
+
+  testWidgets('after Cancel, a page whose recording went meanwhile closes', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    for (final button in ['Rename', 'Delete']) {
+      await tester.tap(labeled(button));
+      await tester.pumpAndSettle();
+      // Deleted elsewhere while the dialog is open: the page waits for it.
+      t.store.files.removeWhere((f) => f.name == _third);
+      await tester.runAsync(t.controller.refreshFiles);
+      await tester.pumpAndSettle();
+      expect(find.byType(RecordingScreen), findsOneWidget, reason: button);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      if (button == 'Rename') {
+        expect(find.byType(RecordingScreen), findsNothing);
+        // Again, with Delete's dialog this time.
+        t.store.files.add(
+          referenceRecordings().firstWhere((f) => f.name == _third),
+        );
+        await tester.runAsync(t.controller.refreshFiles);
+        await tester.pumpAndSettle();
+        expect(find.text(_third), findsOneWidget);
+        await _openPage(tester, _third);
+        await tester.tap(_control('Pause'));
+        await tester.pumpAndSettle();
+      }
+    }
+    expect(find.byType(RecordingScreen), findsNothing);
+  });
+
+  testWidgets('a place from an earlier visit is not brought back later', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(_control('Forward 10 seconds'));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Play'));
+    await tester.pumpAndSettle();
+    // Back while playing: it plays from the start.
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_kris');
+    expect(t.playback.position, Duration.zero);
+    // Left playing, at 00:10.
+    await tester.tap(_control('Forward 10 seconds'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    // Not at 00:20 from the earlier visit: from the start, as one left
+    // playing is.
+    expect(t.playback.fileId, 'mem://$_kris');
+    expect(t.playback.playing, isFalse);
+    expect(t.playback.position, Duration.zero);
+  });
+
+  testWidgets('a seek-bar tap while a recording opens at its place wins', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(_control('Forward 10 seconds'));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    final gate = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Previous recording'));
+    await tester.pump();
+    // Halfway along, while it opens at 00:20.
+    await tester.tapAt(tester.getRect(_control('Position')).center);
+    await tester.pump();
+    gate.complete();
+    t.playback.loadGate = null;
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_kris');
+    expect(t.playback.position.inSeconds, inInclusiveRange(80, 100));
+  });
+
+  testWidgets('at 2x on a narrow phone, the page title is whole', (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    tester.view.physicalSize = const Size(960, 1704);
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, _kris);
+    final title = find.descendant(
+      of: find.byType(RecordingScreen),
+      matching: find.text('Voice Recorder'),
+    );
+    expect(
+      tester.renderObject<RenderParagraph>(title).didExceedMaxLines,
+      isFalse,
+    );
+    final rect = tester.getRect(title);
+    expect(rect.left, greaterThanOrEqualTo(Spec.pageTitleLeft - 0.01));
+    expect(
+      rect.right,
+      lessThanOrEqualTo(320 - Spec.pageRenameFromRight - 24 + 0.01),
+    );
   });
 
   testWidgets("a folder out of reach, or that can't be read, leaves it open", (

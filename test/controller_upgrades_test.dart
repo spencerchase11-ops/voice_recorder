@@ -277,6 +277,76 @@ void main() {
       expect(named('clearMediaSession'), hasLength(1));
     });
 
+    test('a press while the next recording opens acts on it', () async {
+      await build();
+      final file = app.currentFile!;
+      final other = referenceRecordings().firstWhere((f) => f.id != file.id);
+      await app.togglePlay(file);
+      await settle();
+      await app.togglePlay(file);
+      await settle();
+      final gate = playback.loadGate = Completer<void>();
+      final cue = app.seek(other, 0);
+      await settle();
+      // A headphone press while it opens (the player has nothing loaded).
+      native.eventController.add(const MediaButton('toggle'));
+      await settle();
+      gate.complete();
+      playback.loadGate = null;
+      expect(await cue, isTrue);
+      await settle();
+      expect(named('clearMediaSession'), isEmpty);
+      expect(playback.fileId, other.id);
+      expect(playback.playing, isTrue);
+      expect(lastUpdate()['title'], other.baseName);
+    });
+
+    test(
+      'gone, and playback stopped, when the recording leaves the folder',
+      () async {
+        await build();
+        await app.refreshFiles();
+        final file = app.currentFile!;
+        await app.togglePlay(file);
+        await settle();
+        store.files.removeWhere((f) => f.id == file.id);
+        await app.refreshFiles();
+        await settle();
+        expect(playback.fileId, isNull);
+        expect(playback.playing, isFalse);
+        expect(named('clearMediaSession'), hasLength(1));
+      },
+    );
+
+    test('kept for one not listed yet, or a folder out of reach', () async {
+      await build();
+      await app.refreshFiles();
+      // Saved a moment ago, not in the list yet.
+      final fresh = RecordingFile(
+        id: 'mem://just saved.mp3',
+        name: 'just saved.mp3',
+        size: 1000,
+        modified: _now,
+      );
+      await app.togglePlay(fresh);
+      await settle();
+      await app.refreshFiles();
+      await settle();
+      expect(playback.fileId, fresh.id);
+      expect(playback.playing, isTrue);
+
+      final file = app.currentFile!;
+      await app.togglePlay(file);
+      await settle();
+      final clears = named('clearMediaSession').length;
+      store.ready = false; // an SD card taken out: nothing is listed
+      await app.refreshFiles();
+      await settle();
+      expect(playback.fileId, file.id);
+      expect(playback.playing, isTrue);
+      expect(named('clearMediaSession'), hasLength(clears));
+    });
+
     test('only a jump in the position is reported', () async {
       await build();
       await app.togglePlay(app.currentFile!);

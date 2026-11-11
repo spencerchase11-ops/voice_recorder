@@ -471,6 +471,15 @@ class AppController extends ChangeNotifier {
     // Forget the files that are gone, but not all of them when the folder
     // is out of reach (the list is empty then).
     if (store.isReady && list.isNotEmpty) _info.retainOnly(list);
+    // The recording loaded for playback was listed and is gone now (deleted
+    // or moved in Files or a file manager): it stops, as after a delete in
+    // the app, and its lock-screen controls go.
+    final loaded = _loaded?.id ?? playback.fileId;
+    final vanished =
+        store.isReady &&
+        loaded != null &&
+        _files.any((f) => f.id == loaded) &&
+        !list.any((f) => f.id == loaded);
     // Most refreshes (coming back to the app) find the same files: keep
     // the list as it is then.
     final shown = {for (final f in _files) f.id: f};
@@ -493,6 +502,10 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     } else if (!wasShown) {
       notifyListeners();
+    }
+    if (vanished && !_recording) {
+      await _safe(_stopPlayback);
+      _syncMedia();
     }
     // A renamed recording keeps its date inside: read all of those (the
     // newest first), so the whole list is in the right order.
@@ -1266,15 +1279,20 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Moves [file]'s playback to [fraction] of its length. If it isn't loaded
-  /// yet it is loaded paused. Returns false if it couldn't be opened.
-  Future<bool> seek(RecordingFile file, double fraction) async {
+  /// Moves [file]'s playback to [fraction] of its length (or to [at]). If it
+  /// isn't loaded yet it is loaded paused. Returns false if it couldn't be
+  /// opened.
+  Future<bool> seek(RecordingFile file, double fraction, {Duration? at}) async {
     if (_recording || _busy) return false;
     if (playback.fileId != file.id) _cueing = file.id;
     try {
       _loaded = file;
       await playback.load(file.id, store.playbackUri(file));
-      await playback.seek(playback.duration * fraction.clamp(0.0, 1.0));
+      await playback.seek(
+        at != null
+            ? _clamped(at)
+            : playback.duration * fraction.clamp(0.0, 1.0),
+      );
       return true;
     } catch (e) {
       debugPrint('Could not seek in ${file.name}: $e');
@@ -1442,7 +1460,14 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _onMediaButton(String action, Duration? position) async {
-    final file = _loaded;
+    var file = _loaded;
+    if (file != null && file.id == _cueing && playback.fileId != file.id) {
+      // Still opening the recording the controls are moving to (the page's
+      // previous or next): the press acts on it once it has opened.
+      final opening = file;
+      await _safe(() => playback.load(opening.id, store.playbackUri(opening)));
+      file = _loaded;
+    }
     if (file == null || playback.fileId != file.id) {
       // Nothing is loaded any more: the controls are stale.
       _media = null;

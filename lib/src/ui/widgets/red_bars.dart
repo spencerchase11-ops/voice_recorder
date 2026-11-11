@@ -14,9 +14,12 @@ class RedHeader extends StatelessWidget {
 
   final String title;
 
-  /// Room kept clear for the buttons at each side of the (centred) title;
-  /// a title too wide for the rest is drawn smaller.
+  /// Room kept clear for the buttons at each side of the (centred) title,
+  /// which keeps a further [titleGap] from them; a title too wide for the
+  /// rest is drawn smaller.
   final double titleInset;
+
+  static const titleGap = 8.0;
 
   /// Icons and buttons, positioned in header coordinates (0..width, 0..48).
   final List<Widget> children;
@@ -34,7 +37,9 @@ class RedHeader extends StatelessWidget {
           child: Stack(
             children: [
               Padding(
-                padding: EdgeInsets.symmetric(horizontal: titleInset),
+                padding: EdgeInsets.symmetric(
+                  horizontal: titleInset + titleGap,
+                ),
                 child: Center(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,

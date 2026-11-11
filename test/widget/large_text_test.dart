@@ -1,4 +1,5 @@
-// The screens and dialogs at iPhone's largest accessibility text size.
+// The screens and dialogs at iPhone's largest accessibility text size, and
+// for screen readers.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
@@ -48,6 +49,11 @@ void _expectTitleClear(WidgetTester tester, String title) {
         ? find.descendant(of: find.byWidget(c), matching: find.byType(Opacity))
         : find.byWidget(c);
     final icon = tester.getRect(drawn);
+    // Not just clear: a gap like a space between words.
+    final gap = icon.center.dx < rect.center.dx
+        ? rect.left - icon.right
+        : icon.left - rect.right;
+    expect(gap, greaterThanOrEqualTo(6), reason: '"$title" $gap from $icon');
     final reach = icon.center.dx < bar.center.dx
         ? icon.right - bar.left
         : bar.right - icon.left;
@@ -165,6 +171,13 @@ void main() {
 
     final text = find.text(long);
     expect(MediaQuery.textScalerOf(tester.element(text)).scale(10), 20);
+    // The title is whole too, drawn smaller.
+    expect(
+      tester
+          .renderObject<RenderParagraph>(find.text('Import recordings'))
+          .didExceedMaxLines,
+      isFalse,
+    );
     final paragraph = tester.renderObject<RenderParagraph>(text);
     expect(paragraph.didExceedMaxLines, isFalse);
     // Wrapped, its row grows to hold it.
@@ -238,5 +251,26 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.getRect(text).top, lessThan(before.top - 100));
+  });
+
+  testWidgets('screen readers hear which choice is the current one', (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Sort'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Newest first')),
+      isSemantics(isButton: true, isSelected: true),
+    );
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Oldest first')),
+      isSemantics(isButton: true, isSelected: false),
+    );
+    await tester.tap(find.text('Newest first'));
+    await tester.pumpAndSettle();
   });
 }
