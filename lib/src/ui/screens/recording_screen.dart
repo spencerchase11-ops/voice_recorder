@@ -119,20 +119,40 @@ class _RecordingScreenState extends State<RecordingScreen> {
       _indexed = files;
       _byId = {for (final f in files) f.id: f};
     }
-    return _byId[id];
+    // Renamed elsewhere in the app since this page took its ids (opened
+    // while the rename was being saved): found under the new name.
+    final renamed = app.renamedTo(id);
+    return _byId[id] ?? (renamed == null ? null : _byId[renamed]);
+  }
+
+  /// [from] has been renamed [to]: this page's ids follow.
+  void _adopt(String from, String to) {
+    final i = _order.indexOf(from);
+    if (i >= 0) _order[i] = to;
+    final place = _places.remove(from);
+    if (place != null) _places[to] = place;
+    if (_id == from) _id = to;
   }
 
   /// The recording shown, as the app knows it now (its length may have been
-  /// read meanwhile).
-  RecordingFile _file(AppController app) => _last = _lookUp(app, _id) ?? _last;
+  /// read meanwhile, or it may have been renamed).
+  RecordingFile _file(AppController app) {
+    final f = _lookUp(app, _id);
+    if (f != null && f.id != _id) _adopt(_id, f.id);
+    return _last = f ?? _last;
+  }
 
   /// The nearest recording [step] rows away that is still there.
   RecordingFile? _neighbour(AppController app, int step) {
+    _file(app);
     final i = _order.indexOf(_id);
     if (i < 0) return null;
     for (var j = i + step; j >= 0 && j < _order.length; j += step) {
       final f = _lookUp(app, _order[j]);
-      if (f != null) return f;
+      if (f != null) {
+        if (f.id != _order[j]) _adopt(_order[j], f.id);
+        return f;
+      }
     }
     return null;
   }
@@ -207,9 +227,10 @@ class _RecordingScreenState extends State<RecordingScreen> {
     });
     widget.onShown?.call(to.id);
     if (app.isRecording || app.isBusy) return;
-    // A place is for the next visit only: played from the start on this
-    // one, it would be stale on a later one.
-    final place = _places.remove(to.id);
+    // A place is for the next visit that opens the recording: used up then
+    // (one played from the start would be stale on a later visit), and kept
+    // when passed before it has opened (a quick second Previous or Next).
+    final place = _places[to.id];
     if (!wasPlaying) {
       // Loaded, paused (where it was left, if it was): the lock screen's and
       // headphones' controls (and a resume after an interruption) then act
@@ -218,9 +239,11 @@ class _RecordingScreenState extends State<RecordingScreen> {
       if (app.playback.fileId != to.id) {
         await app.seek(to, 0, at: place ?? Duration.zero);
       }
+      if (app.playback.fileId == to.id) _places.remove(to.id);
       return;
     }
     final outcome = await _start(app, to);
+    if (app.playback.fileId == to.id) _places.remove(to.id);
     if (mounted) showPlayProblem(context, outcome);
   }
 

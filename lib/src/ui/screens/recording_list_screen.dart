@@ -470,7 +470,27 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                 decoration: const InputDecoration(
                   isDense: true,
                   border: InputBorder.none,
-                  hintText: 'Search by name or date',
+                  // Drawn smaller, not cut short, at large text sizes.
+                  hint: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      'Search by name or date',
+                      maxLines: 1,
+                      // As hintStyle came out merged with the theme's.
+                      style: TextStyle(
+                        inherit: false,
+                        fontFamily: Spec.font,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w400,
+                        height: 1.5,
+                        leadingDistribution: TextLeadingDistribution.even,
+                        letterSpacing: 0.5,
+                        textBaseline: TextBaseline.alphabetic,
+                        color: Color(0xB3FFFFFF),
+                      ),
+                    ),
+                  ),
                   hintStyle: TextStyle(
                     fontFamily: Spec.font,
                     fontSize: 18,

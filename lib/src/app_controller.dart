@@ -1281,13 +1281,16 @@ class AppController extends ChangeNotifier {
 
   /// Moves [file]'s playback to [fraction] of its length (or to [at]). If it
   /// isn't loaded yet it is loaded paused. Returns false if it couldn't be
-  /// opened.
+  /// opened. Nothing moves if another file is opened meanwhile.
   Future<bool> seek(RecordingFile file, double fraction, {Duration? at}) async {
     if (_recording || _busy) return false;
     if (playback.fileId != file.id) _cueing = file.id;
     try {
       _loaded = file;
       await playback.load(file.id, store.playbackUri(file));
+      // Another file's load took over meanwhile: this place isn't its (and
+      // nothing failed).
+      if (playback.fileId != file.id) return true;
       await playback.seek(
         at != null
             ? _clamped(at)
@@ -1316,6 +1319,8 @@ class AppController extends ChangeNotifier {
     if (_recording || _busy) return true;
     if (file != null && playback.fileId != file.id) {
       if (!await seek(file, 0)) return false;
+      // Another file opened meanwhile: the jump was for [file].
+      if (playback.fileId != file.id) return true;
     }
     if (playback.fileId == null) return true;
     await _safe(() => playback.seek(_clamped(playback.position + delta)));
@@ -1563,8 +1568,31 @@ class AppController extends ChangeNotifier {
       settings.setLast(shown.id, settings.lastDuration);
     }
     _files = _sorted([for (final f in _files) f.id == file.id ? shown : f]);
+    _renamedTo
+      ..remove(shown.id)
+      ..[file.id] = shown.id;
+    // Played again under the old name while it was being renamed (a page
+    // opened on it meanwhile): that name is gone.
+    if (playback.fileId == file.id || _loaded?.id == file.id) {
+      await _safe(_stopPlayback);
+    }
     notifyListeners();
     return shown;
+  }
+
+  /// Renames made in the app, old id to new.
+  final _renamedTo = <String, String>{};
+
+  /// What [id] was renamed to in the app (after any further renames), so a
+  /// page opened on a recording while it was being renamed can follow it.
+  String? renamedTo(String id) {
+    String? to;
+    for (var i = 0; i < 16; i++) {
+      final next = _renamedTo[to ?? id];
+      if (next == null || next == id) break;
+      to = next;
+    }
+    return to;
   }
 
   /// [file]'s rename failed after [_keepDate], whose write changes the

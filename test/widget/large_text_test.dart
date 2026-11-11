@@ -109,6 +109,31 @@ void main() {
     _expectTitleClear(tester, 'Recently deleted');
   });
 
+  testWidgets("the search field's hint is whole at 2x on a narrow phone", (
+    tester,
+  ) async {
+    await _pump(tester);
+    _useNarrowPhone(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Search'));
+    await tester.pumpAndSettle();
+    const hint = 'Search by name or date';
+    final text = find.text(hint);
+    expect(text, findsOneWidget);
+    expect(MediaQuery.textScalerOf(tester.element(text)).scale(10), 20);
+    final paragraph = tester.renderObject<RenderParagraph>(text);
+    expect(paragraph.didExceedMaxLines, isFalse);
+    // Smaller, inside the field.
+    final field = tester.getRect(find.byType(EditableText));
+    final drawn = tester.getRect(text);
+    expect(drawn.left, greaterThanOrEqualTo(field.left - 0.01));
+    expect(drawn.right, lessThanOrEqualTo(field.right + 0.01));
+    // A screen reader still hears it whole.
+    expect(find.bySemanticsLabel(RegExp(hint)), findsWidgets);
+  });
+
   testWidgets('a title too wide for the room left is drawn smaller', (
     tester,
   ) async {

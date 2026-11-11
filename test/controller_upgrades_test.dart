@@ -301,6 +301,43 @@ void main() {
       expect(lastUpdate()['title'], other.baseName);
     });
 
+    // A seek or skip in a recording that another one's load overtakes
+    // (played meanwhile) leaves that other one where it is.
+    for (final skip in [false, true]) {
+      test(
+        "a ${skip ? 'skip' : 'seek'} overtaken by another load moves nothing",
+        () async {
+          await build();
+          final file = app.currentFile!;
+          final other = referenceRecordings().firstWhere(
+            (f) => f.id != file.id,
+          );
+          final first = playback.loadGate = Completer<void>();
+          final cue = skip
+              ? app.skip(const Duration(seconds: 10), file: file)
+              : app.seek(file, 0, at: const Duration(seconds: 20));
+          await settle();
+          final second = playback.loadGate = Completer<void>();
+          final playing = app.togglePlay(other);
+          await settle();
+          playback.loadGate = null;
+          final seeks = playback.seeks;
+          // The other one opens first; the overtaken load ends after.
+          second.complete();
+          await settle();
+          expect(playback.fileId, other.id);
+          first.complete();
+          expect(await cue, isTrue);
+          expect(await playing, PlayOutcome.ok);
+          await settle();
+          expect(playback.fileId, other.id);
+          expect(playback.playing, isTrue);
+          expect(playback.position, Duration.zero);
+          expect(playback.seeks, seeks);
+        },
+      );
+    }
+
     test(
       'gone, and playback stopped, when the recording leaves the folder',
       () async {

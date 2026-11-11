@@ -643,6 +643,102 @@ void main() {
     expect(t.playback.position.inSeconds, inInclusiveRange(80, 100));
   });
 
+  testWidgets('a recording passed before it has opened keeps its place', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _second);
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(_control('Forward 10 seconds'));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    // Two quick Previous taps: the second while the first one opens.
+    final first = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Previous recording'));
+    await tester.pump();
+    final second = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Previous recording'));
+    await tester.pump();
+    t.playback.loadGate = null;
+    first.complete();
+    second.complete();
+    await tester.pumpAndSettle();
+    expect(find.text(_kris), findsOneWidget);
+    expect(t.playback.fileId, 'mem://$_kris');
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_second');
+    expect(t.playback.position, const Duration(seconds: 20));
+  });
+
+  testWidgets('a page opened while its recording is renamed follows it', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    // Its row, still under the old name: it plays again.
+    await _openPage(tester, _third);
+    expect(t.playback.isPlaying('mem://$_third'), isTrue);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    // Still open, on the new name; nothing plays under the old one.
+    expect(find.byType(RecordingScreen), findsOneWidget);
+    expect(find.text('late night idea.mp3'), findsOneWidget);
+    expect(t.playback.fileId, isNot('mem://$_third'));
+    expect(_control('Play'), findsOneWidget);
+    await tester.tap(_control('Play'));
+    await tester.pumpAndSettle();
+    expect(t.playback.isPlaying('mem://late night idea.mp3'), isTrue);
+    expect(_control('Pause'), findsOneWidget);
+    // Playing, so the next one plays too.
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(t.playback.isPlaying('mem://2026_09_18_19_52_06.mp3'), isTrue);
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    expect(find.text('late night idea.mp3'), findsOneWidget);
+    await _back(tester);
+    expect(_openRow(tester), 'late night idea.mp3');
+  });
+
+  testWidgets('a page opened while another is renamed reaches it with Next', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    await _openPage(tester, _second);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.text(_second), findsOneWidget);
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(find.text('late night idea.mp3'), findsOneWidget);
+    expect(t.playback.isPlaying('mem://late night idea.mp3'), isTrue);
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    expect(find.text(_second), findsOneWidget);
+  });
+
   testWidgets('at 2x on a narrow phone, the page title is whole', (
     tester,
   ) async {
