@@ -1,18 +1,25 @@
 // A recording's own page, opened by tapping its row in the list.
 import 'dart:async';
 
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_recorder/src/core/format.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
+import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/ui/screens/recording_screen.dart';
+import 'package:voice_recorder/src/ui/spec.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
+import 'package:voice_recorder/src/ui/widgets/red_bars.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 
+import '../support/fakes.dart';
 import '../support/harness.dart';
 import '../support/ui.dart';
 
 const _kris = 'kris n evan got back then zach.mp3';
+const _second = '2026_09_20_17_26_27.mp3';
+const _third = '2026_09_18_21_23_04.mp3';
 
 /// One of the page's player controls, by what a screen reader says.
 Finder _control(String label) => find.bySemanticsLabel(label);
@@ -26,9 +33,13 @@ String? _openRow(WidgetTester tester) {
   return tester.widget<PressableArea>(open).semanticLabel;
 }
 
-Future<TestApp> _openList(WidgetTester tester) async {
+Future<TestApp> _openList(
+  WidgetTester tester, {
+  List<RecordingFile>? files,
+  NativeBridge? native,
+}) async {
   useReferenceDevice(tester);
-  final t = await pumpReferenceApp(tester);
+  final t = await pumpReferenceApp(tester, files: files, native: native);
   await tester.tap(labeled('Recording list'));
   await tester.pumpAndSettle();
   return t;
@@ -404,6 +415,236 @@ void main() {
     expect(t.store.shared, ['2026_09_18_21_23_04.mp3']);
     await tester.pumpAndSettle();
     expect(find.textContaining('Are you sure'), findsNothing);
+  });
+
+  testWidgets('Play, then a quick Next, plays the recording shown', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    // The next one takes a while to open: Play, then Next, meanwhile.
+    final gate = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    await tester.tap(_control('Play'));
+    await tester.pump();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    gate.complete();
+    t.playback.loadGate = null;
+    await tester.pumpAndSettle();
+    expect(find.text(_third), findsOneWidget);
+    expect(t.playback.fileId, 'mem://$_third');
+    expect(t.playback.playing, isTrue);
+    expect(_control('Pause'), findsOneWidget);
+  });
+
+  testWidgets('a skip while the next one opens keeps it playing', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    final gate = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    await tester.tap(_control('Forward 10 seconds'));
+    await tester.pump();
+    gate.complete();
+    t.playback.loadGate = null;
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_second');
+    expect(t.playback.playing, isTrue);
+    expect(t.playback.position, const Duration(seconds: 10));
+  });
+
+  testWidgets('after Next while paused, the headphones play the one shown', (
+    tester,
+  ) async {
+    final native = FakeNative();
+    final t = await _openList(tester, native: native);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    // Loaded, paused, from the start.
+    expect(t.playback.fileId, 'mem://$_second');
+    expect(t.playback.playing, isFalse);
+    expect(t.playback.position, Duration.zero);
+
+    // The controller listens in the real zone (it was set up there).
+    await tester.runAsync(() async {
+      native.eventController.add(const MediaButton('toggle'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    });
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_second');
+    expect(t.playback.playing, isTrue);
+    expect(_control('Pause'), findsOneWidget);
+  });
+
+  testWidgets('the player waits while the page renames', (tester) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    final played = [...t.playback.played];
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    // Still saving the new name.
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Play'));
+    await tester.pumpAndSettle();
+    expect(find.text(_third), findsOneWidget);
+    expect(t.playback.played, played);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.text('late night idea.mp3'), findsOneWidget);
+  });
+
+  testWidgets("a late rename doesn't take over a row opened meanwhile", (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), 'late night idea');
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    // Another row's page, while the rename goes on.
+    await _openPage(tester, _second);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.text(_second), findsOneWidget);
+    await _back(tester);
+    expect(_openRow(tester), _second);
+  });
+
+  testWidgets('with Bold Text on, a long name keeps every line', (
+    tester,
+  ) async {
+    await loadAppFonts(); // bold Roboto is wider than regular
+    useReferenceDevice(tester);
+    // A 375 pt wide iPhone at the default text size, where this name takes
+    // two lines, but three in bold.
+    tester.view.physicalSize = const Size(375 * 3.5, 3120);
+    tester.platformDispatcher.textScaleFactorTestValue = 1;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(boldText: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    const name =
+        'Call with Jordan about the quarterly budget review and the new '
+        'office lease plans for.m4a';
+    await pumpReferenceApp(
+      tester,
+      files: [
+        RecordingFile(
+          id: 'mem://$name',
+          name: name,
+          size: 1000000,
+          modified: DateTime(2026, 9, 20, 12),
+        ),
+      ],
+    );
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, name);
+
+    // The name, and the location ending with it: each box is as tall as the
+    // lines drawn in it.
+    final texts = find.descendant(
+      of: find.byType(RecordingScreen),
+      matching: find.byWidgetPredicate(
+        (w) => w is Text && (w.data?.endsWith(name) ?? false),
+      ),
+    );
+    expect(texts, findsNWidgets(2));
+    for (final element in texts.evaluate()) {
+      final text = find.byWidget(element.widget);
+      final data = (element.widget as Text).data!;
+      final drawn = tester
+          .renderObject<RenderParagraph>(text)
+          .getBoxesForSelection(
+            TextSelection(baseOffset: 0, extentOffset: data.length),
+          )
+          .map((b) => b.top.round())
+          .toSet()
+          .length;
+      final m = AndroidFontMetrics.of(element, Spec.pageText);
+      final box = tester.getSize(
+        find.ancestor(of: text, matching: find.byType(AText)).first,
+      );
+      expect(box.height, closeTo(m.height(drawn), 0.01), reason: data);
+    }
+    expect(find.text(name), findsOneWidget);
+  });
+
+  testWidgets("at the largest text, the title stays in the header", (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    tester.platformDispatcher.textScaleFactorTestValue = 3.1;
+    await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, _kris);
+    final page = find.byType(RecordingScreen);
+    final header = tester.getRect(
+      find.descendant(of: page, matching: find.byType(RedHeader)),
+    );
+    final text = find.descendant(
+      of: page,
+      matching: find.text('Voice Recorder'),
+    );
+    // No larger than Android's largest (2x), its letters inside the bar.
+    expect(MediaQuery.textScalerOf(tester.element(text)).scale(10), 20);
+    final title = tester.getRect(text);
+    // AText sets the text on its box's first baseline.
+    final box = tester.getRect(
+      find.ancestor(of: text, matching: find.byType(AText)).first,
+    );
+    final baseline =
+        box.top +
+        AndroidFontMetrics.of(
+          tester.element(text),
+          Spec.pageTitle,
+        ).firstBaseline;
+    expect(title.top, greaterThanOrEqualTo(header.top));
+    expect(baseline, lessThanOrEqualTo(header.bottom - 2));
+  });
+
+  testWidgets('the header buttons reach the edge and the title', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    // Left of the pencil, over the title's empty end.
+    final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    final y = tester.getCenter(find.bySemanticsLabel('Rename')).dy;
+    await tester.tapAt(Offset(width - Spec.pageRenameFromRight - 26, y));
+    await tester.pumpAndSettle();
+    expect(find.byType(EditableText), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    // At the screen's right edge, beside the trash can.
+    await tester.tapAt(Offset(width - 2, y));
+    await tester.pumpAndSettle();
+    expect(find.text('Are you sure to delete file? /$_third'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(t.store.shared, isEmpty);
   });
 
   testWidgets("while recording, the page doesn't play", (tester) async {

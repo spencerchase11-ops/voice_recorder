@@ -18,18 +18,23 @@ class RedHeader extends StatelessWidget {
       height: Spec.headerHeight,
       child: DecoratedBox(
         decoration: const BoxDecoration(gradient: Spec.headerGradient),
-        child: Stack(
-          children: [
-            Center(
-              child: AText(
-                title,
-                style: Spec.headerTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+        // Its text grows no larger than Android's largest (2x): iPhone's
+        // largest accessibility sizes would push it out of the bar.
+        child: MediaQuery.withClampedTextScaling(
+          maxScaleFactor: 2,
+          child: Stack(
+            children: [
+              Center(
+                child: AText(
+                  title,
+                  style: Spec.headerTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            ...children,
-          ],
+              ...children,
+            ],
+          ),
         ),
       ),
     );

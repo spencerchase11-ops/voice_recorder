@@ -185,9 +185,26 @@ class JustAudioPlayback extends Playback {
   @override
   Duration get duration => _duration;
 
+  /// The file being opened, and that load.
+  ({String id, Future<void> done})? _opening;
+
+  /// A second load of the file being opened (a skip or seek while its play
+  /// opens it) waits for that load: starting over would stop it, and the
+  /// play waiting on it would then not play.
   @override
-  Future<void> load(String fileId, Uri uri) async {
-    if (_fileId == fileId) return;
+  Future<void> load(String fileId, Uri uri) {
+    if (_fileId == fileId) return Future.value();
+    final opening = _opening;
+    if (opening != null && opening.id == fileId) return opening.done;
+    late final Future<void> done;
+    done = _load(fileId, uri).whenComplete(() {
+      if (identical(_opening?.done, done)) _opening = null;
+    });
+    _opening = (id: fileId, done: done);
+    return done;
+  }
+
+  Future<void> _load(String fileId, Uri uri) async {
     await _player.stop();
     _fileId = null;
     _position = Duration.zero;
@@ -283,6 +300,7 @@ class JustAudioPlayback extends Playback {
 
   @override
   Future<void> stop() async {
+    _opening = null; // a load of it after this starts afresh
     await _player.stop();
     _fileId = null;
     _position = Duration.zero;

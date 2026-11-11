@@ -84,6 +84,7 @@ Future<TestApp> pumpReferenceApp(
   String? current = 'mem://kris n evan got back then zach.mp3',
   Duration lastDuration = const Duration(minutes: 33, seconds: 57),
   int? freeBytes,
+  NativeBridge? native,
 }) async {
   SharedPreferences.setMockInitialValues({
     'last_file': ?current,
@@ -113,7 +114,7 @@ Future<TestApp> pumpReferenceApp(
     store: store,
     engine: engine,
     playback: playback,
-    native: NativeBridge(),
+    native: native ?? NativeBridge(),
     workDir: () async => work!,
   );
   await tester.runAsync(controller.init);

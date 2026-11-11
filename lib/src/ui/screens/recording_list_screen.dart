@@ -277,6 +277,11 @@ class _RecordingListScreenState extends State<RecordingListScreen>
           onShown: (id) {
             if (mounted) setState(() => _selected = id);
           },
+          // Also when it finishes after the page has closed, unless another
+          // row has been opened since.
+          onRenamed: (from, to) {
+            if (mounted && _selected == from) setState(() => _selected = to);
+          },
         ),
       );
     } finally {

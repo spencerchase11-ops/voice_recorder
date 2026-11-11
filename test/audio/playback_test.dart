@@ -34,6 +34,12 @@ class FakePlayer extends AudioPlayer {
 
   void _emit() => _states.add(PlayerState(_isPlaying, _processing));
 
+  /// Holds setAudioSource until completed (a file that takes a while to
+  /// open). A stop meanwhile interrupts it, as in just_audio.
+  Completer<void>? sourceGate;
+  var sources = 0;
+  var _opens = 0;
+
   @override
   Stream<PlayerState> get playerStateStream => _states.stream;
   @override
@@ -54,6 +60,15 @@ class FakePlayer extends AudioPlayer {
     int? initialIndex,
     Duration? initialPosition,
   }) async {
+    sources++;
+    final open = ++_opens;
+    final gate = sourceGate;
+    if (gate != null) {
+      await gate.future;
+      if (open != _opens) {
+        throw PlayerInterruptedException('Loading interrupted');
+      }
+    }
     _processing = ProcessingState.ready;
     _emit();
     return const Duration(minutes: 3);
@@ -84,6 +99,7 @@ class FakePlayer extends AudioPlayer {
 
   @override
   Future<void> stop() async {
+    _opens++;
     _isPlaying = false;
     _processing = ProcessingState.idle;
     _emit();
@@ -285,5 +301,54 @@ void main() {
     session.noisy.add(null);
     await settle();
     expect(noisy, 1);
+  });
+
+  test(
+    'a skip or seek while a play opens the file waits for it; it plays',
+    () async {
+      final gate = player.sourceGate = Completer<void>();
+      final play = playback.play('a', a);
+      await settle();
+      // The controller's seek and skip load the file first.
+      final load = playback.load('a', a);
+      await settle();
+      gate.complete();
+      await load;
+      await play;
+      await settle();
+      expect(player.sources, 1);
+      expect(playback.fileId, 'a');
+      expect(player.plays, 1);
+      expect(playback.playing, isTrue);
+    },
+  );
+
+  test('another file while one opens replaces it', () async {
+    final gate = player.sourceGate = Completer<void>();
+    final first = playback.play('a', a);
+    await settle();
+    final second = playback.play('b', b);
+    await settle();
+    gate.complete();
+    await first;
+    await second;
+    await settle();
+    expect(playback.fileId, 'b');
+    expect(player.plays, 1);
+  });
+
+  test('after a stop, the file being opened is opened afresh', () async {
+    final gate = player.sourceGate = Completer<void>();
+    final first = playback.load('a', a);
+    await settle();
+    await playback.stop();
+    player.sourceGate = null;
+    await playback.load('a', a);
+    expect(playback.fileId, 'a');
+    expect(player.sources, 2);
+    // The stopped load, done late, changes nothing.
+    gate.complete();
+    await first;
+    expect(playback.fileId, 'a');
   });
 }

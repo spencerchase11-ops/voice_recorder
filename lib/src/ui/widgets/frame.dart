@@ -238,8 +238,18 @@ class AText extends StatelessWidget {
     if (maxLines == 1) return box(1);
     return LayoutBuilder(
       builder: (context, c) {
+        // Measured as Text will draw it: on the inherited style, and bold
+        // when the system's Bold Text is on (it wraps differently then).
+        var measured = lineStyle.inherit
+            ? DefaultTextStyle.of(context).style.merge(lineStyle)
+            : lineStyle;
+        if (MediaQuery.boldTextOf(context)) {
+          measured = measured.merge(
+            const TextStyle(fontWeight: FontWeight.bold),
+          );
+        }
         final tp = TextPainter(
-          text: TextSpan(text: text, style: lineStyle),
+          text: TextSpan(text: text, style: measured),
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
           maxLines: maxLines,

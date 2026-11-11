@@ -311,9 +311,24 @@ class FakePlayback extends Playback {
   Completer<void>? loadGate;
   var _loads = 0;
 
+  /// Like JustAudioPlayback: a second load of the file being opened waits
+  /// for that load instead of starting over.
+  ({String id, Future<void> done})? _opening;
+
   @override
-  Future<void> load(String fileId, Uri uri) async {
-    if (_id == fileId) return;
+  Future<void> load(String fileId, Uri uri) {
+    if (_id == fileId) return Future.value();
+    final opening = _opening;
+    if (opening != null && opening.id == fileId) return opening.done;
+    late final Future<void> done;
+    done = _load(fileId).whenComplete(() {
+      if (identical(_opening?.done, done)) _opening = null;
+    });
+    _opening = (id: fileId, done: done);
+    return done;
+  }
+
+  Future<void> _load(String fileId) async {
     final ticket = ++_loads;
     final gate = loadGate;
     if (gate != null) {
@@ -369,6 +384,7 @@ class FakePlayback extends Playback {
 
   @override
   Future<void> stop() async {
+    _opening = null;
     _loads++; // a load in progress is cancelled
     _id = null;
     _playing = false;

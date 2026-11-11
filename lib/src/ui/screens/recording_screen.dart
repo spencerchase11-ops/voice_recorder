@@ -33,6 +33,7 @@ class RecordingScreen extends StatefulWidget {
     required this.file,
     this.order = const [],
     this.onShown,
+    this.onRenamed,
     this.autoplay = true,
   });
 
@@ -42,8 +43,12 @@ class RecordingScreen extends StatefulWidget {
   final List<String> order;
 
   /// Told which recording the page shows whenever that changes (previous,
-  /// next, a rename), so the list can keep it selected.
+  /// next), so the list can keep it selected.
   final ValueChanged<String>? onShown;
+
+  /// Told when the page renamed a recording (its old and new id), also if
+  /// the page has been closed by the time the rename is done.
+  final void Function(String from, String to)? onRenamed;
 
   /// Plays it on opening, as the original did.
   final bool autoplay;
@@ -52,8 +57,14 @@ class RecordingScreen extends StatefulWidget {
     required RecordingFile file,
     List<String> order = const [],
     ValueChanged<String>? onShown,
+    void Function(String from, String to)? onRenamed,
   }) => MaterialPageRoute<void>(
-    builder: (_) => RecordingScreen(file: file, order: order, onShown: onShown),
+    builder: (_) => RecordingScreen(
+      file: file,
+      order: order,
+      onShown: onShown,
+      onRenamed: onRenamed,
+    ),
   );
 
   @override
@@ -67,7 +78,8 @@ class _RecordingScreenState extends State<RecordingScreen> {
   late RecordingFile _last = widget.file;
   late final List<String> _order = [...widget.order];
 
-  /// A rename, share or delete is being carried out: more taps wait.
+  /// A rename, share or delete is being carried out: more taps, the
+  /// player's too, wait.
   bool _busy = false;
 
   /// Where the thumb is while the user drags it (0..1).
@@ -125,14 +137,17 @@ class _RecordingScreenState extends State<RecordingScreen> {
     if (mounted) showPlayProblem(context, outcome);
   }
 
+  var _starts = 0;
+
   /// Plays [file], counted as playing until it does (or fails).
   Future<PlayOutcome> _start(AppController app, RecordingFile file) async {
+    final start = ++_starts;
     _starting = file.id;
     try {
       return await app.togglePlay(file);
     } finally {
       // A later start replaces this one; it clears its own.
-      if (_starting == file.id) _starting = null;
+      if (start == _starts) _starting = null;
     }
   }
 
@@ -145,20 +160,24 @@ class _RecordingScreenState extends State<RecordingScreen> {
   }
 
   Future<void> _togglePlay(AppController app) async {
-    if (_blocked(app)) return;
-    final outcome = await app.togglePlay(_file(app));
+    if (_busy || _blocked(app)) return;
+    final file = _file(app);
+    // A play counts as playing while it loads, for previous and next.
+    final outcome = app.playback.isPlaying(file.id)
+        ? await app.togglePlay(file)
+        : await _start(app, file);
     if (mounted) showPlayProblem(context, outcome);
   }
 
   Future<void> _skip(AppController app, Duration delta) async {
-    if (_blocked(app)) return;
+    if (_busy || _blocked(app)) return;
     if (!await app.skip(delta, file: _file(app)) && mounted) {
       showToast(context, "Can't play this recording");
     }
   }
 
   Future<void> _seek(AppController app, double fraction) async {
-    if (_blocked(app)) return;
+    if (_busy || _blocked(app)) return;
     if (!await app.seek(_file(app), fraction) && mounted) {
       showToast(context, "Can't play this recording");
     }
@@ -167,6 +186,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
   /// Shows the previous (-1) or next (1) recording; it plays if this one
   /// did.
   Future<void> _go(AppController app, int step) async {
+    if (_busy) return;
     final to = _neighbour(app, step);
     if (to == null) return;
     final wasPlaying = app.playback.isPlaying(_id) || _starting == _id;
@@ -176,7 +196,14 @@ class _RecordingScreenState extends State<RecordingScreen> {
       _drag = null;
     });
     widget.onShown?.call(to.id);
-    if (!wasPlaying || app.isRecording || app.isBusy) return;
+    if (app.isRecording || app.isBusy) return;
+    if (!wasPlaying) {
+      // Loaded, paused: the lock screen's and headphones' controls (and a
+      // resume after an interruption) then act on the recording shown, not
+      // on the one before.
+      await app.seek(to, 0);
+      return;
+    }
     final outcome = await _start(app, to);
     if (mounted) showPlayProblem(context, outcome);
   }
@@ -196,14 +223,17 @@ class _RecordingScreenState extends State<RecordingScreen> {
     final file = _file(app);
     final renamed = await renameRecording(context, file);
     if (renamed == null) return;
-    // The list keeps it open, also if the page has been closed meanwhile.
-    widget.onShown?.call(renamed.id);
+    // The list keeps it open, also if the page has been closed meanwhile
+    // (unless another row has been opened since).
+    widget.onRenamed?.call(file.id, renamed.id);
     if (!mounted) return;
     setState(() {
       final i = _order.indexOf(file.id);
       if (i >= 0) _order[i] = renamed.id;
-      _id = renamed.id;
-      _last = renamed;
+      if (_id == file.id) {
+        _id = renamed.id;
+        _last = renamed;
+      }
     });
   });
 
@@ -266,8 +296,16 @@ class _RecordingScreenState extends State<RecordingScreen> {
   }
 
   Widget _header(AppController app, double width) {
+    // Each button reaches halfway to its neighbours, so a tap goes to the
+    // nearest; Rename also over the title's empty end, Delete to the edge.
+    const renameShare =
+        (Spec.pageRenameFromRight - Spec.pageShareFromRight) / 2;
+    const shareDelete =
+        (Spec.pageShareFromRight - Spec.pageDeleteFromRight) / 2;
     BarButton button(
       double fromRight,
+      double reachLeft,
+      double reachRight,
       String label,
       IconShape icon,
       Size size,
@@ -275,15 +313,18 @@ class _RecordingScreenState extends State<RecordingScreen> {
       Key? key,
     }) => BarButton(
       key: key,
-      center: Offset(width - fromRight, Spec.pageIconCenterY),
-      // As wide as the buttons are apart, so a tap goes to the nearest.
-      touchSize: const Size(
-        Spec.pageRenameFromRight - Spec.pageShareFromRight,
-        Spec.headerHeight,
+      center: Offset(
+        width - fromRight + (reachRight - reachLeft) / 2,
+        Spec.pageIconCenterY,
       ),
+      touchSize: Size(reachLeft + reachRight, Spec.headerHeight),
       semanticLabel: label,
       onTap: onTap,
-      child: InkIcon(icon, size: size, color: _white),
+      // The icon stays at its place in the off-centre touch area.
+      child: Transform.translate(
+        offset: Offset((reachLeft - reachRight) / 2, 0),
+        child: InkIcon(icon, size: size, color: _white),
+      ),
     );
 
     return RedHeader(
@@ -319,6 +360,8 @@ class _RecordingScreenState extends State<RecordingScreen> {
         ),
         button(
           Spec.pageRenameFromRight,
+          Spec.headerHeight - renameShare,
+          renameShare,
           'Rename',
           AppIcons.pencil,
           Spec.pageRenameIcon,
@@ -326,6 +369,8 @@ class _RecordingScreenState extends State<RecordingScreen> {
         ),
         button(
           Spec.pageShareFromRight,
+          renameShare,
+          shareDelete,
           'Share',
           AppIcons.shareFilled,
           Spec.pageShareIcon,
@@ -333,6 +378,8 @@ class _RecordingScreenState extends State<RecordingScreen> {
           key: _shareKey,
         ),
         button(
+          Spec.pageDeleteFromRight,
+          shareDelete,
           Spec.pageDeleteFromRight,
           'Delete',
           AppIcons.deleteFilled,
