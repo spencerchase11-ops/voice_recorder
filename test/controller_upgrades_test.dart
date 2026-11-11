@@ -301,6 +301,40 @@ void main() {
       expect(lastUpdate()['title'], other.baseName);
     });
 
+    test('a press while a second next replaces the first acts on it', () async {
+      await build();
+      final file = app.currentFile!;
+      final others = referenceRecordings()
+          .where((f) => f.id != file.id)
+          .take(2)
+          .toList();
+      await app.togglePlay(file);
+      await settle();
+      await app.togglePlay(file);
+      await settle();
+      final first = playback.loadGate = Completer<void>();
+      final cueB = app.seek(others[0], 0);
+      await settle();
+      // A headphone press while it opens, then the page's next again.
+      native.eventController.add(const MediaButton('toggle'));
+      await settle();
+      final second = playback.loadGate = Completer<void>();
+      final cueC = app.seek(others[1], 0);
+      await settle();
+      playback.loadGate = null;
+      // Like just_audio: the replaced load ends first.
+      first.complete();
+      await settle();
+      second.complete();
+      expect(await cueB, isTrue);
+      expect(await cueC, isTrue);
+      await settle();
+      expect(named('clearMediaSession'), isEmpty);
+      expect(playback.fileId, others[1].id);
+      expect(playback.playing, isTrue);
+      expect(lastUpdate()['title'], others[1].baseName);
+    });
+
     // A seek or skip in a recording that another one's load overtakes
     // (played meanwhile) leaves that other one where it is.
     for (final skip in [false, true]) {

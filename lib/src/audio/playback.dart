@@ -287,7 +287,13 @@ class JustAudioPlayback extends Playback {
   Future<void> pause() => _player.pause();
 
   @override
-  Future<void> seek(Duration position) => _player.seek(position);
+  Future<void> seek(Duration position) {
+    // Where it is from now on (as just_audio's own position says) before
+    // the position stream catches up: a skip right after jumps from here.
+    _position = position;
+    notifyListeners();
+    return _player.seek(position);
+  }
 
   @override
   double get speed => _player.speed;

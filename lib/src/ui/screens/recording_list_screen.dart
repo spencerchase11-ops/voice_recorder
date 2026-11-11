@@ -25,6 +25,20 @@ import 'recording_screen.dart';
 
 const _white = Color(0xFFFFFFFF);
 
+/// The search field's hint, as its hintStyle comes out merged with the
+/// theme's.
+const _searchHint = TextStyle(
+  inherit: false,
+  fontFamily: Spec.font,
+  fontSize: 18,
+  fontWeight: FontWeight.w400,
+  height: 1.5,
+  leadingDistribution: TextLeadingDistribution.even,
+  letterSpacing: 0.5,
+  textBaseline: TextBaseline.alphabetic,
+  color: Color(0xB3FFFFFF),
+);
+
 class RecordingListScreen extends StatefulWidget {
   const RecordingListScreen({super.key, this.initialSelection});
 
@@ -471,25 +485,26 @@ class _RecordingListScreenState extends State<RecordingListScreen>
                   isDense: true,
                   border: InputBorder.none,
                   // Drawn smaller, not cut short, at large text sizes.
-                  hint: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: AlignmentDirectional.centerStart,
-                    child: Text(
-                      'Search by name or date',
-                      maxLines: 1,
-                      // As hintStyle came out merged with the theme's.
-                      style: TextStyle(
-                        inherit: false,
-                        fontFamily: Spec.font,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w400,
-                        height: 1.5,
-                        leadingDistribution: TextLeadingDistribution.even,
-                        letterSpacing: 0.5,
-                        textBaseline: TextBaseline.alphabetic,
-                        color: Color(0xB3FFFFFF),
+                  hint: Stack(
+                    children: [
+                      // A whole line's room, as a plain hint takes: the
+                      // field places the typed text by it (lower down, its
+                      // tails would be cut at large text sizes).
+                      ExcludeSemantics(
+                        child: Text(' ', maxLines: 1, style: _searchHint),
                       ),
-                    ),
+                      Positioned.fill(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Text(
+                            'Search by name or date',
+                            maxLines: 1,
+                            style: _searchHint,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   hintStyle: TextStyle(
                     fontFamily: Spec.font,
@@ -766,27 +781,21 @@ class _RecordingRow extends StatelessWidget {
             left: Spec.listTextLeft,
             right: Spec.listTextRight,
             top: Spec.listRowPadding + lineBox + Spec.listLineGap,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: AText(
-                      duration == null
-                          ? date
-                          : '$date · ${formatTimer(duration)}',
-                      style: Spec.listDetail,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                AText(
-                  formatListSize(file.size),
+            child: DetailLine(
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: AText(
+                  duration == null ? date : '$date · ${formatTimer(duration)}',
                   style: Spec.listDetail,
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
+              ),
+              AText(
+                formatListSize(file.size),
+                style: Spec.listDetail,
+                maxLines: 1,
+              ),
             ),
           ),
         ],
@@ -808,7 +817,13 @@ class _RecordingRow extends StatelessWidget {
             child: Column(
               children: [
                 info,
-                if (open && !ticking) _SeekSection(file: file),
+                if (open && !ticking)
+                  // At most 2x, as on a recording's page: a long time at the
+                  // largest text would push Forward 10 off a narrow phone.
+                  MediaQuery.withClampedTextScaling(
+                    maxScaleFactor: 2,
+                    child: _SeekSection(file: file),
+                  ),
               ],
             ),
           ),
@@ -903,10 +918,13 @@ class _SeekSectionState extends State<_SeekSection> {
             children: [
               Padding(
                 padding: const EdgeInsets.only(left: Spec.seekTimeLeft),
-                child: AText(
-                  formatPosition(shown),
-                  style: Spec.listName,
-                  maxLines: 1,
+                // The slider says it already ("01:23 of 03:00").
+                child: ExcludeSemantics(
+                  child: AText(
+                    formatPosition(shown),
+                    style: Spec.listName,
+                    maxLines: 1,
+                  ),
                 ),
               ),
               const Spacer(),

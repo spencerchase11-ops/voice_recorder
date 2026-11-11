@@ -419,22 +419,21 @@ class _DeletedRow extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: AText(
-                        'Deleted ${formatListDate(item.deletedAt)}',
-                        style: Spec.listDetail,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    AText(
-                      days == 1 ? '1 day left' : '$days days left',
+                DetailLine(
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AText(
+                      'Deleted ${formatListDate(item.deletedAt)}',
                       style: Spec.listDetail,
                       maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
+                  ),
+                  AText(
+                    days == 1 ? '1 day left' : '$days days left',
+                    style: Spec.listDetail,
+                    maxLines: 1,
+                  ),
                 ),
               ],
             ),

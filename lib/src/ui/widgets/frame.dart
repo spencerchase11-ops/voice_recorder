@@ -263,6 +263,35 @@ class AText extends StatelessWidget {
   }
 }
 
+/// A row's second line: [main] (a date), and [side] (a size, the days left)
+/// at the right. At large text sizes [side] is drawn smaller to keep within
+/// a third of the line, so [main] isn't cut to a character or two.
+class DetailLine extends StatelessWidget {
+  const DetailLine(this.main, this.side, {super.key});
+
+  final Widget main;
+  final Widget side;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) => Row(
+        children: [
+          Expanded(child: main),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: c.maxWidth / 3),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: side,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A tappable area that shows the Holo pressed highlight.
 class PressableArea extends StatefulWidget {
   const PressableArea({

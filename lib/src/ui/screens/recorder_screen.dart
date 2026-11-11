@@ -476,10 +476,15 @@ class _Tab extends StatelessWidget {
               Positioned(
                 left: 0,
                 right: 0,
+                // Below the tallest icon (the microphone's foot is at
+                // +16.85).
+                top: Spec.tabIconCenterY + 17,
                 bottom: 0.4,
-                // Shrinks (instead of "Recordi…") with a large font size.
+                // Shrinks (instead of "Recordi…", or reaching up into the
+                // icon) with a large font size.
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
+                  alignment: Alignment.bottomCenter,
                   child: AText(
                     label,
                     style: Spec.tabLabel.copyWith(

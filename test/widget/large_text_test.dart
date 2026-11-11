@@ -4,11 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/ui/dialogs/dialogs.dart';
+import 'package:voice_recorder/src/ui/icons/app_icons.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
 import 'package:voice_recorder/src/ui/widgets/red_bars.dart';
 
+import '../support/fakes.dart';
 import '../support/harness.dart';
 import '../support/ui.dart';
 
@@ -132,6 +135,151 @@ void main() {
     expect(drawn.right, lessThanOrEqualTo(field.right + 0.01));
     // A screen reader still hears it whole.
     expect(find.bySemanticsLabel(RegExp(hint)), findsWidgets);
+  });
+
+  for (final width in [320.0, 375.0]) {
+    testWidgets(
+      'typed in the search field at 2x, ${width.round()} wide, nothing is cut',
+      (tester) async {
+        await _pump(tester);
+        tester.view.physicalSize = Size(width * 3, 1704);
+        tester.view.devicePixelRatio = 3;
+        await tester.pumpAndSettle();
+        await tester.tap(labeled('Recording list'));
+        await tester.pumpAndSettle();
+        await tester.tap(labeled('Search'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(EditableText), 'gypsy');
+        await tester.pumpAndSettle();
+        final editable = tester.allRenderObjects
+            .whereType<RenderEditable>()
+            .single;
+        // (Asked outside a layout: allowed as while checking intrinsics.)
+        RenderObject.debugCheckingIntrinsics = true;
+        final double baseline;
+        try {
+          baseline =
+              editable.localToGlobal(Offset.zero).dy +
+              editable.getDistanceToBaseline(TextBaseline.alphabetic)!;
+        } finally {
+          RenderObject.debugCheckingIntrinsics = false;
+        }
+        final header = tester.getRect(find.byType(RedHeader).first);
+        // The tails of g, y and p (about 0.21 em below the line) are in
+        // the header: the text is 18 at 2x.
+        expect(baseline + 0.21 * 36, lessThanOrEqualTo(header.bottom));
+      },
+    );
+  }
+
+  for (final scale in [2.0, _largest]) {
+    testWidgets("at ${scale}x, the tabs' labels keep below their icons", (
+      tester,
+    ) async {
+      useReferenceDevice(tester);
+      tester.view.physicalSize = const Size(1179, 2556); // 393 wide
+      tester.view.devicePixelRatio = 3;
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      await pumpReferenceApp(tester);
+      for (final label in ['Recorder', 'Recording list', 'Settings']) {
+        final tab = labeled(label);
+        final text = find.descendant(of: tab, matching: find.text(label));
+        final icon = find.descendant(of: tab, matching: find.byType(InkIcon));
+        expect(
+          tester.getRect(text).top,
+          greaterThanOrEqualTo(tester.getRect(icon).bottom - 0.01),
+          reason: label,
+        );
+      }
+    });
+  }
+
+  testWidgets("the open row's controls stay on a narrow phone", (tester) async {
+    final t = await _pump(tester);
+    _useNarrowPhone(tester);
+    await tester.pumpAndSettle();
+    const name = 'kris n evan got back then zach.mp3';
+    final file = referenceRecordings().firstWhere((f) => f.name == name);
+    await tester.runAsync(() => t.controller.seek(file, 0));
+    // An overnight recording, far along.
+    t.playback.setPosition(const Duration(hours: 10, minutes: 2, seconds: 3));
+    await openListAt(tester, name);
+    expect(find.text('10:02:03'), findsOneWidget);
+    expect(
+      tester.getRect(labeled('Forward 10 seconds')).right,
+      lessThanOrEqualTo(320),
+    );
+  });
+
+  /// The first row's second line keeps two thirds for [main] (the date),
+  /// [side] (the size, the days left) drawn smaller in the rest.
+  void expectDetailLine(WidgetTester tester, Finder main, Finder side) {
+    final m = tester.getRect(main.first);
+    final s = tester.getRect(side.first);
+    final line = s.right - m.left;
+    expect(s.width, lessThanOrEqualTo(line / 3 + 0.5));
+    expect(tester.getSize(main.first).width, greaterThan(line * 2 / 3 - 9));
+  }
+
+  testWidgets("a row's date keeps most of its line at the largest text", (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    tester.view.physicalSize = const Size(1125, 2436); // 375 wide
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = _largest;
+    final t = await pumpReferenceApp(tester);
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    expectDetailLine(
+      tester,
+      find.textContaining('2026-09-23'),
+      find.text('39819KB'),
+    );
+
+    await tester.runAsync(() => t.controller.delete([t.controller.files[1]]));
+    await tester.tap(labeled('Back'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Settings'));
+    await tester.pumpAndSettle();
+    await _openRecentlyDeleted(tester);
+    expectDetailLine(
+      tester,
+      find.textContaining('Deleted '),
+      find.textContaining('days left'),
+    );
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('a big recording at the largest bold text fits its row', (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    tester.view.physicalSize = const Size(960, 1704); // 320 wide
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = _largest;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(boldText: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await pumpReferenceApp(
+      tester,
+      files: [
+        RecordingFile(
+          id: 'mem://overnight.wav',
+          name: 'overnight.wav',
+          size: 1205632 * 1024,
+          modified: DateTime(2026, 9, 23, 7),
+        ),
+      ],
+      current: null,
+    );
+    await tester.tap(labeled('Recording list'));
+    await tester.pumpAndSettle();
+    expectDetailLine(
+      tester,
+      find.textContaining('2026-09-23'),
+      find.text('1205632KB'),
+    );
   });
 
   testWidgets('a title too wide for the room left is drawn smaller', (

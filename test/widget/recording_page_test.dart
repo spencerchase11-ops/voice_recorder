@@ -739,6 +739,113 @@ void main() {
     expect(find.text(_second), findsOneWidget);
   });
 
+  // A skip while a recording opens at its place jumps from that place.
+  for (final (label, expected) in [
+    ('Forward 10 seconds', const Duration(seconds: 70)),
+    ('Back 10 seconds', const Duration(seconds: 50)),
+  ]) {
+    testWidgets('$label while a recording opens at its place', (tester) async {
+      final t = await _openList(tester);
+      await _openPage(tester, _kris);
+      for (var i = 0; i < 6; i++) {
+        await tester.tap(_control('Forward 10 seconds'));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(_control('Pause'));
+      await tester.pumpAndSettle();
+      await tester.tap(_control('Next recording'));
+      await tester.pumpAndSettle();
+      final gate = t.playback.loadGate = Completer<void>();
+      await tester.tap(_control('Previous recording'));
+      await tester.pump();
+      await tester.tap(_control(label));
+      await tester.pump();
+      gate.complete();
+      t.playback.loadGate = null;
+      await tester.pumpAndSettle();
+      expect(t.playback.fileId, 'mem://$_kris');
+      expect(t.playback.playing, isFalse);
+      expect(t.playback.position, expected);
+    });
+  }
+
+  testWidgets('a recording deleted while it opens stays stopped', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    // Playing, so Next plays the next one: it takes a while to open.
+    final gate = t.playback.loadGate = Completer<void>();
+    await tester.tap(_control('Next recording'));
+    await tester.pump();
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    gate.complete();
+    t.playback.loadGate = null;
+    await tester.pumpAndSettle();
+    // Stopped before it is moved: it never opens.
+    expect(t.playback.fileId, isNull);
+    expect(t.playback.playing, isFalse);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.byType(RecordingScreen), findsNothing);
+    expect(find.text(_second), findsNothing);
+    expect(t.playback.fileId, isNull);
+    expect(t.playback.playing, isFalse);
+    await waitOutUndo(tester);
+  });
+
+  testWidgets('a page reopened on a recording being deleted stops with it', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _second);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    // Its row is still there while it is moved: opened, it plays.
+    await _openPage(tester, _second);
+    expect(t.playback.isPlaying('mem://$_second'), isTrue);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    expect(find.byType(RecordingScreen), findsNothing);
+    expect(find.text(_second), findsNothing);
+    expect(t.playback.fileId, isNull);
+    expect(t.playback.playing, isFalse);
+    await waitOutUndo(tester);
+  });
+
+  testWidgets("the open row's position is read out by its slider only", (
+    tester,
+  ) async {
+    await _openList(tester);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Forward 10 seconds'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expect(_openRow(tester), _kris);
+    final row = find.byWidgetPredicate(
+      (w) => w is PressableArea && w.selected == true,
+    );
+    final label = tester.getSemantics(row).label;
+    expect(label, startsWith(_kris));
+    expect(label, isNot(contains('00:10')));
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Position')).value,
+      contains('00:10'),
+    );
+  });
+
   testWidgets('at 2x on a narrow phone, the page title is whole', (
     tester,
   ) async {

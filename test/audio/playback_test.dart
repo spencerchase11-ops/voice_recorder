@@ -323,6 +323,18 @@ void main() {
     },
   );
 
+  test(
+    "a seek's position counts at once, before the player reports it",
+    () async {
+      await playback.load('a', a);
+      await settle();
+      final seek = playback.seek(const Duration(seconds: 30));
+      // A skip right after (one waiting for the same load) jumps from here.
+      expect(playback.position, const Duration(seconds: 30));
+      await seek;
+    },
+  );
+
   test('another file while one opens replaces it', () async {
     final gate = player.sourceGate = Completer<void>();
     final first = playback.play('a', a);

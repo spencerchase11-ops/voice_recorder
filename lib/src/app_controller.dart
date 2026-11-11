@@ -694,8 +694,7 @@ class AppController extends ChangeNotifier {
     Progress? onProgress,
     Cancelled? cancelled,
   }) => _awake(files.length, () async {
-    final loaded = playback.fileId;
-    if (loaded != null && files.any((f) => f.id == loaded)) {
+    if (_loadedIn((id) => files.any((f) => f.id == id))) {
       await _stopPlayback();
     }
     var stored = 0;
@@ -1281,16 +1280,23 @@ class AppController extends ChangeNotifier {
 
   /// Moves [file]'s playback to [fraction] of its length (or to [at]). If it
   /// isn't loaded yet it is loaded paused. Returns false if it couldn't be
-  /// opened. Nothing moves if another file is opened meanwhile.
-  Future<bool> seek(RecordingFile file, double fraction, {Duration? at}) async {
+  /// opened. Nothing moves if another file is opened meanwhile, or if
+  /// [move] is false (it is only opened, and stays where a seek already
+  /// under way puts it).
+  Future<bool> seek(
+    RecordingFile file,
+    double fraction, {
+    Duration? at,
+    bool move = true,
+  }) async {
     if (_recording || _busy) return false;
     if (playback.fileId != file.id) _cueing = file.id;
     try {
       _loaded = file;
       await playback.load(file.id, store.playbackUri(file));
       // Another file's load took over meanwhile: this place isn't its (and
-      // nothing failed).
-      if (playback.fileId != file.id) return true;
+      // nothing failed). Or only opening it was asked for.
+      if (playback.fileId != file.id || !move) return true;
       await playback.seek(
         at != null
             ? _clamped(at)
@@ -1318,7 +1324,10 @@ class AppController extends ChangeNotifier {
   Future<bool> skip(Duration delta, {RecordingFile? file}) async {
     if (_recording || _busy) return true;
     if (file != null && playback.fileId != file.id) {
-      if (!await seek(file, 0)) return false;
+      // Opened without moving it: a seek already under way (the page's
+      // previous or next opening it at its place) comes first, and the jump
+      // is from there.
+      if (!await seek(file, 0, move: false)) return false;
       // Another file opened meanwhile: the jump was for [file].
       if (playback.fileId != file.id) return true;
     }
@@ -1342,6 +1351,13 @@ class AppController extends ChangeNotifier {
 
   /// A recording is loaded or still opening.
   bool get _playbackOpen => playback.fileId != null || _loaded != null;
+
+  /// [has] names the recording loaded, or the one still opening (it plays,
+  /// or is cued, once open).
+  bool _loadedIn(bool Function(String id) has) {
+    final id = playback.fileId, opening = _loaded?.id;
+    return (id != null && has(id)) || (opening != null && has(opening));
+  }
 
   Future<void> _stopPlayback() async {
     _loaded = null;
@@ -1466,9 +1482,11 @@ class AppController extends ChangeNotifier {
 
   Future<void> _onMediaButton(String action, Duration? position) async {
     var file = _loaded;
-    if (file != null && file.id == _cueing && playback.fileId != file.id) {
+    while (file != null && file.id == _cueing && playback.fileId != file.id) {
       // Still opening the recording the controls are moving to (the page's
-      // previous or next): the press acts on it once it has opened.
+      // previous or next): the press acts on it once it has opened, or on
+      // the next one if another previous or next replaces it meanwhile.
+      // (This joins that load: every load or play sets [_loaded] first.)
       final opening = file;
       await _safe(() => playback.load(opening.id, store.playbackUri(opening)));
       file = _loaded;
@@ -1624,8 +1642,7 @@ class AppController extends ChangeNotifier {
     Progress? onProgress,
     Cancelled? cancelled,
   }) => _awake(files.length, () async {
-    final loaded = playback.fileId;
-    if (loaded != null && files.any((f) => f.id == loaded)) {
+    if (_loadedIn((id) => files.any((f) => f.id == id))) {
       await _stopPlayback();
     }
     final now = _clock();
@@ -1661,6 +1678,9 @@ class AppController extends ChangeNotifier {
       for (final f in _files)
         if (!gone.contains(f.id)) f,
     ];
+    // Played again while it was being moved (a page opened on it
+    // meanwhile): it has gone from the list, so nothing else would stop it.
+    if (_loadedIn(gone.contains)) await _safe(_stopPlayback);
     if (moved.isNotEmpty) _trashVersion++;
     notifyListeners();
     return DeletedRecordings(moved, failed: failed, current: current);
