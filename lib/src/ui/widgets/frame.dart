@@ -275,6 +275,7 @@ class PressableArea extends StatefulWidget {
     this.selected,
     this.checked,
     this.excludeSemantics = true,
+    this.highlightInsets = EdgeInsets.zero,
   });
 
   final Widget child;
@@ -293,6 +294,9 @@ class PressableArea extends StatefulWidget {
   /// The [semanticLabel] says all the child's texts do, which would be read
   /// out twice otherwise. False for rows with buttons of their own inside.
   final bool excludeSemantics;
+
+  /// How far inside the area the pressed highlight stops.
+  final EdgeInsets highlightInsets;
 
   @override
   State<PressableArea> createState() => _PressableAreaState();
@@ -335,7 +339,13 @@ class _PressableAreaState extends State<PressableArea> {
           children: [
             widget.child,
             if (_down)
-              Positioned.fill(child: ColoredBox(color: widget.highlight)),
+              Positioned.fill(
+                left: widget.highlightInsets.left,
+                top: widget.highlightInsets.top,
+                right: widget.highlightInsets.right,
+                bottom: widget.highlightInsets.bottom,
+                child: ColoredBox(color: widget.highlight),
+              ),
           ],
         ),
       ),

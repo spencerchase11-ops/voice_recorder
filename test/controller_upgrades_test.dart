@@ -245,6 +245,38 @@ void main() {
       expect(named('clearMediaSession'), hasLength(1));
     });
 
+    test('moved to the recording opened while paused', () async {
+      await build();
+      final file = app.currentFile!;
+      final other = referenceRecordings().firstWhere((f) => f.id != file.id);
+      await app.togglePlay(file);
+      await settle();
+      await app.togglePlay(file);
+      await settle();
+      // As the page's Next does: opened, paused, at the start. The player
+      // has nothing loaded while it opens.
+      expect(await app.seek(other, 0), isTrue);
+      await settle();
+      expect(named('clearMediaSession'), isEmpty);
+      expect(lastUpdate()['title'], other.baseName);
+      expect(lastUpdate()['playing'], isFalse);
+      expect(lastUpdate()['positionMs'], 0);
+    });
+
+    test("gone when the one opened while paused can't be", () async {
+      await build();
+      final file = app.currentFile!;
+      final other = referenceRecordings().firstWhere((f) => f.id != file.id);
+      await app.togglePlay(file);
+      await settle();
+      await app.togglePlay(file);
+      await settle();
+      playback.broken.add(other.id);
+      expect(await app.seek(other, 0), isFalse);
+      await settle();
+      expect(named('clearMediaSession'), hasLength(1));
+    });
+
     test('only a jump in the position is reported', () async {
       await build();
       await app.togglePlay(app.currentFile!);

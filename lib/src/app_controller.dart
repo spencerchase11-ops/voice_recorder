@@ -1270,6 +1270,7 @@ class AppController extends ChangeNotifier {
   /// yet it is loaded paused. Returns false if it couldn't be opened.
   Future<bool> seek(RecordingFile file, double fraction) async {
     if (_recording || _busy) return false;
+    if (playback.fileId != file.id) _cueing = file.id;
     try {
       _loaded = file;
       await playback.load(file.id, store.playbackUri(file));
@@ -1278,8 +1279,17 @@ class AppController extends ChangeNotifier {
     } catch (e) {
       debugPrint('Could not seek in ${file.name}: $e');
       return false;
+    } finally {
+      if (_cueing == file.id) {
+        _cueing = null;
+        _syncMedia();
+      }
     }
   }
+
+  /// The recording [seek] is opening: lock-screen controls shown meanwhile
+  /// stay, and move to it once it has opened (they go if it can't be).
+  String? _cueing;
 
   /// Jumps forward (or back, for a negative [delta]) in the loaded
   /// recording, or in [file] (loaded first if another one is). False if
@@ -1370,6 +1380,8 @@ class AppController extends ChangeNotifier {
         id == file.id &&
         (_media != null || playback.playing);
     if (!show) {
+      // Still opening the recording the controls move to.
+      if (_media != null && file != null && file.id == _cueing) return;
       if (_media != null) {
         _media = null;
         unawaited(_safe(native.clearMediaSession));

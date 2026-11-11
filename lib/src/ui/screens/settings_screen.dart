@@ -202,6 +202,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           RedHeader(
             title: 'Voice Recorder',
+            titleInset: defaultTargetPlatform == TargetPlatform.iOS ? 66 : 48,
             children: [
               // An iPhone has no Back button: an "up" caret before the icon
               // goes back, where the other screens have their back arrow.

@@ -277,6 +277,7 @@ class _RecentlyDeletedScreenState extends State<RecentlyDeletedScreen> {
         children: [
           RedHeader(
             title: 'Recently deleted',
+            titleInset: 28,
             children: [
               BarButton(
                 center: const Offset(18.26, 23.14),
@@ -361,8 +362,9 @@ class _Message extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 0),
+    // Scrolls when the largest text sizes make it longer than the screen.
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
       child: Align(
         alignment: Alignment.topCenter,
         child: AText(text, style: Spec.listDetail, textAlign: TextAlign.center),

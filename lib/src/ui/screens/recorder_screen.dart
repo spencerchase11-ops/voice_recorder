@@ -96,6 +96,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
           // actions.
           RedHeader(
             title: cur == null ? 'Voice Recorder' : 'Recorder',
+            titleInset: cur == null ? 8 : 92,
             children: [
               if (cur != null) ...[
                 BarButton(

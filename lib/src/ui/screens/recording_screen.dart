@@ -89,6 +89,13 @@ class _RecordingScreenState extends State<RecordingScreen> {
   /// moment to load): previous and next count it as playing.
   String? _starting;
 
+  /// Where recordings left paused with previous or next were, so coming
+  /// back to one finds it there.
+  final _places = <String, Duration>{};
+
+  /// Closed already, or about to be.
+  bool _closing = false;
+
   final _shareKey = GlobalKey();
 
   // The app's files by id, worked out once per list (the page rebuilds many
@@ -190,6 +197,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
     final to = _neighbour(app, step);
     if (to == null) return;
     final wasPlaying = app.playback.isPlaying(_id) || _starting == _id;
+    if (!wasPlaying && app.playback.fileId == _id) {
+      _places[_id] = app.playback.position;
+    }
     setState(() {
       _id = to.id;
       _last = to;
@@ -198,10 +208,12 @@ class _RecordingScreenState extends State<RecordingScreen> {
     widget.onShown?.call(to.id);
     if (app.isRecording || app.isBusy) return;
     if (!wasPlaying) {
-      // Loaded, paused: the lock screen's and headphones' controls (and a
-      // resume after an interruption) then act on the recording shown, not
-      // on the one before.
-      await app.seek(to, 0);
+      // Loaded, paused (where it was left, if it was): the lock screen's and
+      // headphones' controls (and a resume after an interruption) then act
+      // on the recording shown, not on the one before.
+      if (app.playback.fileId != to.id) {
+        await app.skip(_places.remove(to.id) ?? Duration.zero, file: to);
+      }
       return;
     }
     final outcome = await _start(app, to);
@@ -247,8 +259,13 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   Future<void> _delete(AppController app) => _run(() async {
     if (!await deleteRecordings(context, [_file(app)]) || !mounted) return;
-    // Closes this page only: Back may have closed it already while the
-    // delete went on, and something may have opened above it.
+    _close();
+  });
+
+  /// Closes this page only: Back may have closed it already (while a delete
+  /// went on), and something may have opened above it.
+  void _close() {
+    _closing = true;
     final route = ModalRoute.of(context);
     if (route == null || !route.isActive) return;
     if (route.isCurrent) {
@@ -256,12 +273,25 @@ class _RecordingScreenState extends State<RecordingScreen> {
     } else {
       Navigator.of(context).removeRoute(route);
     }
-  });
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final file = _file(app);
+    // Deleted elsewhere (in Files, a file manager) and listed again: the
+    // page goes, as after a delete. Not while its own rename or delete runs.
+    if (!_busy &&
+        !_closing &&
+        app.filesLoaded &&
+        !app.filesError &&
+        app.store.isReady &&
+        _lookUp(app, _id) == null) {
+      _closing = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _close();
+      });
+    }
     // The length (and a date stored in the file) are read when first shown.
     if (file.duration == null) app.requestInfo(file);
     final width = MediaQuery.sizeOf(context).width;
@@ -318,6 +348,12 @@ class _RecordingScreenState extends State<RecordingScreen> {
         Spec.pageIconCenterY,
       ),
       touchSize: Size(reachLeft + reachRight, Spec.headerHeight),
+      // The pressed highlight stays as wide as the buttons are apart,
+      // centred on the icon.
+      highlightInsets: EdgeInsets.only(
+        left: reachLeft - renameShare,
+        right: reachRight - renameShare,
+      ),
       semanticLabel: label,
       onTap: onTap,
       // The icon stays at its place in the off-centre touch area.
@@ -508,11 +544,14 @@ class _RecordingScreenState extends State<RecordingScreen> {
           Positioned(
             left: Spec.playerTimeLeft,
             top: timeTop,
+            // The slider says both times already ("01:23 of 03:00").
             child: IgnorePointer(
-              child: AText(
-                formatPosition(shown),
-                style: Spec.pageText,
-                maxLines: 1,
+              child: ExcludeSemantics(
+                child: AText(
+                  formatPosition(shown),
+                  style: Spec.pageText,
+                  maxLines: 1,
+                ),
               ),
             ),
           ),
@@ -520,10 +559,12 @@ class _RecordingScreenState extends State<RecordingScreen> {
             right: Spec.playerTimeRight,
             top: timeTop,
             child: IgnorePointer(
-              child: AText(
-                formatTimer(duration),
-                style: Spec.pageText,
-                maxLines: 1,
+              child: ExcludeSemantics(
+                child: AText(
+                  formatTimer(duration),
+                  style: Spec.pageText,
+                  maxLines: 1,
+                ),
               ),
             ),
           ),

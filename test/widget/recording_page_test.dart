@@ -7,10 +7,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_recorder/src/core/format.dart';
 import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
+import 'package:voice_recorder/src/ui/icons/app_icons.dart';
 import 'package:voice_recorder/src/ui/screens/recording_screen.dart';
 import 'package:voice_recorder/src/ui/spec.dart';
 import 'package:voice_recorder/src/ui/widgets/frame.dart';
 import 'package:voice_recorder/src/ui/widgets/red_bars.dart';
+import 'package:voice_recorder/src/ui/widgets/toast.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
 
 import '../support/fakes.dart';
@@ -483,6 +485,141 @@ void main() {
     expect(t.playback.fileId, 'mem://$_second');
     expect(t.playback.playing, isTrue);
     expect(_control('Pause'), findsOneWidget);
+  });
+
+  testWidgets('after Next while paused, the lock screen shows the one shown', (
+    tester,
+  ) async {
+    final calls = mockNativeChannel();
+    await _openList(tester);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    calls.clear();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    final media = calls.where((c) => c.contains('MediaSession')).toList();
+    expect(media, isNotEmpty);
+    expect(media, everyElement('updateMediaSession'));
+  });
+
+  testWidgets('a recording left paused is where it was on coming back', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Forward 10 seconds'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Forward 10 seconds'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_second');
+    expect(t.playback.position, Duration.zero);
+
+    await tester.tap(_control('Previous recording'));
+    await tester.pumpAndSettle();
+    expect(t.playback.fileId, 'mem://$_kris');
+    expect(t.playback.playing, isFalse);
+    expect(t.playback.position, const Duration(seconds: 20));
+    expect(find.text('00:20'), findsOneWidget);
+  });
+
+  testWidgets('the page closes when its recording is gone from the folder', (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    // Deleted in a file manager; the folder is listed again on coming back.
+    t.store.files.removeWhere((f) => f.name == _third);
+    await tester.runAsync(t.controller.refreshFiles);
+    await tester.pumpAndSettle();
+    expect(find.byType(RecordingScreen), findsNothing);
+    expect(find.byType(RecordingListScreen), findsOneWidget);
+    expect(find.text(_third), findsNothing);
+  });
+
+  testWidgets("a folder out of reach, or that can't be read, leaves it open", (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await _openPage(tester, _third);
+    // An SD card taken out: the folder lists nothing.
+    t.store.ready = false;
+    await tester.runAsync(t.controller.refreshFiles);
+    await tester.pumpAndSettle();
+    expect(t.controller.files, isEmpty);
+    expect(find.byType(RecordingScreen), findsOneWidget);
+
+    t.store
+      ..ready = true
+      ..failLists = true;
+    await tester.runAsync(t.controller.refreshFiles);
+    await tester.pumpAndSettle();
+    expect(find.byType(RecordingScreen), findsOneWidget);
+  });
+
+  testWidgets("the player's times are read out by the slider only", (
+    tester,
+  ) async {
+    await _openList(tester);
+    await _openPage(tester, _kris);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    // Nothing says just the position or the length (the details' row
+    // says what its length is).
+    expect(find.bySemanticsLabel('00:00'), findsNothing);
+    expect(find.bySemanticsLabel('03:00'), findsNothing);
+    expect(find.bySemanticsLabel(RegExp('03:00')), findsWidgets);
+    final slider = tester.getSemantics(_control('Position'));
+    expect(slider.value, contains('00:00'));
+  });
+
+  testWidgets("a delete's Undo doesn't lie over the next page", (tester) async {
+    await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsOneWidget);
+
+    await _openPage(tester, _kris);
+    expect(labeled('Undo'), findsNothing);
+    await _back(tester);
+    hideActionToast();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets("the header buttons' highlight is as wide as they are apart", (
+    tester,
+  ) async {
+    await _openList(tester);
+    await _openPage(tester, _third);
+    const apart = (Spec.pageRenameFromRight - Spec.pageShareFromRight) / 2 * 2;
+    for (final label in ['Rename', 'Share', 'Delete']) {
+      final icon = find.descendant(
+        of: labeled(label),
+        matching: find.byType(InkIcon),
+      );
+      final centre = tester.getCenter(icon);
+      final gesture = await tester.startGesture(centre);
+      await tester.pump();
+      final glow = tester.getRect(
+        find.descendant(
+          of: labeled(label),
+          matching: find.byWidgetPredicate(
+            (w) => w is ColoredBox && w.color == const Color(0x33FFFFFF),
+          ),
+        ),
+      );
+      expect(glow.width, moreOrLessEquals(apart, epsilon: 0.2), reason: label);
+      expect(glow.center.dx, moreOrLessEquals(centre.dx, epsilon: 0.2));
+      await gesture.cancel();
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('the player waits while the page renames', (tester) async {

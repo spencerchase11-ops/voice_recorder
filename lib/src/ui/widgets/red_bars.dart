@@ -5,9 +5,18 @@ import 'frame.dart';
 
 /// The red title bar at the top of every screen.
 class RedHeader extends StatelessWidget {
-  const RedHeader({super.key, required this.title, this.children = const []});
+  const RedHeader({
+    super.key,
+    required this.title,
+    this.children = const [],
+    this.titleInset = 8,
+  });
 
   final String title;
+
+  /// Room kept clear for the buttons at each side of the (centred) title;
+  /// a title too wide for the rest is drawn smaller.
+  final double titleInset;
 
   /// Icons and buttons, positioned in header coordinates (0..width, 0..48).
   final List<Widget> children;
@@ -24,12 +33,13 @@ class RedHeader extends StatelessWidget {
           maxScaleFactor: 2,
           child: Stack(
             children: [
-              Center(
-                child: AText(
-                  title,
-                  style: Spec.headerTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: titleInset),
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: AText(title, style: Spec.headerTitle, maxLines: 1),
+                  ),
                 ),
               ),
               ...children,
@@ -106,6 +116,7 @@ class BarButton extends StatelessWidget {
     required this.onTap,
     this.touchSize = const Size(48, 48),
     this.semanticLabel,
+    this.highlightInsets = EdgeInsets.zero,
   });
 
   final Offset center;
@@ -113,6 +124,9 @@ class BarButton extends StatelessWidget {
   final VoidCallback? onTap;
   final Size touchSize;
   final String? semanticLabel;
+
+  /// How far inside the touch area the pressed highlight stops.
+  final EdgeInsets highlightInsets;
 
   @override
   Widget build(BuildContext context) {
@@ -125,6 +139,7 @@ class BarButton extends StatelessWidget {
         onTap: onTap,
         semanticLabel: semanticLabel,
         highlight: const Color(0x33FFFFFF),
+        highlightInsets: highlightInsets,
         child: Center(
           child: Opacity(opacity: onTap == null ? 0.4 : 1, child: child),
         ),

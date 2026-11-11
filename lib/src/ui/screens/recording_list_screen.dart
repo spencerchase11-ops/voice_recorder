@@ -269,6 +269,8 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     if (_onPage) return;
     _open(f);
     _onPage = true;
+    // A delete's Undo toast would lie over the page's seek bar.
+    hideActionToast();
     try {
       await Navigator.of(context).push(
         RecordingScreen.route(
@@ -416,6 +418,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       // Rows that went away meanwhile (deleted elsewhere) don't count.
       return RedHeader(
         title: '${formatCount(_tickedFiles(visible).length)} selected',
+        titleInset: 40,
         children: [
           BarButton(
             center: const Offset(22.0, 24.0),
@@ -498,6 +501,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     }
     return RedHeader(
       title: 'Recording list',
+      titleInset: 90,
       children: [
         _backButton(() => Navigator.of(context).maybePop()),
         BarButton(
@@ -612,16 +616,19 @@ class _EmptyState extends State<_Empty> {
         textAlign: TextAlign.center,
       ),
     );
-    return Align(
-      alignment: Alignment.topCenter,
-      child: widget.onTap == null
-          ? text
-          : PressableArea(
-              onTap: widget.onTap,
-              semanticLabel: widget.text,
-              highlight: const Color(0x14FFFFFF),
-              child: text,
-            ),
+    // Scrolls when the largest text sizes make it longer than the screen.
+    return SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: widget.onTap == null
+            ? text
+            : PressableArea(
+                onTap: widget.onTap,
+                semanticLabel: widget.text,
+                highlight: const Color(0x14FFFFFF),
+                child: text,
+              ),
+      ),
     );
   }
 }

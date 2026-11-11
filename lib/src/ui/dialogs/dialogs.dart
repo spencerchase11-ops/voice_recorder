@@ -12,6 +12,13 @@ import '../spec.dart';
 import '../widgets/frame.dart';
 import '../widgets/toast.dart';
 
+/// A dialog's page. Its text grows no larger than Android's largest (2x):
+/// the dialogs' bars and buttons have fixed heights.
+Widget _dialogPage(Widget child) => MediaQuery.withClampedTextScaling(
+  maxScaleFactor: 2,
+  child: PlainText(child: ScreenFrameInsets(child: child)),
+);
+
 /// Shows [builder] centred over a 60% black scrim, like an Android dialog.
 Future<T?> showSpecDialog<T>(
   BuildContext context,
@@ -24,8 +31,7 @@ Future<T?> showSpecDialog<T>(
     barrierLabel: 'Dismiss',
     barrierColor: Spec.dialogScrim,
     transitionDuration: const Duration(milliseconds: 150),
-    pageBuilder: (ctx, _, _) =>
-        PlainText(child: ScreenFrameInsets(child: builder(ctx))),
+    pageBuilder: (ctx, _, _) => _dialogPage(builder(ctx)),
     transitionBuilder: _fade,
   );
 }
@@ -82,31 +88,29 @@ class ProgressDialogRoute extends RawDialogRoute<void> {
         transitionBuilder: _fade,
         pageBuilder: (ctx, _, _) => PopScope(
           canPop: false,
-          child: PlainText(
-            child: ScreenFrameInsets(
-              child: ListenableBuilder(
-                listenable: Listenable.merge([state, stopping]),
-                builder: (ctx, _) {
-                  final s = state.value;
-                  return HoloDialog(
-                    title: title,
-                    body: _ProgressBody(
-                      label: stopping.value ? 'Stopping…' : label(s),
-                      value: s.total == 0 ? 0 : s.done / s.total,
-                    ),
-                    buttons: [
-                      if (onCancel != null && !stopping.value)
-                        HoloButton(
-                          'Cancel',
-                          onTap: () {
-                            stopping.value = true;
-                            onCancel();
-                          },
-                        ),
-                    ],
-                  );
-                },
-              ),
+          child: _dialogPage(
+            ListenableBuilder(
+              listenable: Listenable.merge([state, stopping]),
+              builder: (ctx, _) {
+                final s = state.value;
+                return HoloDialog(
+                  title: title,
+                  body: _ProgressBody(
+                    label: stopping.value ? 'Stopping…' : label(s),
+                    value: s.total == 0 ? 0 : s.done / s.total,
+                  ),
+                  buttons: [
+                    if (onCancel != null && !stopping.value)
+                      HoloButton(
+                        'Cancel',
+                        onTap: () {
+                          stopping.value = true;
+                          onCancel();
+                        },
+                      ),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -494,18 +498,13 @@ Future<int?> showChoiceDialog(
               PressableArea(
                 onTap: () => Navigator.of(ctx).pop(i),
                 semanticLabel: items[i],
-                child: SizedBox(
-                  height: 48,
+                // Taller when larger text wraps the choice.
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
                   child: Row(
                     children: [
                       const SizedBox(width: Spec.holoMessageInset),
-                      Expanded(
-                        child: AText(
-                          items[i],
-                          style: Spec.holoMessage,
-                          maxLines: 1,
-                        ),
-                      ),
+                      Expanded(child: AText(items[i], style: Spec.holoMessage)),
                       _HoloRadio(checked: i == selected),
                       const SizedBox(width: 12),
                     ],

@@ -330,10 +330,14 @@ class FakePlayback extends Playback {
 
   Future<void> _load(String fileId) async {
     final ticket = ++_loads;
+    // Like JustAudioPlayback: the player stops, and nothing counts as
+    // loaded until the file has opened.
+    _id = null;
+    _playing = false;
+    _position = Duration.zero;
+    notifyListeners();
     final gate = loadGate;
     if (gate != null) {
-      _id = null;
-      _playing = false;
       await gate.future;
       if (ticket != _loads) return; // stopped or replaced meanwhile
     }
