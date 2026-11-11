@@ -98,6 +98,11 @@ class ProgressDialogRoute extends RawDialogRoute<void> {
                   body: _ProgressBody(
                     label: stopping.value ? 'Stopping…' : label(s),
                     value: s.total == 0 ? 0 : s.done / s.total,
+                    step: stopping.value
+                        ? -1
+                        : s.total == 0
+                        ? -2
+                        : s.done * 10 ~/ s.total,
                   ),
                   buttons: [
                     if (onCancel != null && !stopping.value)
@@ -125,14 +130,42 @@ class ProgressDialogRoute extends RawDialogRoute<void> {
   }
 }
 
-class _ProgressBody extends StatelessWidget {
-  const _ProgressBody({required this.label, required this.value});
+class _ProgressBody extends StatefulWidget {
+  const _ProgressBody({
+    required this.label,
+    required this.value,
+    required this.step,
+  });
 
   final String label;
   final double value;
 
+  /// Which tenth of the job it has got to (another number while it finds
+  /// out or stops): what a screen reader hears changes only with it, not
+  /// for every recording, which would leave it reading old counts.
+  final int step;
+
+  @override
+  State<_ProgressBody> createState() => _ProgressBodyState();
+}
+
+class _ProgressBodyState extends State<_ProgressBody> {
+  late String _spoken = widget.label;
+  late int _step = widget.step;
+
+  @override
+  void didUpdateWidget(_ProgressBody old) {
+    super.didUpdateWidget(old);
+    if (widget.step != _step) {
+      _step = widget.step;
+      _spoken = widget.label;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final label = widget.label;
+    final value = widget.value;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         Spec.holoMessageInset,
@@ -146,7 +179,10 @@ class _ProgressBody extends StatelessWidget {
         children: [
           Semantics(
             liveRegion: true,
-            child: AText(label, style: Spec.holoMessage),
+            label: _spoken,
+            child: ExcludeSemantics(
+              child: AText(label, style: Spec.holoMessage),
+            ),
           ),
           const SizedBox(height: 14),
           // Holo Light's horizontal progress bar.
@@ -346,7 +382,16 @@ class HoloButton extends StatelessWidget {
     return PressableArea(
       onTap: onTap,
       semanticLabel: label,
-      child: Center(child: AText(label, style: Spec.holoButton, maxLines: 1)),
+      // Smaller rather than losing its second word (a narrow phone at 2x).
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: AText(label, style: Spec.holoButton, maxLines: 1),
+          ),
+        ),
+      ),
     );
   }
 }

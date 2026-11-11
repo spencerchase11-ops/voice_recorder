@@ -230,10 +230,14 @@ class _RecordingListScreenState extends State<RecordingListScreen>
   Future<void> _delete(List<RecordingFile> visible) => _run(() async {
     final files = _targets(visible);
     if (files == null) return;
+    final selected = _selected;
+    final ticked = _ticked;
+    final ids = {for (final f in files) f.id};
     if (await deleteRecordings(context, files) && mounted) {
+      // A row opened (or a selection started) while it went is kept.
       setState(() {
-        _selected = null;
-        _ticked = null;
+        if (_selected == selected || ids.contains(_selected)) _selected = null;
+        if (identical(_ticked, ticked)) _ticked = null;
       });
     }
   });
@@ -308,8 +312,9 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     if (mounted && _selected != f.id) _reveal();
   }
 
-  /// Scrolls the open row to the top of the list if it isn't wholly on
-  /// screen. The rows above it are closed, so all the same height.
+  /// Brings the open row wholly into view if it isn't. The rows above it
+  /// are closed, so all the same height: a row far off is first scrolled
+  /// to the top, so that it is built.
   void _reveal() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
@@ -324,10 +329,40 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       final top = Spec.listTopGap + i * row;
       final p = _scroll.position;
       if (top >= p.pixels && top + row <= p.pixels + p.viewportDimension) {
+        _showOpenRow();
         return;
       }
       _scroll.jumpTo(math.min(top, p.maxScrollExtent));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showOpenRow();
+      });
     });
+  }
+
+  /// Scrolls just enough for the open row to be wholly on screen, from
+  /// where the list has put it: it is taller than a closed row, and rows
+  /// not laid out since it opened are placed from estimates.
+  void _showOpenRow() {
+    Element? row;
+    void find(Element e) {
+      if (row != null) return;
+      final w = e.widget;
+      if (w is _RecordingRow && w.open) {
+        row = e;
+      } else {
+        e.visitChildren(find);
+      }
+    }
+
+    (context as Element).visitChildren(find);
+    final open = row;
+    if (open == null) return;
+    for (final policy in [
+      ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+    ]) {
+      unawaited(Scrollable.ensureVisible(open, alignmentPolicy: policy));
+    }
   }
 
   @override

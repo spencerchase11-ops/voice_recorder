@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart' show MaterialPageRoute;
+import 'package:flutter/semantics.dart' show SemanticsService;
 import 'package:flutter/widgets.dart';
 
 import '../../app_controller.dart';
@@ -267,6 +269,17 @@ class _RecordingScreenState extends State<RecordingScreen> {
       _last = to;
       _drag = null;
     });
+    // Heard once (the Name row is a live region only where the platform
+    // can't announce: on iOS it would be read again after every dialog).
+    if (MediaQuery.supportsAnnounceOf(context)) {
+      unawaited(
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          'Name: ${to.name}',
+          TextDirection.ltr,
+        ),
+      );
+    }
     widget.onShown?.call(to.id);
     if (app.isRecording || app.isBusy) return;
     // A place is for the next visit that opens the recording: used up then
@@ -717,8 +730,8 @@ class _DetailRow extends StatelessWidget {
   /// What a screen reader says for [text], if not the same.
   final String? spoken;
 
-  /// Read out when it changes (the name, after previous or next). One
-  /// announcement more would make VoiceOver say it twice.
+  /// Read out when it changes (the name, after previous or next) where the
+  /// platform can't announce; where it can, the page announces it.
   final bool live;
 
   @override
@@ -726,7 +739,7 @@ class _DetailRow extends StatelessWidget {
     return Semantics(
       container: true,
       label: '$label: ${spoken ?? text}',
-      liveRegion: live,
+      liveRegion: live && !MediaQuery.supportsAnnounceOf(context),
       excludeSemantics: true,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: Spec.pageRowHeight),

@@ -442,6 +442,153 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  // A screen reader hears a toast once: announced where the platform can,
+  // a live region where it can't.
+  for (final announce in [true, false]) {
+    testWidgets('a toast is heard once (${announce ? 'iOS' : 'Android'})', (
+      tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          FakeAccessibilityFeatures(supportsAnnounce: announce);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      useReferenceDevice(tester);
+      await pumpReferenceApp(tester);
+      final ctx = tester.element(find.byType(Navigator).first);
+      tester.takeAnnouncements();
+      showToast(ctx, 'Saved');
+      showActionToast(ctx, 'Moved', action: 'Undo', onAction: () {});
+      await tester.pump();
+      expect(
+        tester.takeAnnouncements().map((a) => a.message),
+        announce ? ['Saved', 'Moved'] : isEmpty,
+      );
+      for (final text in ['Saved', 'Moved']) {
+        expect(
+          tester.getSemantics(find.bySemanticsLabel(text)),
+          announce
+              ? isNot(isSemantics(isLiveRegion: true))
+              : isSemantics(isLiveRegion: true),
+          reason: text,
+        );
+      }
+      hideActionToast();
+      await waitOutUndo(tester);
+    });
+  }
+
+  // Both toasts, either one first: the plain one keeps above the other.
+  for (final plainFirst in [false, true]) {
+    testWidgets(
+      'at 2x, toasts shown together keep apart${plainFirst ? ' (plain first)' : ''}',
+      (tester) async {
+        useReferenceDevice(tester);
+        tester.view.physicalSize = const Size(1179, 2556); // 393 wide
+        tester.view.devicePixelRatio = 3;
+        tester.platformDispatcher.textScaleFactorTestValue = 2;
+        await pumpReferenceApp(tester);
+        final ctx = tester.element(find.byType(Navigator).first);
+        void undo() => showActionToast(
+          ctx,
+          '2 recordings moved to Recently deleted',
+          action: 'Undo',
+          onAction: () {},
+        );
+        if (!plainFirst) {
+          undo();
+          await tester.pump();
+        }
+        showToast(ctx, 'Please select a file');
+        await tester.pump();
+        if (plainFirst) {
+          undo();
+          await tester.pump();
+          await tester.pump();
+        }
+        Rect box(String text) => tester.getRect(
+          find
+              .ancestor(of: find.text(text), matching: find.byType(Container))
+              .first,
+        );
+        final plain = box('Please select a file');
+        final action = box('2 recordings moved to Recently deleted');
+        expect(
+          plain.bottom,
+          lessThanOrEqualTo(action.top),
+          reason: '$plain $action',
+        );
+        hideActionToast();
+        await waitOutUndo(tester);
+      },
+    );
+  }
+
+  testWidgets('a long job is read out by tenths, not every recording', (
+    tester,
+  ) async {
+    await _pump(tester);
+    final state = ValueNotifier<JobState>((done: 0, total: 60));
+    final route = ProgressDialogRoute(
+      title: 'Deleting',
+      state: state,
+      label: (s) => 'Moving ${s.done} of ${s.total}',
+      onCancel: () {},
+    );
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    navigator.push(route);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    String heard() => tester
+        .getSemantics(find.bySemanticsLabel(RegExp('^Moving|^Stopping')))
+        .label;
+    final said = <String>{heard()};
+    for (var done = 1; done <= 60; done++) {
+      state.value = (done: done, total: 60);
+      await tester.pump();
+      said.add(heard());
+      // What shows follows every recording.
+      expect(find.text('Moving $done of 60'), findsOneWidget);
+    }
+    expect(said.length, 11, reason: '$said');
+    expect(said, contains('Moving 6 of 60'));
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    expect(heard(), 'Stopping…');
+    navigator.removeRoute(route);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets("at 2x on a narrow phone, a dialog's buttons keep every word", (
+    tester,
+  ) async {
+    useReferenceDevice(tester);
+    _useNarrowPhone(tester);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(boldText: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await pumpReferenceApp(tester);
+    final ctx = tester.element(find.byType(Navigator).first);
+    showConfirmDialog(
+      ctx,
+      title: 'Restore all',
+      message: 'Restore all recordings?',
+      ok: 'Restore all',
+    );
+    await tester.pumpAndSettle();
+    final label = find.descendant(
+      of: find.byType(HoloButton),
+      matching: find.text('Restore all'),
+    );
+    final p = tester.renderObject<RenderParagraph>(
+      find.descendant(of: label, matching: find.byType(RichText)),
+    );
+    expect(p.didExceedMaxLines, isFalse);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets("a progress dialog's text is at most 2x", (tester) async {
     await _pump(tester);
     final state = ValueNotifier<JobState>((done: 1, total: 3));

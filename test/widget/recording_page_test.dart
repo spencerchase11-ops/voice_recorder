@@ -23,6 +23,8 @@ const _kris = 'kris n evan got back then zach.mp3';
 const _second = '2026_09_20_17_26_27.mp3';
 const _third = '2026_09_18_21_23_04.mp3';
 
+String _rec(int i) => 'rec ${i.toString().padLeft(2, '0')}.mp3';
+
 /// One of the page's player controls, by what a screen reader says.
 Finder _control(String label) => find.bySemanticsLabel(label);
 
@@ -853,6 +855,112 @@ void main() {
     },
   );
 
+  /// 40 recordings, newest first: 'rec 00.mp3' to 'rec 39.mp3'.
+  List<RecordingFile> forty() => [
+    for (var i = 0; i < 40; i++)
+      RecordingFile(
+        id: 'mem://${_rec(i)}',
+        name: _rec(i),
+        size: 1024 * 1024,
+        modified: DateTime(2026, 9, 23, 12).subtract(Duration(hours: i)),
+      ),
+  ];
+
+  ScrollPosition listPosition(WidgetTester tester) => tester
+      .state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byType(ListView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      )
+      .position;
+
+  /// The open row is wholly in the list's view, its controls reachable.
+  void expectOpenRowShown(WidgetTester tester, String name) {
+    expect(_openRow(tester), name);
+    final open = find.byWidgetPredicate(
+      (w) => w is PressableArea && w.selected == true,
+    );
+    final list = tester.getRect(find.byType(ListView));
+    final row = tester.getRect(open);
+    expect(row.top, greaterThanOrEqualTo(list.top - 0.01), reason: '$row');
+    expect(row.bottom, lessThanOrEqualTo(list.bottom + 0.01), reason: '$row');
+    expect(labeled('Pause $name').hitTestable(), findsOneWidget);
+    expect(_control('Forward 10 seconds').hitTestable(), findsOneWidget);
+  }
+
+  testWidgets('after Next to the last recording, Back shows all its row', (
+    tester,
+  ) async {
+    await _openList(tester, files: forty());
+    await _openPage(tester, _rec(0));
+    for (var i = 0; i < 39; i++) {
+      await tester.tap(_control('Next recording'));
+      await tester.pumpAndSettle();
+    }
+    await _back(tester);
+    expectOpenRowShown(tester, _rec(39));
+  });
+
+  testWidgets('after Previous far up, Back shows the row under the header', (
+    tester,
+  ) async {
+    await _openList(tester, files: forty());
+    listPosition(tester).jumpTo(1500);
+    await tester.pumpAndSettle();
+    // The top row then.
+    await _openPage(tester, _rec(23));
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(_control('Previous recording'));
+      await tester.pumpAndSettle();
+    }
+    await _back(tester);
+    expectOpenRowShown(tester, _rec(17));
+  });
+
+  testWidgets('a row whose player would be below the list is moved up', (
+    tester,
+  ) async {
+    await _openList(tester, files: forty());
+    final row =
+        tester.getTopLeft(find.text(_rec(1))).dy -
+        tester.getTopLeft(find.text(_rec(0))).dy;
+    final p = listPosition(tester);
+    // Row 12's name and date end just above the list's bottom edge.
+    p.jumpTo(Spec.listTopGap + 13 * row - p.viewportDimension + 1);
+    await tester.pumpAndSettle();
+    await _openPage(tester, _rec(11));
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expectOpenRowShown(tester, _rec(12));
+  });
+
+  testWidgets("a row opened while the list's delete runs stays open", (
+    tester,
+  ) async {
+    final t = await _openList(tester);
+    await tester.tap(labeled('Play $_third'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Pause $_third'));
+    await tester.pumpAndSettle();
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    final slow = t.store.slow = Completer<void>();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await _openPage(tester, _second);
+    slow.complete();
+    t.store.slow = null;
+    await tester.pumpAndSettle();
+    await _back(tester);
+    expect(_openRow(tester), _second);
+    expect(t.playback.isPlaying('mem://$_second'), isTrue);
+    await waitOutUndo(tester);
+  });
+
   testWidgets('after paging far with Next, Back shows the row playing', (
     tester,
   ) async {
@@ -898,19 +1006,48 @@ void main() {
     expect(list().pixels, at);
   });
 
-  testWidgets("Previous and Next are heard: the name's row is read out", (
+  testWidgets('Previous and Next are heard once: the name is announced', (
     tester,
   ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(supportsAnnounce: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     await _openList(tester);
     await _openPage(tester, _kris);
+    await tester.tap(_control('Pause'));
+    await tester.pumpAndSettle();
+    tester.takeAnnouncements();
+    await tester.tap(_control('Next recording'));
+    await tester.pumpAndSettle();
+    expect(tester.takeAnnouncements().map((a) => a.message), [
+      'Name: $_second',
+    ]);
+    // Not a live region as well: VoiceOver would say it again, and again
+    // after every dialog that closes over it.
     expect(
-      tester.getSemantics(find.bySemanticsLabel('Name: $_kris')),
-      isSemantics(isLiveRegion: true),
+      tester.getSemantics(find.bySemanticsLabel('Name: $_second')),
+      isNot(isSemantics(isLiveRegion: true)),
     );
+    await tester.tap(labeled('Rename'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(tester.takeAnnouncements(), isEmpty);
+  });
+
+  testWidgets("where it can't announce, the name's row is read out", (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures();
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await _openList(tester);
+    await _openPage(tester, _kris);
     await tester.tap(_control('Pause'));
     await tester.pumpAndSettle();
     await tester.tap(_control('Next recording'));
     await tester.pumpAndSettle();
+    expect(tester.takeAnnouncements(), isEmpty);
     expect(
       tester.getSemantics(find.bySemanticsLabel('Name: $_second')),
       isSemantics(isLiveRegion: true),

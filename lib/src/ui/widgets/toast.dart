@@ -58,7 +58,7 @@ void showToast(BuildContext context, String message, {bool long = false}) {
       left: 24,
       right: 24,
       // Above the undo toast, when both show.
-      bottom: _toastBottom(ctx, _actionToast == null ? 88 : 144),
+      bottom: _toastBottom(ctx, _actionToast == null ? 88 : _aboveAction()),
       // At most 2x, as the dialogs: larger, its words split on a narrow
       // phone.
       child: MediaQuery.withClampedTextScaling(
@@ -67,7 +67,10 @@ void showToast(BuildContext context, String message, {bool long = false}) {
           child: Center(
             child: PlainText(
               child: Semantics(
-                liveRegion: true,
+                // Announced where the platform can (iOS); read out as it
+                // shows where it can't (Android). Both: VoiceOver says it
+                // twice.
+                liveRegion: !MediaQuery.supportsAnnounceOf(ctx),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -113,6 +116,18 @@ void _removeToast() {
 OverlayEntry? _actionToast;
 Timer? _actionTimer;
 
+/// The showing action toast's box, to stack a plain toast above it.
+GlobalKey? _actionBox;
+
+/// A plain toast's distance above the bottom while the action toast
+/// shows: 20 above its top (144 for a one-line one; at large text it
+/// wraps, taller).
+double _aboveAction() {
+  final box = _actionBox?.currentContext?.findRenderObject();
+  final height = box is RenderBox && box.hasSize ? box.size.height : 44.0;
+  return 80 + height + 20;
+}
+
 /// A toast with a button, e.g. "Moved to Recently deleted   UNDO". It stays
 /// for [duration] or until the button is pressed; a newer one replaces it.
 void showActionToast(
@@ -125,6 +140,7 @@ void showActionToast(
   final overlay = _overlay(context);
   if (overlay == null) return;
   hideActionToast();
+  final box = _actionBox = GlobalKey();
   late OverlayEntry entry;
   var removed = false;
   void remove() {
@@ -153,6 +169,7 @@ void showActionToast(
         child: Center(
           child: PlainText(
             child: Container(
+              key: box,
               constraints: const BoxConstraints(maxWidth: 480),
               padding: const EdgeInsets.only(left: 16),
               decoration: BoxDecoration(
@@ -169,7 +186,8 @@ void showActionToast(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       child: Semantics(
-                        liveRegion: true,
+                        // As the plain toast's.
+                        liveRegion: !MediaQuery.supportsAnnounceOf(ctx),
                         child: Text(
                           message,
                           style: const TextStyle(
@@ -215,6 +233,9 @@ void showActionToast(
   overlay.insert(entry);
   _actionToast = entry;
   _hideAction = remove;
+  // A plain toast showing already moves above it, once its height is
+  // known.
+  WidgetsBinding.instance.addPostFrameCallback((_) => _toast?.markNeedsBuild());
   _actionTimer = Timer(duration, remove);
   _announce(context, message);
 }
