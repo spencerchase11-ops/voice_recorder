@@ -774,6 +774,11 @@ void main() {
       app.notices.listen(notices.add);
       expect(await app.toggleRecord(), RecordOutcome.started);
       engine.endedController.add(CaptureEnd.sizeLimit);
+      // Stopping saves the file first, which a slow machine (CI) can take a
+      // while to do: wait for the notice, then a moment for any other.
+      for (var i = 0; i < 100 && notices.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(app.isRecording, isFalse);
       return notices.single;

@@ -369,6 +369,11 @@ void main() {
         app.notices.listen(notices.add);
         await app.toggleRecord();
         engine.endedController.add(CaptureEnd.stopped);
+        // Stopping saves the file first, which a slow machine (CI) can take a
+        // while to do: wait for the notice, then a moment for any other.
+        for (var i = 0; i < 100 && notices.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         await Future<void>.delayed(const Duration(milliseconds: 100));
         expect(app.isRecording, isFalse);
         expect(store.saved, ['2026_09_23_19_14_05.mp3']);
@@ -556,6 +561,11 @@ void main() {
         app.notices.listen(notices.add);
         await app.toggleRecord();
         engine.endedController.add(CaptureEnd.writeFailed);
+        // Stopping saves the file first, which a slow machine (CI) can take a
+        // while to do: wait for the notice, then a moment for any other.
+        for (var i = 0; i < 100 && notices.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         await Future<void>.delayed(const Duration(milliseconds: 100));
         expect(app.isRecording, isFalse);
         expect(notices.single, contains("couldn't be written"));
