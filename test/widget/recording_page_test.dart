@@ -1015,6 +1015,90 @@ void main() {
     expect(labeled('Undo'), findsNothing);
     expect(t.controller.files.map((f) => f.name), contains(_third));
     await tester.pump(const Duration(seconds: 5));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  /// Deletes [_third] from its page with a screen reader on (or, with
+  /// [reader] false, off); the list then shows the Undo toast.
+  Future<void> deleteWithReader(
+    WidgetTester tester, {
+    bool reader = true,
+  }) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        FakeAccessibilityFeatures(
+          accessibleNavigation: reader,
+          supportsAnnounce: true,
+        );
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await _openList(tester);
+    await _openPage(tester, _third);
+    await tester.tap(labeled('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsOneWidget);
+  }
+
+  void readerOff(WidgetTester tester) =>
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(supportsAnnounce: true);
+
+  testWidgets('Undo kept for a screen reader goes once it is turned off', (
+    tester,
+  ) async {
+    await deleteWithReader(tester);
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsOneWidget);
+    readerOff(tester);
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('a screen reader turned off within the time: Undo goes on time', (
+    tester,
+  ) async {
+    await deleteWithReader(tester);
+    await tester.pump(const Duration(seconds: 1));
+    readerOff(tester);
+    await tester.pump(const Duration(seconds: 3));
+    expect(labeled('Undo'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('with a screen reader on, a dialog takes Undo away', (
+    tester,
+  ) async {
+    await deleteWithReader(tester);
+    await tester.tap(labeled('Sort'));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
+    expect(
+      find.bySemanticsLabel('Moved to Recently deleted. Undo available'),
+      findsNothing,
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('without one, Undo stays above a dialog for its time', (
+    tester,
+  ) async {
+    await deleteWithReader(tester, reader: false);
+    await tester.tap(labeled('Sort'));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('on Android, Undo keeps its time with accessibleNavigation on', (
+    tester,
+  ) async {
+    await deleteWithReader(tester);
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(labeled('Undo'), findsNothing);
   });
 
   testWidgets('after paging far with Next, Back shows the row playing', (

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/widgets.dart';
 
@@ -128,8 +130,19 @@ double _aboveAction() {
   return 80 + height + 20;
 }
 
+/// Whether an action toast waits for a screen reader once its time is up:
+/// with VoiceOver or Switch Control on, finding the button takes longer.
+/// Not on Android: there any accessibility service that reads the screen (a
+/// password manager too) sets accessibleNavigation, which would keep the
+/// toast up for sighted users; it keeps its time there, as in 1.0.
+bool _waitsForReader(BuildContext context) =>
+    defaultTargetPlatform != TargetPlatform.android &&
+    MediaQuery.accessibleNavigationOf(context);
+
 /// A toast with a button, e.g. "Moved to Recently deleted   UNDO". It stays
-/// for [duration] or until the button is pressed; a newer one replaces it.
+/// for [duration] or until the button is pressed, and after that while a
+/// screen reader waits for it ([_waitsForReader]; it goes once the reader is
+/// turned off). A newer one replaces it.
 void showActionToast(
   BuildContext context,
   String message, {
@@ -140,11 +153,13 @@ void showActionToast(
   final overlay = _overlay(context);
   if (overlay == null) return;
   hideActionToast();
-  // With a screen reader on, finding the button takes longer than
-  // [duration]: it stays until used or replaced, as Flutter's snack bars
-  // do, and it is said that the button is there.
+  // With a screen reader on, it is said that the button is there.
   final reader = MediaQuery.accessibleNavigationOf(context);
   final spoken = reader ? '$message. $action available' : message;
+  // Kept up to date by the builder, which MediaQuery rebuilds.
+  var waits = _waitsForReader(context);
+  // [duration] is up: it goes as soon as no screen reader waits for it.
+  var due = false;
   final box = _actionBox = GlobalKey();
   late OverlayEntry entry;
   var removed = false;
@@ -163,79 +178,23 @@ void showActionToast(
   }
 
   entry = OverlayEntry(
-    builder: (ctx) => Positioned(
-      left: 16,
-      right: 16,
-      bottom: _toastBottom(ctx, 80),
-      // At most 2x, as the dialogs: larger, its words split on a narrow
-      // phone.
-      child: MediaQuery.withClampedTextScaling(
-        maxScaleFactor: 2,
-        child: Center(
-          child: PlainText(
-            child: Container(
-              key: box,
-              constraints: const BoxConstraints(maxWidth: 480),
-              padding: const EdgeInsets.only(left: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xF2333333),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x66000000), blurRadius: 4),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      child: Semantics(
-                        // As the plain toast's.
-                        liveRegion: !MediaQuery.supportsAnnounceOf(ctx),
-                        label: spoken,
-                        excludeSemantics: true,
-                        child: Text(
-                          message,
-                          style: const TextStyle(
-                            fontFamily: Spec.font,
-                            fontSize: 14,
-                            color: Color(0xFFFFFFFF),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  PressableArea(
-                    semanticLabel: action,
-                    highlight: const Color(0x33FFFFFF),
-                    onTap: () {
-                      remove();
-                      onAction();
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      child: Text(
-                        action.toUpperCase(),
-                        style: const TextStyle(
-                          fontFamily: Spec.font,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Spec.holoBlue,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
+    builder: (ctx) {
+      waits = _waitsForReader(ctx);
+      if (due && !waits) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => remove());
+      }
+      return _actionToastBody(
+        ctx,
+        box: box,
+        message: message,
+        spoken: spoken,
+        action: action,
+        onTap: () {
+          remove();
+          onAction();
+        },
+      );
+    },
   );
   overlay.insert(entry);
   _actionToast = entry;
@@ -243,9 +202,98 @@ void showActionToast(
   // A plain toast showing already moves above it, once its height is
   // known.
   WidgetsBinding.instance.addPostFrameCallback((_) => _toast?.markNeedsBuild());
-  if (!reader) _actionTimer = Timer(duration, remove);
+  _actionTimer = Timer(duration, () {
+    due = true;
+    if (!waits) remove();
+  });
   _announce(context, spoken);
 }
+
+/// Before a dialog opens. An action toast stays above dialogs (its button
+/// can be used while one asks a question), but one that waits for a screen
+/// reader would stay there over the dialog's buttons and outside its modal
+/// scope.
+void hideActionToastForDialog(BuildContext context) {
+  if (_waitsForReader(context)) hideActionToast();
+}
+
+Widget _actionToastBody(
+  BuildContext ctx, {
+  required GlobalKey box,
+  required String message,
+  required String spoken,
+  required String action,
+  required VoidCallback onTap,
+}) => Positioned(
+  left: 16,
+  right: 16,
+  bottom: _toastBottom(ctx, 80),
+  // At most 2x, as the dialogs: larger, its words split on a narrow
+  // phone.
+  child: MediaQuery.withClampedTextScaling(
+    maxScaleFactor: 2,
+    child: Center(
+      child: PlainText(
+        child: Container(
+          key: box,
+          constraints: const BoxConstraints(maxWidth: 480),
+          padding: const EdgeInsets.only(left: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xF2333333),
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: const [
+              BoxShadow(color: Color(0x66000000), blurRadius: 4),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: Semantics(
+                    // As the plain toast's.
+                    liveRegion: !MediaQuery.supportsAnnounceOf(ctx),
+                    label: spoken,
+                    excludeSemantics: true,
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        fontFamily: Spec.font,
+                        fontSize: 14,
+                        color: Color(0xFFFFFFFF),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              PressableArea(
+                semanticLabel: action,
+                highlight: const Color(0x33FFFFFF),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  child: Text(
+                    action.toUpperCase(),
+                    style: const TextStyle(
+                      fontFamily: Spec.font,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Spec.holoBlue,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  ),
+);
 
 /// Removes the showing action toast.
 VoidCallback? _hideAction;

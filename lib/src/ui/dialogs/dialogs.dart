@@ -25,6 +25,7 @@ Future<T?> showSpecDialog<T>(
   WidgetBuilder builder, {
   bool dismissible = true,
 }) {
+  hideActionToastForDialog(context);
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: dismissible,
