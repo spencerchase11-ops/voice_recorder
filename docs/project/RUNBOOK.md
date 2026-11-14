@@ -69,14 +69,26 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
    1.1.0, DECISIONS D18). Don't pass `--build-number`.
 2. **Build:** run `flutter build ipa`. It signs automatically with the team, and the export
    step also checks the App Store profile.
-3. **Open the archive:** `open build/ios/archive/Runner.xcarchive`.
-4. **Upload:** in Organizer, choose **Distribute App → App Store Connect → Upload** and keep
-   the defaults. The owner clicks this.
-   - Every archive is named "Runner": select the one whose version and build match.
-   - The command-line upload (`xcodebuild -exportArchive` with `destination` upload) fails
-     with "Failed to Use Accounts".
+3. **Upload** (Xcode must be signed in to the team), from the command line:
+
+   ```bash
+   mkdir -p /tmp/vr-upload
+   cp build/ios/ipa/ExportOptions.plist /tmp/vr-upload/
+   /usr/libexec/PlistBuddy -c "Set :destination upload" /tmp/vr-upload/ExportOptions.plist
+   xcodebuild -exportArchive -allowProvisioningUpdates \
+     -archivePath build/ios/archive/Runner.xcarchive \
+     -exportOptionsPlist /tmp/vr-upload/ExportOptions.plist -exportPath /tmp/vr-upload/out
+   ```
+
+   It ends with "Upload succeeded". Without `-allowProvisioningUpdates` it fails with "Failed
+   to Use Accounts" (it can't use Xcode's accounts); that worked for 1.1.0 on 2026-11-13.
+4. **Or in Organizer:** `open build/ios/archive/Runner.xcarchive`, then **Distribute App → App
+   Store Connect → Upload** with the defaults. Every archive is named "Runner": select the one
+   whose version and build match.
 5. **Submit** in App Store Connect (the owner signs in):
-   - Create the new version (its version string must match the build's).
+   - Create the new version (its version string must match the build's): **+** next to "iOS
+     App". If it shows "Agreement Update" instead, the Account Holder first updates that
+     agreement under **Business**.
    - Add What's New and select the build once it shows **Ready to Submit** (about 5–30 min
      after upload).
    - Choose **Add for Review → Submit for Review**. The listing carries over from the last

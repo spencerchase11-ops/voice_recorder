@@ -52,10 +52,18 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
   interruption's end (D17).
 - **Release docs:** ROADMAP and RUNBOOK 4 now say to paste a changed Description and place a
   new screenshot by hand: a new version copies the last one's listing.
+- **Released:** merged into the default branch (fast-forward) and built; build 6 uploaded from
+  the command line and Ready to Submit; tag `v1.1.0` = `4ec37d6`. CI's first run on the default
+  branch failed one timing-sensitive test (a fixed 100 ms wait for a recording's own stop);
+  `1ea05b1` makes three such tests wait for the notice instead (tests only). Adding version
+  1.1.0 in App Store Connect waits for the Account Holder to update the paid application
+  agreement in Business.
 - **Lessons:**
   - The golden tests let 1% of pixels differ, so they can't prove a UI change leaves normal
     text alone. Raw RGBA captures of each screen, before and after, compared byte for byte,
     can: every UI fix in rounds 5 to 7 was checked that way.
+  - The command-line upload works with `xcodebuild -exportArchive -allowProvisioningUpdates`
+    (RUNBOOK 4); without the flag it fails with "Failed to Use Accounts".
   - A copy of the repository made with its `.git` shares the real stash and branches: a
     reviewer's `git stash` in one reached the real repository (undone, nothing lost). Review
     copies are made with `rsync --exclude .git`, and reviewers make no git writes.

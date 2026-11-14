@@ -53,7 +53,7 @@ export PATH="$HOME/flutter-3.47.5/bin:$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 flutter analyze            # no issues
 flutter test               # all pass, except 2 golden tests on macOS hosts (RUNBOOK 2)
 flutter build ios --release
-flutter build ipa          # App Store archive; upload through Organizer (RUNBOOK 4)
+flutter build ipa          # App Store archive; upload: RUNBOOK 4
 ```
 
 For the phone, releases, screenshots and diagnosis, see `docs/project/RUNBOOK.md`.

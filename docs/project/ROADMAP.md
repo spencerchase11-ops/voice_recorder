@@ -8,9 +8,10 @@ Finished items move to HISTORY. Keep this list short and ordered.
 asked to release without the phone test (D19): the code is merged into the default branch and
 built; the phone checks come after the release.
 
-1. **Owner: upload** build 6 through Xcode's Organizer (RUNBOOK 4): Distribute App → App Store
-   Connect → Upload. Every archive is named "Runner": pick version 1.1.0, build 6.
-2. **Owner: in App Store Connect,** once build 6 shows Ready to Submit:
+1. **Owner: update the agreement** in App Store Connect → Business: adding a version shows
+   "Agreement Update: your paid application agreement is outdated" until then. (Build 6 is
+   uploaded and Ready to Submit; tag `v1.1.0` is pushed.)
+2. **In App Store Connect** (build 6 is Ready to Submit):
    - Add a new iOS version, 1.1.0.
    - What's New and the Description from `docs/APP_STORE.md` section 5 (paste the whole
      Description: it gains the LISTEN line about a recording's own page).
