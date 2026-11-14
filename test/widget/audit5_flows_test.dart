@@ -3,9 +3,8 @@
 // deleted, large text, and seeking while a recording is saved.
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppLifecycleState;
 
-import 'package:flutter/rendering.dart' show RenderParagraph;
+import 'package:flutter/rendering.dart' show RenderParagraph, SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +16,7 @@ import 'package:voice_recorder/src/core/recording_file.dart';
 import 'package:voice_recorder/src/core/settings.dart';
 import 'package:voice_recorder/src/platform/native_bridge.dart';
 import 'package:voice_recorder/src/ui/screens/recording_list_screen.dart';
+import 'package:voice_recorder/src/ui/widgets/red_bars.dart';
 
 import '../support/fakes.dart';
 import '../support/harness.dart';
@@ -636,5 +636,87 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(t.store.saved, hasLength(1));
+  });
+
+  group("after a delete from selection, the header's screen-reader frames "
+      'are where its buttons are', () {
+    /// [label]'s accessibility frame, in logical pixels on the screen.
+    Rect frameOf(WidgetTester tester, String label) {
+      final node = tester.getSemantics(labeled(label));
+      expect(node.label, label);
+      var rect = node.rect;
+      for (SemanticsNode? n = node; n != null; n = n.parent) {
+        final t = n.transform;
+        if (t != null) rect = MatrixUtils.transformRect(t, rect);
+      }
+      final ratio = tester.view.devicePixelRatio;
+      return Rect.fromLTRB(
+        rect.left / ratio,
+        rect.top / ratio,
+        rect.right / ratio,
+        rect.bottom / ratio,
+      );
+    }
+
+    void expectFramed(WidgetTester tester, String label) {
+      // Frames are clipped to the header, as Back's is at the screen's edge.
+      final drawn = tester
+          .getRect(labeled(label))
+          .intersect(tester.getRect(find.byType(RedHeader)));
+      final frame = frameOf(tester, label);
+      for (final (a, b) in [
+        (frame.left, drawn.left),
+        (frame.top, drawn.top),
+        (frame.right, drawn.right),
+        (frame.bottom, drawn.bottom),
+      ]) {
+        expect(a, moreOrLessEquals(b, epsilon: 0.01), reason: label);
+      }
+    }
+
+    Future<void> deleteSelected(WidgetTester tester) async {
+      await tester.longPress(find.text('2026_09_01_10_00_00.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(labeled('Delete'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('back to the list', (tester) async {
+      final semantics = tester.ensureSemantics();
+      useReferenceDevice(tester);
+      await pumpReferenceApp(tester, files: _many(3), current: null);
+      await tester.tap(labeled('Recording list'));
+      await tester.pumpAndSettle();
+      await deleteSelected(tester);
+      expect(find.text('Recording list'), findsOneWidget);
+      for (final label in ['Back', 'Sort', 'Search']) {
+        expectFramed(tester, label);
+      }
+      await waitOutUndo(tester);
+      for (final label in ['Back', 'Sort', 'Search']) {
+        expectFramed(tester, label);
+      }
+      semantics.dispose();
+    });
+
+    testWidgets('back to a search', (tester) async {
+      final semantics = tester.ensureSemantics();
+      useReferenceDevice(tester);
+      await pumpReferenceApp(tester, files: _many(3), current: null);
+      await tester.tap(labeled('Recording list'));
+      await tester.pumpAndSettle();
+      await tester.tap(labeled('Search'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(EditableText), '2026');
+      await tester.pumpAndSettle();
+      await deleteSelected(tester);
+      expect(find.byType(EditableText), findsOneWidget);
+      expectFramed(tester, 'Back');
+      await waitOutUndo(tester);
+      expectFramed(tester, 'Back');
+      semantics.dispose();
+    });
   });
 }

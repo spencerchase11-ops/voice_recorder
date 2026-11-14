@@ -493,7 +493,12 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       final all =
           visible.isNotEmpty && visible.every((f) => ticked.contains(f.id));
       // Rows that went away meanwhile (deleted elsewhere) don't count.
+      // Each header has its own key: reused in place, its buttons' moves
+      // could reach screen readers late (after a delete, while the
+      // question's dialog still covered the list), leaving their frames at
+      // the old places.
       return RedHeader(
+        key: const ValueKey('selecting'),
         title: '${formatCount(_tickedFiles(visible).length)} selected',
         titleInset: 40,
         children: [
@@ -525,6 +530,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
     final query = _query;
     if (query != null) {
       return RedHeader(
+        key: const ValueKey('searching'),
         title: '',
         children: [
           _backButton(_endSearch),
@@ -598,6 +604,7 @@ class _RecordingListScreenState extends State<RecordingListScreen>
       );
     }
     return RedHeader(
+      key: const ValueKey('listing'),
       title: 'Recording list',
       titleInset: 90,
       children: [
