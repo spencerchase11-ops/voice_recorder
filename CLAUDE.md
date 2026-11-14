@@ -66,7 +66,8 @@ For the phone, releases, screenshots and diagnosis, see `docs/project/RUNBOOK.md
   `285316066+spencerchase11-ops@users.noreply.github.com`, never a personal email. End each
   message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Branches:** the default branch is `claude/voice-recorder-fork-7xk3bg`. Unreleased work
-  goes on its own branch until it is tested on the phone.
+  goes on its own branch until it is tested on the phone (1.1.0 was released without that
+  test, at the owner's request: D19).
 - **Tests:** a test for a fix must fail without the fix; check by breaking it.
 - **Editing with scripts:** replace exactly once and assert the match count.
 

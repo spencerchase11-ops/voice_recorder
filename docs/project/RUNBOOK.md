@@ -64,9 +64,9 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
 ## 4. Release to the App Store
 
 1. **Version:** raise `version:` in `pubspec.yaml`. Every upload needs a higher build number;
-   1.0.0 used builds 1 and 2; 1.0.1 uses build 5 (build 3 was a development build on the
-   owner's phone only; build 4 was prepared on 2026-10-17 and never submitted). Don't pass
-   `--build-number`.
+   1.0.0 used builds 1 and 2; 1.1.0 uses build 6 (build 3 was a development build on the
+   owner's phone only; builds 4 and 5 were 1.0.1, prepared and never uploaded: 1.0.1 became
+   1.1.0, DECISIONS D18). Don't pass `--build-number`.
 2. **Build:** run `flutter build ipa`. It signs automatically with the team, and the export
    step also checks the App Store profile.
 3. **Open the archive:** `open build/ios/archive/Runner.xcarchive`.
@@ -80,27 +80,31 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
    - Add What's New and select the build once it shows **Ready to Submit** (about 5–30 min
      after upload).
    - Choose **Add for Review → Submit for Review**. The listing carries over from the last
-     version.
+     version: paste a changed Description (`docs/APP_STORE.md` section 5) and add or reorder
+     changed screenshots by hand (section 5 below gives the order).
 6. **Tag** the uploaded commit and push it: `git tag -a vX.Y.Z -m "…" <commit>` then
    `git push origin vX.Y.Z`. Keep the repository public (LGPL).
 
 ## 5. Screenshots and icon
 
 - **App Store screenshots:** `docs/app-store/*.jpg`, 1290 × 2796 (accepted in the 6.9" slot,
-  and used for 6.5" too). Order: recording, playing, list, Recently deleted.
+  and used for 6.5" too). Order: recording, playing, list, a recording's page (from 1.1.0),
+  Recently deleted.
   - `test/tool/app_store_screenshots_test.dart` renders them: the iOS layout at 3× with a
     59 pt status bar and a 34 pt home indicator, and neutral sample recordings. A plain
     `flutter test` skips it. Give it an absolute output folder:
 
     ```bash
     flutter test test/tool/app_store_screenshots_test.dart --dart-define=SHOTS_OUT=/tmp/shots
-    for n in 1-recording 2-playing 3-recording-list 4-recently-deleted; do
+    for n in 1-recording 2-playing 3-recording-list 4-recording-page 5-recently-deleted; do
       sips -s format jpeg -s formatOptions 90 /tmp/shots/$n.png --out docs/app-store/$n.jpg
     done
     ```
 
   - On 2026-10-17 it reproduced the published images exactly, except the deletion date in
     Recently deleted, which is today's (the screen counts the 30 days from the real clock).
+    On 2026-11-10 the first three came out the same again (mean difference under 1 of 255,
+    JPEG noise); `4-recording-page` was added, and Recently deleted kept as published.
 - **App icon:** `python3 tool/art/app_icon.py .` makes every icon (needs numpy and Pillow). The
   iOS master uses disc scale 0.96 and gradient window 18/108–90/108. The 1024 image must stay
   opaque RGB.

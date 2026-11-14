@@ -4,11 +4,12 @@ A rebuild of the classic 2016 Android voice recorder: red title bar, brushed-met
 background, chrome studio microphone, glossy record/play buttons. It is written in
 Flutter and runs on **Android (Google Play)** and **iOS**.
 
-Six screenshots of the original app are the spec: the Recorder with and
-without a recording, the Recording list, Settings, the Delete dialog and the
-Rename dialog. On the phone those
+Seven screenshots of the original app are the spec: the Recorder with and
+without a recording, the Recording list, a recording's own page, Settings, the
+Delete dialog and the Rename dialog. On the phone those
 screenshots came from (1440×3120, 3.5× density, font scale 1.077), the golden
-tests render every screen within a few pixels of the original. See
+tests render every screen within a few pixels of the original (the recording
+page, added in 1.1.0, was compared with a render; it has no golden yet). See
 [docs/SPEC.md](docs/SPEC.md) for how the measurements were made.
 
 ## Features
@@ -16,7 +17,8 @@ tests render every screen within a few pixels of the original. See
 | Screen | What it does |
 | --- | --- |
 | **Recorder** | Record and stop. While recording, the play button's place holds pause/resume; a paused recording's timer blinks. The timer counts up, and the 10-square level meter shows the input level. "Remaining time" is worked out from free space and the chosen format. The play button plays or pauses the last recording. The bar at the bottom shows where the last recording is saved. The header buttons share, rename or delete it. Before the first recording, the header shows "Voice Recorder" without those buttons, the timer reads 00:00 and the play button is grey, like the original. |
-| **Recording list** | All recordings with date, length and size, newest first or in another order (the sort button). The search button finds recordings by name or date ("2026-09"). Tap a row to open it: it turns orange and shows a seek bar, back/forward 10 seconds and the playback speed (1x, 1.25x, 1.5x, 2x). The row's play button plays or pauses it. The bottom bar deletes, renames or shares the open row. A long press starts selecting several rows, to delete or share them together. Deleting or restoring many at once shows how far it has got, and can be cancelled. A scrollbar thumb can be dragged to move through thousands of recordings quickly. |
+| **Recording list** | All recordings with date, length and size, newest first or in another order (the sort button). The search button finds recordings by name or date ("2026-09"). Tap a row to open the recording on its own page (below). Back on the list, that row is open: it turns orange and shows a seek bar, back/forward 10 seconds and the playback speed (1x, 1.25x, 1.5x, 2x). The row's play button plays or pauses it right there. The bottom bar deletes, renames or shares the open row. A long press starts selecting several rows, to delete or share them together. Deleting or restoring many at once shows how far it has got, and can be cancelled. A scrollbar thumb can be dragged to move through thousands of recordings quickly. |
+| **Recording page** | Opened by tapping a recording; it starts playing. Shows the name, size, location, the date it was recorded and its length, and a player: a seek bar, the position and length, previous recording, back 10 seconds, play/pause, forward 10 seconds and next recording (in the list's order, as sorted or searched). The header renames, shares or deletes it; a delete goes back to the list, with Undo. |
 | **Settings** | Recording type (MP3, WAV, M4A) and quality (four levels). Noise reduction. The recordings folder. On Android, storing the dates of renamed recordings inside them (before moving them to another phone). Recently deleted. Lock screen controls and the playback speed. On iPhone, an import of recordings from the Files app. "Rate 5 stars" ("Rate this app" on iPhone) and About, which has the licenses. |
 | **Recently deleted** | Deleted recordings stay here for 30 days. With one selected, restore it or delete it for good; with none selected, the same buttons restore all or delete all. Right after a delete, a toast also offers Undo. |
 
@@ -254,6 +256,10 @@ decided:
   headphones connected; the headphones keep full quality for playback.
 - On iOS the app is iPhone-only, like the original phone app. iPads run it in
   iPhone mode, so it always stays in portrait.
+- A recording's page has rename in its header where the original had
+  scissors, which trimmed the recording: this app can't trim yet. Its date
+  is when the recording was made (as in the list), not when the file was
+  last changed, which a copy to a new phone would reset.
 - The rename dialog opens without the keyboard, like in the screenshot. Tap
   the field to edit. The characters `\ / : * ? " < > |` can't be typed.
 - All artwork was drawn from scratch to match the screenshots, nothing was
@@ -347,6 +353,8 @@ flutter test                              # unit, widget, controller and golden 
   be saved or stops on its own, play, seek, skip and speed, delete and undo,
   rename, search, sort, selecting several recordings, Recently deleted, a
   list of 2,500 recordings, the Record shortcut and settings.
+  `test/widget/recording_page_test.dart` does the same for a recording's
+  page.
 - `test/audio/audio_info_test.dart` reads and writes recording dates in MP3
   (ID3v2.2 to 2.4, appended tags, ID3v1), WAV (`LIST`, `bext`) and M4A
   files, including damaged ones.
@@ -379,7 +387,7 @@ lib/
                              Recently deleted, the cache of dates and lengths
   src/core/                  formats, settings, text formats (timer, sizes, dates)
   src/ui/spec.dart           every measured size, colour and font
-  src/ui/screens/            Recorder, Recording list, Settings, Recently deleted
+  src/ui/screens/            Recorder, Recording list, a recording's page, Settings, Recently deleted
   src/ui/dialogs/            Holo dialogs (delete, choices, messages) and the iOS-style rename dialog
   src/ui/widgets/            text with Android metrics, bars, timer box, level meter, glossy buttons
 android/app/src/main/kotlin/ folder picker and file access, recording and playback services, shortcut

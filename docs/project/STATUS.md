@@ -1,6 +1,6 @@
 # Voice Recorder status
 
-Snapshot as of **2026-11-08**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
+Snapshot as of **2026-11-13**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
 
 This repository is **public**: no device identifiers, personal email addresses or the owner's
 recordings in here.
@@ -10,11 +10,11 @@ recordings in here.
 | Area | State |
 |---|---|
 | App Store | **1.0.0 (build 2) live since 2026-09-29** as "Voice Recorder – Classic": free, 4+, iPhone only. |
-| Next release | **1.0.1 (build 5)** on the branch `audit-2026-11-08`: build 4's call fix and "Rate this app", plus the 2026-11-08 audit fixes (HISTORY), first of all playback that stopped on the Ring/Silent switch and when leaving the app. Build 4 was never submitted (D14). **Next: the owner tests it on the phone** (ROADMAP "Now"), then merge, upload, submit and tag `v1.0.1`, each with the owner's go-ahead. |
-| Owner's own copy | 1.0.1 (4) from the 2026-10-17 archive. Build 5 is to be installed with `devicectl` (RUNBOOK 3) once the phone is connected. |
-| Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. The default branch is pushed; `audit-2026-11-08` is pushed too (a work branch, not merged). |
-| CI | Green: `v1.0.0` (push run, 2026-09-26), the default branch (`87a9904`) and `ios-capture-recovery` (`843fa18`, `e936670`), 2026-10-15: analyze, tests and the Android build. The 2026-10-17 doc ritual pushes start new runs. The weekly Monday run only keeps the Android test signing key's cache alive and runs no tests. The iOS build job runs only when started by hand. |
-| Tests | `audit-2026-11-08` on the Mac: 425 pass, 6 skipped, and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
+| Next release | **1.1.0 (build 6)**: 1.0.1's fixes, never uploaded (D14), first of all playback that stopped on the Ring/Silent switch and when leaving the app, plus a recording's own page (D18). Reviewed until a round found nothing (HISTORY 2026-11-13) and released without the owner's phone test, at the owner's request (D19). On the default branch and built; **next: the owner uploads it through Xcode's Organizer and submits it** (ROADMAP "Now"). |
+| Owner's own copy | 1.0.1 (4) from the 2026-10-17 archive. 1.1.0 comes from the App Store once it is approved (or from TestFlight); the phone checks then follow (ROADMAP). |
+| Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. The default branch has 1.1.0 and is pushed; the tag `v1.1.0` follows once build 6 is uploaded. |
+| CI | Runs on every push: analyze, tests and the Android build. `audit-2026-11-08` (`7ad780c`) and `fix/others-playing` were green on 2026-11-08; this doc ritual's push of the default branch starts a new run. The weekly Monday run only keeps the Android test signing key's cache alive and runs no tests. The iOS build job runs only when started by hand. |
+| Tests | On the Mac: 535 pass, 7 skipped, and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
 | Tools | The App Store screenshots and the iOS icons can be made again on the Mac: `test/tool/app_store_screenshots_test.dart` and `tool/art/render_icon.swift` (RUNBOOK 5), both checked against what's published. |
 | Android | Not part of these sessions: no Play Store work done or checked. |
 
@@ -35,7 +35,11 @@ recordings in here.
   the source is).
 - **Build 1.0.0 (2):** uploaded by the owner 2026-09-26 through Xcode's Organizer, submitted
   2026-09-26, approved, live 2026-09-29. Source: tag `v1.0.0`.
-- **App Store Connect session:** expired by 2026-10-15; the owner signs in (Claude never does).
+- **Builds 1.0.1 (3) to (5):** development builds for the owner's phone; never uploaded.
+- **Build 1.1.0 (6):** built 2026-11-13 from this doc ritual's commit, for the owner to upload
+  through Xcode's Organizer and submit. Source: tag `v1.1.0`, made at that commit once it is
+  uploaded.
+- **App Store Connect session:** the owner signs in (Claude never does).
 
 ## Code and backups
 
@@ -44,13 +48,12 @@ recordings in here.
   work from a fresh clone (`gh repo clone spencerchase11-ops/voice_recorder`) in a permanent
   folder.
 - **Branches:**
-  - `claude/voice-recorder-fork-7xk3bg`: the default branch, with 1.0.1 (4) since 2026-10-17.
-  - `audit-2026-11-08`: 1.0.1 (5), the audit fixes; merged into the default branch after the
-    owner's phone test.
-  - `ios-capture-recovery`: the call fix (`843fa18`). Merged into the default branch
-    (fast-forward); can be deleted.
-  - `ios-release-polish`: the 1.0.0 work; the same commit as `v1.0.0`. Merged; can be deleted.
-- **Tag:** `v1.0.0` = `d066dd5`, the exact source of App Store build 2 (needed for the LGPL).
+  - `claude/voice-recorder-fork-7xk3bg`: the default branch, with 1.1.0 (6) since 2026-11-13.
+  - `recording-page`, `audit-2026-11-08` and `fix/others-playing`: the 1.1.0 work, all merged
+    into the default branch (fast-forward); can be deleted.
+  - `ios-capture-recovery` and `ios-release-polish`: merged long ago; can be deleted.
+- **Tags:** `v1.0.0` = `d066dd5`, the exact source of App Store build 2; `v1.1.0` (once uploaded),
+  the source of build 6 (both needed for the LGPL).
 - **Commit identity:** `spencerchase11-ops <285316066+spencerchase11-ops@users.noreply.github.com>`.
   The older commits are by "Claude".
 
@@ -62,9 +65,9 @@ recordings in here.
 
 ## Open decisions
 
-- Whether build 5 fixes the owner's playback problem on the phone (the cause couldn't be
-  reproduced on the simulator; ROADMAP "Now" has the test).
-- The owner's go-ahead to merge, upload, submit and tag.
+- Whether 1.1.0 fixes the owner's playback problem on the phone: the cause couldn't be
+  reproduced on the simulator, and the phone checks come after the release (D19, ROADMAP).
+  Anything they find goes into 1.1.1.
 
 ## Watch items
 
@@ -72,6 +75,8 @@ recordings in here.
   deletes every recording (RUNBOOK 3).
 - **Upload from the command line fails** ("Failed to Use Accounts"); export works. Upload
   through Xcode's Organizer. Archives there are all named "Runner": check the build number.
+- **A new version copies the last one's listing:** paste a changed Description and place a new
+  screenshot by hand (RUNBOOK 4).
 - **LGPL:** keep this repository public and tag every store build (THIRD_PARTY_NOTICES.md).
   LAME must stay its own `lame_mp3.framework` (`use_frameworks!` in `ios/Podfile`).
 - **`lame_mp3` doesn't support Swift Package Manager:** Flutter warns that this will become
@@ -82,7 +87,7 @@ recordings in here.
   `PlayerWatch` does (from 1.0.1). Re-check when upgrading `just_audio`.
 - **No CallKit** (D15): App Review rejects apps that link it while offered in China mainland.
 - **M4A and other apps' audio** (D17): whether another app plays is asked with iOS's
-  `secondaryAudioShouldBeSilencedHint`, which only a phone can test (ROADMAP "Now" has the
-  steps). An M4A recording left paused that way, never stopped, is lost if iOS closes the app.
+  `secondaryAudioShouldBeSilencedHint`, which only a phone can test (ROADMAP has the steps).
+  An M4A recording left paused that way, never stopped, is lost if iOS closes the app.
 - **iOS 27** deprecates `AVAudioSessionInterruptionNotification` (still posted; the plugins
   rely on it). Watch the next iOS releases.

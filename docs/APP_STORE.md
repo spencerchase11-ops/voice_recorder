@@ -1,7 +1,7 @@
 # Publishing on the App Store
 
 Everything the app itself needs is in place: bundle id
-`com.spencerchase.voicerecorder`, version 1.0.1, iPhone only, portrait, the
+`com.spencerchase.voicerecorder`, version 1.1.0, iPhone only, portrait, the
 icons (no transparency), the microphone text, background audio, the privacy
 manifest and the encryption answer (`ITSAppUsesNonExemptEncryption` = NO, so
 uploads skip that question). What's left is done on your Mac and in App
@@ -79,7 +79,7 @@ Xcode's Organizer opens: **Distribute App** → **App Store Connect** →
 **Upload**, and accept the defaults. (Or drag `build/ios/ipa/*.ipa` into
 Apple's Transporter app.) Each later upload needs a higher build number:
 raise `version:` in `pubspec.yaml` before building, for example
-`version: 1.0.2+6` (1.0.0 used builds 1 and 2, 1.0.1 build 5). Don't pass
+`version: 1.1.1+7` (1.0.0 used builds 1 and 2, 1.1.0 build 6). Don't pass
 `--build-number`: it overrides `pubspec.yaml`.
 
 After 10–30 minutes the build shows under **TestFlight**, where you can also
@@ -111,6 +111,7 @@ RECORD
 LISTEN
 • All your recordings with their date, length and size, newest first or sorted your way.
 • Search by name or date.
+• Tap a recording to open its own page: its size, location, date and length, and a player that goes on to the previous or next recording.
 • Skip back or forward 10 seconds, and play at up to 2x speed.
 • Keeps playing in the background, with controls on the Lock Screen.
 
@@ -133,7 +134,7 @@ OPEN SOURCE
 **Screenshots** (iPhone 6.9" display; these are 1290 × 2796, which that
 slot accepts, and App Store Connect scales them for smaller iPhones):
 `docs/app-store/1-recording.jpg`, `2-playing.jpg`, `3-recording-list.jpg`,
-`4-recently-deleted.jpg`. Or take your own on the iPhone (side button +
+`4-recording-page.jpg` (new in 1.1.0) and `5-recently-deleted.jpg`. Or take your own on the iPhone (side button +
 volume up) once your recordings are in; a Pro Max or Plus iPhone gives the
 right size. To render them again after a change to the app, see
 `docs/project/RUNBOOK.md`, section 5.
@@ -165,10 +166,10 @@ Background audio: a recording continues while the screen is locked or another ap
 Settings > Import recordings copies audio files the user picks in the Files app into the app's own folder (On My iPhone > Voice Recorder > Recorders). The app has no network features and collects no data.
 ```
 
-**What's New in This Version** (updates only). For 1.0.1:
+**What's New in This Version** (updates only). For 1.1.0:
 
 ```
-Playback now keeps going with the Ring/Silent switch on Silent and when you leave the app. A recording now keeps going, in the same file, after a phone or FaceTime call and when headphones or a car connect or disconnect. Headphone double and triple presses skip 10 seconds. Settings now has “Rate this app”. Plus fixes for recording dates, Recently deleted, imports and large text sizes.
+Tap a recording to open it on its own page, as in the classic app: its name, size, location, date and length, with a player that goes on to the previous or next recording. Playback now keeps going with the Ring/Silent switch on Silent and when you leave the app. A recording now keeps going, in the same file, after a phone or FaceTime call and when headphones or a car connect or disconnect. Headphone double and triple presses skip 10 seconds. Settings now has “Rate this app”. Plus fixes for recording dates, Recently deleted, imports, VoiceOver and large text sizes.
 ```
 
 Then choose the build, and **Add for Review** → **Submit**.
@@ -179,7 +180,7 @@ Then choose the build, and **Add for Review** → **Submit**.
   LGPL. For an app on the App Store, that license expects the source to be
   available so people could rebuild the app with a changed LAME: this
   repository is public for that, and the About dialog says so. Tag the
-  commit of every store build (`git tag -a v1.0.1 -m "…" <commit> && git push origin v1.0.1`) and
+  commit of every store build (`git tag -a v1.1.0 -m "…" <commit> && git push origin v1.1.0`) and
   keep the repository public. See
   [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 - **"Rate this app":** from 1.0.1, `AppConfig.appStoreId` in

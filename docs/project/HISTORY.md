@@ -3,6 +3,65 @@
 Newest first. Add an entry at every doc ritual: what changed and why, with commit hashes.
 Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 
+## 2026-11-13: 1.1.0 (6): a recording's own page, reviewed until nothing was found
+
+- **The owner's request (2026-11-09):** a missing screen. In the original, tapping a recording
+  opened it on its own page; the revival opened the row in place. Added in `fcf0304` (the page,
+  measured from the owner's screenshot of the original) and `e8e0c23` (its player above the
+  home indicator), with an App Store screenshot in `5d282cf` (`4-recording-page.jpg`; Recently
+  deleted moves to `5-`). Released as 1.1.0 together with 1.0.1's fixes, which were never
+  uploaded (D18).
+- **The owner's decision (2026-11-10):** release without the phone test; review the code until
+  a round finds nothing instead (D19). The phone checks now come after the release (ROADMAP).
+- **Review rounds:** each by five independent reviewers with different lenses (the new code,
+  user flows, crashes, screens and accessibility, release readiness), every finding checked by
+  a skeptic with a probe test, and every fix with a test that fails without it.
+  - Rounds 1 and 2 (`f3c3851`, `444ba2b`): quick Play/Next/skip races; the seek bars for screen
+    readers; a delete no longer closes the list; header touch areas; the player's times at
+    large text; Bold Text measured in bold everywhere; headers keep text at most 2x.
+  - Round 3 (`02b86cb`): lock-screen and headphone controls stay while Next opens the next
+    recording; a recording left paused is found where it was; the page closes when its
+    recording goes from the folder; dialogs keep text at most 2x.
+  - Round 4 (`69530df`, `6e1cc54`): places restored exactly; a headphone press during Next acts
+    on the recording it opens; a recording deleted outside the app stops; a page opened during
+    a rename follows it (`AppController.renamedTo`); a seek overtaken by another recording's
+    load moves nothing.
+  - Round 5 (`d4641db`): presses while a second Next replaces the first; a recording deleted
+    while it opens stops; skips while a recording reopens at its place; the search field, tab
+    labels and open row at large text; a row's date keeps most of its line.
+  - Round 6 (`9804da0`): Back after paging far with Next scrolls to the open row; dates are
+    drawn smaller rather than cut; Previous/Next are heard by screen readers (the name is a
+    live region); a rename onto a name freed in the Files app; a delete's Undo toast never
+    lies over another recording's page; toasts and Settings summaries keep text at most 2x.
+  - Round 7 (`0127aa7`): Back brings the open row wholly into view; a plain toast stacks
+    above the Undo toast; screen readers hear toasts and the page's name once (announced on
+    iOS, live regions on Android); the progress dialog is read out by tenths; dialog buttons
+    draw long labels smaller; a delete keeps a row opened meanwhile.
+  - Round 8 (`3263a39`): the progress read-out's first change; a rename from the list keeps a
+    row opened meanwhile; with a screen reader on, the Undo toast says "Undo available".
+  - Round 9 (`60350b2`): with VoiceOver or Switch Control on, the Undo toast stays after its
+    6 s until it is used, a dialog opens or the reader is turned off; on Android it keeps its
+    6 s (any accessibility service looks like a screen reader there).
+  - Round 10 (`f5fec93`): after a delete from selection mode, the list header's frames for
+    screen readers were left at the selection header's places (since 1.0.0). Its second pass
+    over the whole change found nothing.
+  - Round 11, by two reviewers: a check of round 10's fix (the search field, keyboard and
+    screen-reader focus at every header switch; the screens unchanged pixel for pixel) found
+    nothing.
+- **Also in 1.1.0:** `42cdf8e` (from `fix/others-playing`), two gaps around an M4A
+  interruption's end (D17).
+- **Release docs:** ROADMAP and RUNBOOK 4 now say to paste a changed Description and place a
+  new screenshot by hand: a new version copies the last one's listing.
+- **Lessons:**
+  - The golden tests let 1% of pixels differ, so they can't prove a UI change leaves normal
+    text alone. Raw RGBA captures of each screen, before and after, compared byte for byte,
+    can: every UI fix in rounds 5 to 7 was checked that way.
+  - A copy of the repository made with its `.git` shares the real stash and branches: a
+    reviewer's `git stash` in one reached the real repository (undone, nothing lost). Review
+    copies are made with `rsync --exclude .git`, and reviewers make no git writes.
+- Tests on the Mac: 535 pass, 7 skipped; the two known golden tests fail (macOS text
+  anti-aliasing, as before every change).
+
 ## 2026-11-08: audit and fixes for 1.0.1 (5)
 
 - **The owner's report:** on 1.0.1 (4), playback stopped when the Ring/Silent switch went to

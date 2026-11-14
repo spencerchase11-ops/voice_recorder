@@ -3,6 +3,44 @@
 One entry per decision: context, decision, why. Newest first. Supersede old entries with a
 new one rather than editing them.
 
+## D19 (2026-11-10): 1.1.0 is released without the phone test, at the owner's request
+
+- **Context:** the plan was for the owner to test the build on the iPhone before release
+  (playback on Silent and in the background, the M4A cases of D17, the new page). The cause of
+  the owner's playback problem couldn't be reproduced on the simulator, so only a phone can
+  show the fix works. The owner asked to skip the phone test: "just do an audit and make sure
+  the code is perfect".
+- **Decision:** review rounds instead, until one comes back with nothing real (HISTORY
+  2026-11-13), then merge, build, upload and tag. The phone checks move to after the release
+  (ROADMAP), on the store or TestFlight build; anything they find goes into 1.1.1.
+- **Why:** it is the owner's call. The fixes are covered by tests that fail without them, and
+  the review rounds looked for anything that breaks what worked in 1.0.0. The risk left is
+  mostly a fix that doesn't help on the phone, which only the phone can show.
+
+## D18 (2026-11-10): a recording opens on its own page, as in the original; release as 1.1.0
+
+- **Context:** the owner pointed out a missing screen: in the original, tapping a recording
+  opened its own page (its name, size, location, date and length, and a player with previous
+  and next). The revival opened the row in place instead. 1.0.1 was never uploaded.
+- **Decision:**
+  - Tapping a row opens the page, measured from the owner's screenshot of the original
+    (docs/SPEC.md), and plays the recording, as the original's screenshot shows. The row
+    stays open (orange) in the list underneath, so Back finds the list as it was; the row's
+    play button still plays in place, and a long press still selects.
+  - Previous and next go through the list as shown (its sort and search) and play the next
+    one only if one was playing.
+  - The header has rename where the original had scissors (trim): the app can't trim yet
+    (ROADMAP). Share and delete work as in the list; delete closes the page, with Undo.
+  - The date is when the recording was made, worked out as for the list (the date stored in
+    the file, else a timestamp name's), not the file's modification time the original
+    showed, which a copy or an edit changes. It is written like the original's
+    (`Thu Oct 08 16:25:38 2026`) but without its time zone: the date is the clock time where
+    the recording was made, so the phone's zone today could be the wrong one. Sizes are in
+    units of 1024, as in the original.
+  - The release is 1.1.0 (build 6): 1.0.1's fixes plus the page.
+- **Why:** the page is part of the original app that the revival set out to bring back; a new
+  screen makes it a feature release rather than 1.0.1.
+
 ## D17 (2026-11-08): an M4A recording held up by other audio stays paused, and the app says so
 
 - **Context:** without CallKit (D15) the app can't tell a call from music. When it is opened
