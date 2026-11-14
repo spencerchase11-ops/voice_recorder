@@ -1,6 +1,6 @@
 # Voice Recorder status
 
-Snapshot as of **2026-11-13**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
+Snapshot as of **2026-11-14**. Rewrite this file at every doc ritual (see `CLAUDE.md`).
 
 This repository is **public**: no device identifiers, personal email addresses or the owner's
 recordings in here.
@@ -10,8 +10,8 @@ recordings in here.
 | Area | State |
 |---|---|
 | App Store | **1.0.0 (build 2) live since 2026-09-29** as "Voice Recorder – Classic": free, 4+, iPhone only. |
-| Next release | **1.1.0 (build 6)**: 1.0.1's fixes, never uploaded (D14), first of all playback that stopped on the Ring/Silent switch and when leaving the app, plus a recording's own page (D18). Reviewed until a round found nothing (HISTORY 2026-11-13) and released without the owner's phone test, at the owner's request (D19). Uploaded 2026-11-13 and **Ready to Submit** in App Store Connect; tag `v1.1.0`. **Next: the owner updates the agreement in Business** (App Store Connect won't add the version until then), then version 1.1.0 is created and submitted (ROADMAP "Now"). |
-| Owner's own copy | 1.0.1 (4) from the 2026-10-17 archive. 1.1.0 comes from the App Store once it is approved (or from TestFlight); the phone checks then follow (ROADMAP). |
+| Next release | **1.1.0 (build 6)**: 1.0.1's fixes, never uploaded (D14), first of all playback that stopped on the Ring/Silent switch and when leaving the app, plus a recording's own page (D18). Reviewed until a round found nothing (HISTORY 2026-11-13) and released without the owner's phone test, at the owner's request (D19). Uploaded 2026-11-13, tag `v1.1.0`; **submitted for review 2026-11-14, Waiting for Review**. Released automatically to everyone once approved (ROADMAP "Now"). |
+| Owner's own copy | 1.0.1 (4) from the 2026-10-17 archive, an Xcode build (the App Store shows the app as not downloaded). Once 1.1.0 is live: back up the Voice Recorder folder, then download it from the App Store over this copy, never deleting the app first; the phone checks then follow (ROADMAP). Don't download 1.0.0 over it. |
 | Code backup | GitHub, **public**: `spencerchase11-ops/voice_recorder`. The default branch has 1.1.0 and is pushed, with the tag `v1.1.0`. |
 | CI | Runs on every push: analyze, tests and the Android build. Green on 2026-11-13: the default branch (`1ea05b1`), `recording-page` (`4ec37d6`, build 6's source) and `fix/others-playing`. The default branch's run of `4ec37d6` failed once on a timing-sensitive test, fixed in `1ea05b1` (tests only). The weekly Monday run only keeps the Android test signing key's cache alive and runs no tests. The iOS build job runs only when started by hand. |
 | Tests | On the Mac: 535 pass, 7 skipped, and the `recording list` and `settings` golden tests fail (2.29% and 1.51% text anti-aliasing, on macOS hosts only, before and after every change). On CI all of them pass. |
@@ -36,10 +36,11 @@ recordings in here.
 - **Build 1.0.0 (2):** uploaded by the owner 2026-09-26 through Xcode's Organizer, submitted
   2026-09-26, approved, live 2026-09-29. Source: tag `v1.0.0`.
 - **Builds 1.0.1 (3) to (5):** development builds for the owner's phone; never uploaded.
-- **Build 1.1.0 (6):** built and uploaded 2026-11-13 (from the command line, RUNBOOK 4); Ready
-  to Submit. Not yet submitted: adding version 1.1.0 shows "Agreement Update: your paid
-  application agreement is outdated" until the Account Holder updates it in Business.
-  Source: tag `v1.1.0` = `4ec37d6`.
+- **Build 1.1.0 (6):** built and uploaded 2026-11-13 (from the command line, RUNBOOK 4). Version
+  1.1.0 created and submitted 2026-11-14, after the owner updated the paid application
+  agreement in Business: What's New, Description and Promotional Text from `docs/APP_STORE.md`;
+  the four screenshots of 1.0.0 (`4-recording-page.jpg` not added); automatic release, to all
+  users at once. Source: tag `v1.1.0` = `4ec37d6`.
 - **App Store Connect session:** the owner signs in (Claude never does).
 
 ## Code and backups

@@ -8,16 +8,12 @@ Finished items move to HISTORY. Keep this list short and ordered.
 asked to release without the phone test (D19): the code is merged into the default branch and
 built; the phone checks come after the release.
 
-1. **Owner: update the agreement** in App Store Connect → Business: adding a version shows
-   "Agreement Update: your paid application agreement is outdated" until then. (Build 6 is
-   uploaded and Ready to Submit; tag `v1.1.0` is pushed.)
-2. **In App Store Connect** (build 6 is Ready to Submit):
-   - Add a new iOS version, 1.1.0.
-   - What's New and the Description from `docs/APP_STORE.md` section 5 (paste the whole
-     Description: it gains the LISTEN line about a recording's own page).
-   - Screenshots: add `docs/app-store/4-recording-page.jpg` and drag it in front of Recently
-     deleted (optional).
-   - Select build 6, then Add for Review → Submit for Review.
+1. **App Review:** 1.1.0 (6) was submitted 2026-11-14 (Waiting for Review); it is released
+   automatically once approved. If it's rejected, read the reason in App Store Connect → App
+   Review; a fix needs build 7.
+2. **Owner: move the phone to the App Store copy** once 1.1.0 is live: back up the Voice
+   Recorder folder (Finder → iPhone → Files tab), then download it from the App Store over the
+   Xcode build. Never delete the app first.
 3. **After release, test on the iPhone** (from the App Store, or from TestFlight before that).
    Anything wrong goes into 1.1.1.
    - Tap a recording in the list: its page opens and plays it. Name, size, location, date and
@@ -63,6 +59,8 @@ built; the phone checks come after the release.
   name is saved again.
 - Golden tests: make the two that fail on macOS hosts (anti-aliasing) pass there too, or skip
   them off CI, so a local run is green.
+- Listing: add `docs/app-store/4-recording-page.jpg` in front of Recently deleted with the next
+  version (not added for 1.1.0: dragged in by hand in App Store Connect).
 - After a UI change: render the App Store screenshots again (RUNBOOK 5) and upload them
   with the next version.
 - Optional: keep the live timer from counting the few seconds before a restart (the engine can

@@ -55,9 +55,13 @@ Earlier work (the app itself, audits 1 to 4) is in the git log up to `bfe83b3`.
 - **Released:** merged into the default branch (fast-forward) and built; build 6 uploaded from
   the command line and Ready to Submit; tag `v1.1.0` = `4ec37d6`. CI's first run on the default
   branch failed one timing-sensitive test (a fixed 100 ms wait for a recording's own stop);
-  `1ea05b1` makes three such tests wait for the notice instead (tests only). Adding version
-  1.1.0 in App Store Connect waits for the Account Holder to update the paid application
-  agreement in Business.
+  `1ea05b1` makes three such tests wait for the notice instead (tests only).
+- **Submitted 2026-11-14:** App Store Connect wouldn't add version 1.1.0 ("Agreement Update:
+  your paid application agreement is outdated") until the owner updated that agreement in
+  Business. Then version 1.1.0 was created with What's New, the whole Description and the
+  Promotional Text (which didn't carry over) from `docs/APP_STORE.md`, build 6, automatic
+  release; submitted, Waiting for Review. The four screenshots of 1.0.0 carried over;
+  `4-recording-page.jpg` wasn't added (the browser tools can't upload a file).
 - **Lessons:**
   - The golden tests let 1% of pixels differ, so they can't prove a UI change leaves normal
     text alone. Raw RGBA captures of each screen, before and after, compared byte for byte,

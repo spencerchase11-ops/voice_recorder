@@ -91,9 +91,10 @@ xcrun devicectl device process launch --terminate-existing --device <UDID> com.s
      agreement under **Business**.
    - Add What's New and select the build once it shows **Ready to Submit** (about 5–30 min
      after upload).
-   - Choose **Add for Review → Submit for Review**. The listing carries over from the last
-     version: paste a changed Description (`docs/APP_STORE.md` section 5) and add or reorder
-     changed screenshots by hand (section 5 below gives the order).
+   - Choose **Add for Review → Submit for Review**. Most of the listing carries over from the
+     last version: paste a changed Description (`docs/APP_STORE.md` section 5) and add or
+     reorder changed screenshots by hand (section 5 below gives the order). The Promotional
+     Text did **not** carry over to 1.1.0: paste it too.
 6. **Tag** the uploaded commit and push it: `git tag -a vX.Y.Z -m "…" <commit>` then
    `git push origin vX.Y.Z`. Keep the repository public (LGPL).
 
